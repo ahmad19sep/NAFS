@@ -5,13 +5,14 @@ import webpush from 'web-push'
 // Vercel Cron — runs every Sunday at 8 PM
 // In vercel.json: { "crons": [{ "path": "/api/cron/tribunal", "schedule": "0 20 * * 0" }] }
 
-webpush.setVapidDetails(
-  process.env.VAPID_EMAIL!,
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!,
-  process.env.VAPID_PRIVATE_KEY!
-)
-
 export async function GET(req: NextRequest) {
+  if (process.env.VAPID_EMAIL && process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    webpush.setVapidDetails(
+      process.env.VAPID_EMAIL,
+      process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    )
+  }
   // Verify this is a legitimate Vercel Cron call
   const authHeader = req.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
