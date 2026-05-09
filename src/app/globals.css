@@ -1,0 +1,186 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* NAFS Dark Theme — deep navy background with teal + gold */
+    --background: 214 52% 11%;       /* #0B1A2B navy */
+    --foreground: 210 40% 96%;       /* near-white */
+
+    --card: 212 48% 14%;             /* slightly lighter navy */
+    --card-foreground: 210 40% 96%;
+
+    --popover: 212 48% 14%;
+    --popover-foreground: 210 40% 96%;
+
+    --primary: 193 68% 21%;          /* #0F4C5C teal */
+    --primary-foreground: 48 76% 47%; /* gold on teal */
+
+    --secondary: 212 40% 18%;
+    --secondary-foreground: 210 40% 96%;
+
+    --muted: 212 35% 20%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 42 73% 47%;            /* #C9A227 gold */
+    --accent-foreground: 214 52% 11%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 212 35% 22%;
+    --input: 212 35% 22%;
+    --ring: 193 68% 21%;
+
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-tap-highlight-color: transparent;
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+    overscroll-behavior: none;
+  }
+
+  /* iOS-safe scrolling */
+  .scroll-container {
+    -webkit-overflow-scrolling: touch;
+    overflow-y: auto;
+  }
+
+  /* Arabic text support */
+  .arabic {
+    font-family: var(--font-arabic), 'Arial Unicode MS', serif;
+    direction: rtl;
+  }
+}
+
+@layer components {
+  /* Glassmorphism card — the main NAFS card style */
+  .nafs-card {
+    @apply rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm;
+  }
+
+  /* Gold gradient text */
+  .text-gold-gradient {
+    @apply bg-gradient-to-r from-yellow-400 via-amber-400 to-yellow-600 bg-clip-text text-transparent;
+  }
+
+  /* Teal gradient text */
+  .text-teal-gradient {
+    @apply bg-gradient-to-r from-teal-400 to-cyan-300 bg-clip-text text-transparent;
+  }
+
+  /* Identity Score ring */
+  .identity-ring {
+    @apply relative flex items-center justify-center;
+  }
+
+  /* Prayer status dot */
+  .prayer-dot {
+    @apply h-3 w-3 rounded-full transition-all duration-300;
+  }
+  .prayer-dot.completed {
+    @apply bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)];
+  }
+  .prayer-dot.missed {
+    @apply bg-red-500/70;
+  }
+  .prayer-dot.pending {
+    @apply bg-white/20 border border-white/30;
+  }
+
+  /* Bottom nav bar */
+  .bottom-nav {
+    @apply fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-navy/95 backdrop-blur-md;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Page container — accounts for bottom nav + iOS notch */
+  .page-container {
+    @apply pb-24 pt-4;
+    padding-top: env(safe-area-inset-top, 1rem);
+  }
+
+  /* Streak badge */
+  .streak-badge {
+    @apply inline-flex items-center gap-1 rounded-full bg-gold/20 px-3 py-1 text-sm font-semibold text-gold;
+  }
+
+  /* Mood emoji button */
+  .mood-btn {
+    @apply flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 text-2xl
+           transition-all duration-200 hover:border-gold/50 hover:bg-gold/10 hover:scale-110;
+  }
+  .mood-btn.selected {
+    @apply border-gold bg-gold/20 scale-110 shadow-[0_0_12px_rgba(201,162,39,0.4)];
+  }
+
+  /* Log input field */
+  .log-input {
+    @apply w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3
+           text-foreground placeholder:text-muted-foreground
+           focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/30
+           transition-all duration-200;
+  }
+
+  /* Section header */
+  .section-header {
+    @apply text-xs font-semibold uppercase tracking-widest text-muted-foreground;
+  }
+}
+
+@layer utilities {
+  /* Smooth number transitions */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Glow effects */
+  .glow-teal {
+    box-shadow: 0 0 20px rgba(15, 76, 92, 0.5);
+  }
+  .glow-gold {
+    box-shadow: 0 0 20px rgba(201, 162, 39, 0.4);
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Custom scrollbar for desktop */
+@media (hover: hover) {
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
