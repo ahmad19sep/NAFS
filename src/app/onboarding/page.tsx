@@ -33,16 +33,26 @@ export default function OnboardingPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    async function load() {
+      const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/auth'); return }
-      // Extract name from email (before @) or Google display name
-      const displayName = user.user_metadata?.full_name
+
+      // Try to fetch profile from DB (signup may have already saved it)
+      const { data: profile } = await supabase
+        .from('users')
+        .select('name')
+        .eq('id', user.id)
+        .single()
+
+      const displayName = profile?.name
+        || user.user_metadata?.full_name
         || user.user_metadata?.name
         || user.email?.split('@')[0]
         || 'Friend'
       setUserName(displayName)
       setLoading(false)
-    })
+    }
+    load()
   }, [])
 
   function toggleHabit(name: string) {
