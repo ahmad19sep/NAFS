@@ -8,6 +8,7 @@ const ALLOWED_FIELDS = [
   'why', 'schedule_kind', 'schedule_days', 'weekly_target', 'reminder_time',
   'subject_name', 'subject_total', 'subject_position', 'subject_unit',
   'is_active', 'is_paused', 'sort_order',
+  'ai_starter_pack',
 ] as const
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {

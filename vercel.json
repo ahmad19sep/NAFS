@@ -7,6 +7,14 @@
     {
       "path": "/api/cron/notify-tasks",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/daily-report",
+      "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-report",
+      "schedule": "0 21 * * 0"
     }
   ]
 }

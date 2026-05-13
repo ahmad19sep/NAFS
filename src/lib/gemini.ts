@@ -13,12 +13,27 @@ export function getModel(modelName = 'gemini-2.0-flash') {
   return getGemini().getGenerativeModel({ model: modelName })
 }
 
+const GEMINI_TIMEOUT_MS = 20_000
+
+/** Reject after `ms` so a hung Gemini call doesn't block the route forever. */
+function withTimeout<T>(p: Promise<T>, ms = GEMINI_TIMEOUT_MS): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      const err: any = new Error(`Gemini timed out after ${ms}ms`)
+      err.code = 'GEMINI_TIMEOUT'
+      reject(err)
+    }, ms)
+    p.then((v) => { clearTimeout(t); resolve(v) },
+           (e) => { clearTimeout(t); reject(e) })
+  })
+}
+
 export async function generateText(prompt: string, systemInstruction?: string): Promise<string> {
   const model = getGemini().getGenerativeModel({
     model: 'gemini-2.0-flash',
     systemInstruction,
   })
-  const result = await model.generateContent(prompt)
+  const result = await withTimeout(model.generateContent(prompt))
   return result.response.text()
 }
 
@@ -36,7 +51,7 @@ export async function generateJSON<T = unknown>(
     systemInstruction,
     generationConfig: { responseMimeType: 'application/json' },
   })
-  const result = await model.generateContent(prompt)
+  const result = await withTimeout(model.generateContent(prompt))
   const text = result.response.text()
   return safeParseJSON<T>(text)
 }
@@ -86,7 +101,7 @@ export async function chatGemini(
     model: 'gemini-2.0-flash',
     systemInstruction,
   })
-  const result = await model.generateContent({ contents: turns as any })
+  const result = await withTimeout(model.generateContent({ contents: turns as any }))
   return result.response.text()
 }
 
@@ -97,9 +112,9 @@ export async function geminiVision(
   prompt: string,
 ): Promise<string> {
   const model = getGemini().getGenerativeModel({ model: 'gemini-2.0-flash' })
-  const result = await model.generateContent([
+  const result = await withTimeout(model.generateContent([
     { inlineData: { data: base64, mimeType } },
     { text: prompt },
-  ])
+  ]), 30_000)  // longer for vision
   return result.response.text()
 }

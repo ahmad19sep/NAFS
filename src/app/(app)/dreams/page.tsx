@@ -1,11 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+import { requireUser } from '@/lib/supabase/require-user'
 import DreamsClient from './DreamsClient'
 
 export default async function DreamsPage() {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/auth')
+  const user = await requireUser(supabase)
 
   const { data: profile } = await supabase
     .from('users')

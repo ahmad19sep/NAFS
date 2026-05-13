@@ -1,11 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+import { requireUser } from '@/lib/supabase/require-user'
 import ChallengesClient from './ChallengesClient'
 
 export default async function ChallengesPage() {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/auth')
+  const user = await requireUser(supabase)
 
   const { data: challenges } = await supabase
     .from('challenges')

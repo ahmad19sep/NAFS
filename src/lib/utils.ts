@@ -15,8 +15,37 @@ export function formatDateShort(date: Date | string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+/**
+ * Today's date as YYYY-MM-DD in the runtime's local timezone.
+ *
+ * Browser → user's local time (correct).
+ * Node on Vercel → UTC unless TZ env var is set. For per-user accuracy in
+ * production, set `TZ=Asia/Karachi` (or your users' timezone) in Vercel project
+ * settings → Environment Variables. For multi-user apps with mixed timezones,
+ * pass the user's stored `users.timezone` and use `todayInTZ(tz)` instead.
+ */
 export function todayString(): string {
-  return new Date().toISOString().split('T')[0]
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Today's date as YYYY-MM-DD in a specific IANA timezone. */
+export function todayInTZ(tz: string): string {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    })
+    const parts = fmt.formatToParts(new Date())
+    const m: Record<string, string> = {}
+    for (const p of parts) m[p.type] = p.value
+    return `${m.year}-${m.month}-${m.day}`
+  } catch {
+    return todayString()
+  }
 }
 
 export function daysUntil(dateStr: string): number {

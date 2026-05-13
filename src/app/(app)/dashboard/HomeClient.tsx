@@ -152,9 +152,13 @@ export default function HomeClient({
   })()
 
   // ---- Verdict ----
-  const firstName = (profile?.name && profile.name.trim())
-    ? profile.name.trim().split(' ')[0]
-    : 'friend'
+  const PLACEHOLDERS = new Set(['', 'friend', 'Friend', 'No name'])
+  const rawName: string = (profile?.name as string | undefined) ?? ''
+  const trimmed = rawName.trim()
+  const emailPrefix = (profile?.email as string | undefined)?.split('@')[0] ?? ''
+  const firstName = PLACEHOLDERS.has(trimmed)
+    ? (emailPrefix || 'friend')
+    : trimmed.split(' ')[0]
   const greeting = getGreeting(firstName)
   const verdict = getVerdict(overallScore)
   const insights = aiReports.length

@@ -38,6 +38,9 @@ function AuthInner() {
   // Re-sync mode if URL param changes (e.g. after callback redirect)
   useEffect(() => {
     if (searchParams.get('reset') === '1') setMode('reset')
+    if (searchParams.get('error') === 'network') {
+      setError("Couldn't reach the server. Check your connection and sign in again.")
+    }
   }, [searchParams])
 
   function switchMode(next: Mode) {

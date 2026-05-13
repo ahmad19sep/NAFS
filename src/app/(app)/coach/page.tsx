@@ -1,11 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+import { requireUser } from '@/lib/supabase/require-user'
 import CoachClient from './CoachClient'
 
 export default async function CoachPage() {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/auth')
+  const user = await requireUser(supabase)
 
   const { data: reports } = await supabase
     .from('ai_reports')

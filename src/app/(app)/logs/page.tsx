@@ -1,11 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+import { requireUser } from '@/lib/supabase/require-user'
 import LogsClient from './LogsClient'
 
 export default async function LogsPage() {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/auth')
+  const user = await requireUser(supabase)
 
   const { data: logs } = await supabase
     .from('daily_logs')

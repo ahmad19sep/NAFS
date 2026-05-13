@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Plus, ChevronDown, ChevronUp, Sparkles, Trash2, Target, Calendar, TrendingUp, Check, Compass, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Plus, ChevronDown, ChevronUp, Sparkles, Trash2, Target, Calendar, TrendingUp, Check, Compass, RefreshCw, AlertTriangle, Rocket, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   type GoalType, GOAL_TYPES, GOAL_TYPE_BY_KEY, GOAL_CATEGORIES,
@@ -27,6 +27,21 @@ interface AiAlignment {
   analyzed_at: string
 }
 
+interface AiStarterPack {
+  summary: string
+  suggested_tasks: Array<{ title: string; priority: 'low' | 'medium' | 'high' }>
+  suggested_habits: Array<{
+    name: string; emoji: string; type: 'simple' | 'counter' | 'duration'
+    target_value?: number; unit?: string; time_target_mins?: number
+  }>
+  suggested_challenges?: Array<{
+    title: string; emoji: string; reason: string
+    frequency: 'daily' | 'weekly' | 'monthly' | 'yearly'
+    duration_days: number
+  }>
+  generated_at: string
+}
+
 interface Goal {
   id: string
   title: string
@@ -39,6 +54,7 @@ interface Goal {
   progress_pct: number
   ai_plan: string | null
   ai_alignment: AiAlignment | null
+  ai_starter_pack: AiStarterPack | null
   linked_habit_ids: string[]
   goal_milestones: Milestone[]
   target_value: number | null
@@ -88,10 +104,14 @@ export default function GoalsClient({ userId, goals, habits, today }: Props) {
   const [unit, setUnit] = useState('')
   const [creating, setCreating] = useState(false)
 
+
   // Per-goal UI
   const [expandedGoal, setExpandedGoal] = useState<string | null>(null)
   const [generatingPlan, setGeneratingPlan] = useState<string | null>(null)
   const [analyzingAlignment, setAnalyzingAlignment] = useState<string | null>(null)
+  const [generatingStarter, setGeneratingStarter] = useState<string | null>(null)
+  const [addingItemKey, setAddingItemKey] = useState<string | null>(null)
+  const [addedItemKeys, setAddedItemKeys] = useState<Set<string>>(new Set())
 
   function selectType(t: GoalType) {
     setGoalType(t)
@@ -102,6 +122,7 @@ export default function GoalsClient({ userId, goals, habits, today }: Props) {
   async function createGoal() {
     if (!title.trim()) return
     setCreating(true)
+
     const { data: goal } = await supabase.from('goals').insert({
       user_id: userId,
       title: title.trim(),
@@ -119,15 +140,25 @@ export default function GoalsClient({ userId, goals, habits, today }: Props) {
     }).select().single()
 
     if (goal) {
+      // Milestones
       const valid = milestones.filter((m) => m.trim())
       if (valid.length > 0) {
         await supabase.from('goal_milestones').insert(
           valid.map((m) => ({ goal_id: goal.id, title: m.trim(), done: false }))
         )
       }
+
+      // Auto-expand the new goal and pre-fetch the starter pack
+      // so user immediately sees suggestions with + Add buttons
+      setExpandedGoal(goal.id)
+      fetch('/api/ai/goal-starter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goalId: goal.id }),
+      }).then(() => router.refresh()).catch(() => {})
     }
 
-    // Reset
+    // Reset form
     setCreating(false); setShowCreate(false)
     setTitle(''); setEmoji('⭐'); setDescription(''); setCategory(null)
     setMilestones(['']); setLinkedHabits([])
@@ -200,6 +231,79 @@ export default function GoalsClient({ userId, goals, habits, today }: Props) {
       alert(e?.message || 'Network error')
     }
     setAnalyzingAlignment(null)
+  }
+
+  async function generateStarterPack(goal: Goal) {
+    setGeneratingStarter(goal.id)
+    try {
+      const res = await fetch('/api/ai/goal-starter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goalId: goal.id }),
+      })
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}))
+        alert(b?.error || 'Starter pack failed')
+      } else {
+        router.refresh()
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Network error')
+    }
+    setGeneratingStarter(null)
+  }
+
+  async function dismissStarterPack(goal: Goal) {
+    await supabase.from('goals').update({ ai_starter_pack: null }).eq('id', goal.id)
+    router.refresh()
+  }
+
+  async function addStarterTask(t: { title: string; priority: 'low' | 'medium' | 'high' }, key: string) {
+    setAddingItemKey(key)
+    const res = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: t.title, priority: t.priority, type: 'daily' }),
+    })
+    setAddingItemKey(null)
+    if (res.ok) setAddedItemKeys((s) => new Set(s).add(key))
+  }
+
+  async function addStarterHabit(
+    h: AiStarterPack['suggested_habits'][number],
+    goal: Goal,
+    key: string,
+  ) {
+    setAddingItemKey(key)
+    const res = await fetch('/api/habits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        name: h.name,
+        emoji: h.emoji || '⭐',
+        type: h.type,
+        target_value: h.target_value ?? 1,
+        unit: h.unit ?? '',
+        time_target_mins: h.time_target_mins ?? 0,
+        category: goal.category || 'custom',
+        score_weight: 2,
+        schedule_kind: 'daily',
+      }),
+    })
+
+    // Link the new habit to this goal so AI alignment sees the connection
+    if (res.ok) {
+      const body = await res.json().catch(() => ({}))
+      const newHabitId: string | undefined = body?.habit?.id
+      if (newHabitId) {
+        const linked = Array.from(new Set([...(goal.linked_habit_ids ?? []), newHabitId]))
+        await supabase.from('goals').update({ linked_habit_ids: linked }).eq('id', goal.id)
+      }
+      setAddedItemKeys((s) => new Set(s).add(key))
+      router.refresh()
+    }
+    setAddingItemKey(null)
   }
 
   async function deleteGoal(id: string) {
@@ -396,6 +500,8 @@ export default function GoalsClient({ userId, goals, habits, today }: Props) {
             </button>
           </div>
 
+          {/* AI suggestions appear AFTER the goal is created — auto-generated below */}
+
           {/* Link habits */}
           {habits.length > 0 && (
             <div>
@@ -450,11 +556,18 @@ export default function GoalsClient({ userId, goals, habits, today }: Props) {
             expanded={expandedGoal === goal.id}
             generatingPlan={generatingPlan === goal.id}
             analyzingAlignment={analyzingAlignment === goal.id}
+            generatingStarter={generatingStarter === goal.id}
+            addingItemKey={addingItemKey}
+            addedItemKeys={addedItemKeys}
             onToggleExpand={() => setExpandedGoal(expandedGoal === goal.id ? null : goal.id)}
             onToggleMilestone={(mId, done) => toggleMilestone(mId, done, goal)}
             onUpdateNumeric={(v) => updateNumericProgress(goal.id, v, goal.target_value)}
             onGeneratePlan={() => generateAIPlan(goal)}
             onCheckAlignment={() => checkAlignment(goal)}
+            onGenerateStarter={() => generateStarterPack(goal)}
+            onDismissStarter={() => dismissStarterPack(goal)}
+            onAddStarterTask={(t, key) => addStarterTask(t, key)}
+            onAddStarterHabit={(h, key) => addStarterHabit(h, goal, key)}
             onDelete={() => deleteGoal(goal.id)}
           />
         ))}
@@ -487,8 +600,10 @@ function TabBtn({ label, emoji, count, active, onClick }: {
 // Goal card
 // ============================================================
 function GoalCard({
-  goal, habits, today, expanded, generatingPlan, analyzingAlignment,
-  onToggleExpand, onToggleMilestone, onUpdateNumeric, onGeneratePlan, onCheckAlignment, onDelete,
+  goal, habits, today, expanded, generatingPlan, analyzingAlignment, generatingStarter,
+  addingItemKey, addedItemKeys,
+  onToggleExpand, onToggleMilestone, onUpdateNumeric, onGeneratePlan, onCheckAlignment,
+  onGenerateStarter, onDismissStarter, onAddStarterTask, onAddStarterHabit, onDelete,
 }: {
   goal: Goal
   habits: Habit[]
@@ -496,11 +611,18 @@ function GoalCard({
   expanded: boolean
   generatingPlan: boolean
   analyzingAlignment: boolean
+  generatingStarter: boolean
+  addingItemKey: string | null
+  addedItemKeys: Set<string>
   onToggleExpand: () => void
   onToggleMilestone: (id: string, done: boolean) => void
   onUpdateNumeric: (newCurrent: number) => void
   onGeneratePlan: () => void
   onCheckAlignment: () => void
+  onGenerateStarter: () => void
+  onDismissStarter: () => void
+  onAddStarterTask: (t: { title: string; priority: 'low' | 'medium' | 'high' }, key: string) => void
+  onAddStarterHabit: (h: AiStarterPack['suggested_habits'][number], key: string) => void
   onDelete: () => void
 }) {
   const meta = GOAL_TYPE_BY_KEY[goal.goal_type]
@@ -665,6 +787,15 @@ function GoalCard({
             </div>
           )}
 
+          {/* AI Starter pack — suggested tasks + habits */}
+          <StarterPackCard goal={goal}
+            loading={generatingStarter}
+            addingKey={addingItemKey} addedKeys={addedItemKeys}
+            onGenerate={onGenerateStarter}
+            onDismiss={onDismissStarter}
+            onAddTask={onAddStarterTask}
+            onAddHabit={onAddStarterHabit} />
+
           {/* AI Alignment */}
           <AlignmentCard alignment={goal.ai_alignment} loading={analyzingAlignment} onCheck={onCheckAlignment} />
 
@@ -763,6 +894,139 @@ function AlignmentCard({ alignment, loading, onCheck }: {
       <p className="text-[10px] text-muted-foreground/60 pt-1 border-t border-white/5">
         Last analyzed {timeStr}
       </p>
+    </div>
+  )
+}
+
+// ============================================================
+// AI Starter pack card — suggested tasks + habits to start now
+// ============================================================
+function StarterPackCard({
+  goal, loading, addingKey, addedKeys,
+  onGenerate, onDismiss, onAddTask, onAddHabit,
+}: {
+  goal: Goal
+  loading: boolean
+  addingKey: string | null
+  addedKeys: Set<string>
+  onGenerate: () => void
+  onDismiss: () => void
+  onAddTask: (t: { title: string; priority: 'low' | 'medium' | 'high' }, key: string) => void
+  onAddHabit: (h: AiStarterPack['suggested_habits'][number], key: string) => void
+}) {
+  const pack = goal.ai_starter_pack
+
+  if (!pack && !loading) {
+    return (
+      <button onClick={onGenerate}
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/30
+                   bg-gradient-to-br from-cyan-500/15 to-blue-700/10 py-2.5 text-sm font-semibold text-cyan-300
+                   hover:from-cyan-500/20 hover:to-blue-700/15 transition-all">
+        <Rocket size={14} />
+        Get AI starter pack
+      </button>
+    )
+  }
+
+  if (loading && !pack) {
+    return (
+      <div className="rounded-xl border border-cyan-400/30 bg-cyan-500/8 p-4 flex items-center gap-3">
+        <RefreshCw size={14} className="animate-spin text-cyan-400" />
+        <p className="text-sm text-cyan-300">Generating starter pack…</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-cyan-400/30
+                    bg-gradient-to-br from-cyan-500/10 via-blue-700/5 to-transparent p-4 space-y-3">
+      <div className="pointer-events-none absolute -right-6 -top-6 h-24 w-24 rounded-full bg-cyan-500/15 blur-2xl" />
+
+      {/* Header */}
+      <div className="relative flex items-start gap-2">
+        <Rocket size={16} className="text-cyan-400 mt-0.5 flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">AI starter pack</p>
+          <p className="text-xs text-foreground leading-snug mt-0.5">{pack!.summary}</p>
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button onClick={onGenerate} disabled={loading}
+            className="h-7 w-7 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-muted-foreground hover:bg-white/10 transition-colors disabled:opacity-50"
+            aria-label="Re-generate">
+            <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <button onClick={onDismiss} disabled={loading}
+            className="h-7 w-7 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+            aria-label="Dismiss">
+            <X size={12} />
+          </button>
+        </div>
+      </div>
+
+      {/* Suggested tasks */}
+      {pack!.suggested_tasks.length > 0 && (
+        <div className="relative">
+          <p className="text-[10px] uppercase tracking-wider text-emerald-300 mb-1.5">Daily tasks for today</p>
+          <div className="space-y-1.5">
+            {pack!.suggested_tasks.map((t, i) => {
+              const key = `t-${goal.id}-${i}-${t.title}`
+              const added = addedKeys.has(key)
+              const dot =
+                t.priority === 'high'   ? 'bg-red-500'
+              : t.priority === 'medium' ? 'bg-gold' : 'bg-white/30'
+              return (
+                <div key={key} className="rounded-lg border border-white/10 bg-white/5 p-2.5 flex items-center gap-2">
+                  <span className={cn('h-2 w-2 rounded-full flex-shrink-0', dot)} />
+                  <p className="text-xs text-foreground flex-1 truncate">{t.title}</p>
+                  <button onClick={() => onAddTask(t, key)} disabled={added || addingKey === key}
+                    className={cn('rounded-md px-2.5 py-1 text-[10px] font-semibold transition-all flex-shrink-0',
+                      added ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        : 'bg-emerald-500 text-white hover:bg-emerald-400 disabled:opacity-50'
+                    )}>
+                    {added ? '✓ Added' : addingKey === key ? '…' : '+ Add'}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Suggested habits */}
+      {pack!.suggested_habits.length > 0 && (
+        <div className="relative">
+          <p className="text-[10px] uppercase tracking-wider text-cyan-300 mb-1.5">Habits to build</p>
+          <div className="space-y-1.5">
+            {pack!.suggested_habits.map((h, i) => {
+              const key = `h-${goal.id}-${i}-${h.name}`
+              const added = addedKeys.has(key)
+              return (
+                <div key={key} className="rounded-lg border border-white/10 bg-white/5 p-2.5 flex items-center gap-2">
+                  <span className="text-base">{h.emoji || '⭐'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-foreground truncate">{h.name}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {h.type === 'simple' ? 'Yes/No · daily'
+                        : h.type === 'counter' ? `${h.target_value ?? '?'} ${h.unit ?? ''} · daily`
+                        : `${h.time_target_mins ?? '?'} min · daily`}
+                    </p>
+                  </div>
+                  <button onClick={() => onAddHabit(h, key)} disabled={added || addingKey === key}
+                    className={cn('rounded-md px-2.5 py-1 text-[10px] font-semibold transition-all flex-shrink-0',
+                      added ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        : 'bg-cyan-500 text-white hover:bg-cyan-400 disabled:opacity-50'
+                    )}>
+                    {added ? '✓ Added' : addingKey === key ? '…' : '+ Add'}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+          <p className="text-[10px] text-muted-foreground/60 mt-1.5">
+            Habits added here are auto-linked to this goal so AI alignment can track them.
+          </p>
+        </div>
+      )}
     </div>
   )
 }

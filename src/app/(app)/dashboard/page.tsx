@@ -1,30 +1,20 @@
 import { createClient } from '@/lib/supabase/server'
+import { requireUser } from '@/lib/supabase/require-user'
 import { redirect } from 'next/navigation'
 import HomeClient from './HomeClient'
 import { todayString } from '@/lib/utils'
 
 export default async function DashboardPage() {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/auth')
+  const user = await requireUser(supabase)
 
   const today = todayString()
   const thirtyAgo = new Date()
   thirtyAgo.setDate(thirtyAgo.getDate() - 29)
   const thirtyAgoStr = thirtyAgo.toISOString().split('T')[0]
 
-  const [
-    { data: profile },
-    { data: habits },
-    { data: habitLogs30 },
-    { data: prayerLogs30 },
-    { data: challenges },
-    { data: challengeCheckins30 },
-    { data: tasks30 },
-    { data: goals },
-    { data: aiReports },
-    { data: healthLogs30 },
-  ] = await Promise.all([
+  // Use allSettled so a single slow/failing query doesn't kill the whole page
+  const results = await Promise.allSettled([
     supabase.from('users').select('*').eq('id', user.id).single(),
     supabase.from('habits').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
     supabase.from('habit_logs').select('*').eq('user_id', user.id).gte('date', thirtyAgoStr),
@@ -36,6 +26,19 @@ export default async function DashboardPage() {
     supabase.from('ai_reports').select('id, type, generated_at').eq('user_id', user.id).gte('generated_at', new Date(Date.now() - 7 * 86400000).toISOString()),
     supabase.from('health_logs').select('*').eq('user_id', user.id).gte('date', thirtyAgoStr),
   ])
+  const data = (i: number): any =>
+    results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
+
+  const profile             = data(0)
+  const habits              = data(1)
+  const habitLogs30         = data(2)
+  const prayerLogs30        = data(3)
+  const challenges          = data(4)
+  const challengeCheckins30 = data(5)
+  const tasks30             = data(6)
+  const goals               = data(7)
+  const aiReports           = data(8)
+  const healthLogs30        = data(9)
 
   if (!profile?.onboarding_complete) redirect('/onboarding')
 

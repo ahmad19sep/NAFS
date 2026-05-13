@@ -48,9 +48,13 @@ export default function DashboardClient({ profile, todayLog, recentLogs, latestT
       navigator.geolocation.getCurrentPosition(async (pos) => {
         try {
           const today = new Date()
+          const ctrl = new AbortController()
+          const timer = setTimeout(() => ctrl.abort(), 5000)
           const res = await fetch(
-            `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${pos.coords.latitude}&longitude=${pos.coords.longitude}&method=2`
+            `https://api.aladhan.com/v1/timings/${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}?latitude=${pos.coords.latitude}&longitude=${pos.coords.longitude}&method=2`,
+            { signal: ctrl.signal }
           )
+          clearTimeout(timer)
           const json = await res.json()
           if (json.data) {
             const timings = json.data.timings

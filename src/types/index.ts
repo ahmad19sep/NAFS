@@ -36,6 +36,19 @@ export interface Habit {
   is_paused: boolean
   sort_order: number
   created_at: string
+  ai_starter_pack?: HabitAiStarterPack | null
+}
+
+export interface HabitAiStarterPack {
+  pattern_insight: string
+  how_to_succeed: string
+  best_time: string
+  related_habits: Array<{
+    name: string; emoji: string
+    type: HabitType
+    target_value?: number; unit?: string; time_target_mins?: number
+  }>
+  generated_at: string
 }
 
 export interface HabitLog {

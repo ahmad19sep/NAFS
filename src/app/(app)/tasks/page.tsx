@@ -1,12 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+import { requireUser } from '@/lib/supabase/require-user'
 import TasksClient from './TasksClient'
 import { todayString } from '@/lib/utils'
 
 export default async function TasksPage() {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/auth')
+  const user = await requireUser(supabase)
 
   // Pull enough history to render 30 days daily, 12 weeks weekly, 6 months monthly.
   const sixMonthsAgo = new Date()

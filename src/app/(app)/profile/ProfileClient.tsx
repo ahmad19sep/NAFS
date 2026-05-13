@@ -8,22 +8,34 @@ import { cn, scoreColor } from '@/lib/utils'
 import {
   Pencil, KeyRound, Share2, BarChart3, Download, Bell, Globe, Moon,
   Info, LogOut, ChevronRight, Check, X, Loader2, Mail, Camera, Trash2,
-  UserCircle2, Briefcase, MapPin, Cake, Heart,
+  UserCircle2, Briefcase, MapPin, Cake, Heart, Send, Award, Lock, AlertTriangle,
 } from 'lucide-react'
+import { BADGES, TIER_COLORS, badgesByFeature, type BadgeDef, type BadgeFeature } from '@/lib/badges'
 
+interface DayScore { date: string; pct: number; earned: number; max: number }
 interface Props {
   profile: any
-  logs: { date: string; identity_score: number; weighted_hours_today: number; todays_pull_days: number }[]
+  dailyScores: DayScore[]
+  earnedBadges: Record<string, string>  // badge_id → earned_at ISO
 }
 
-export default function ProfileClient({ profile, logs }: Props) {
+export default function ProfileClient({ profile, dailyScores, earnedBadges }: Props) {
   const router = useRouter()
   const supabase = createClient()
 
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // Defensive name chain — treat known placeholders as empty so a real name wins
+  const PLACEHOLDERS_LOWER = new Set(['', 'friend', 'no name', 'user'])
+  const emailPrefix = (profile?.email as string | undefined)?.split('@')[0] ?? ''
+  const rawProfileName: string = ((profile?.name as string | undefined) ?? '').trim()
+  const resolvedName: string =
+    PLACEHOLDERS_LOWER.has(rawProfileName.toLowerCase())
+      ? (emailPrefix || 'Friend')
+      : rawProfileName
+
   const [editing, setEditing] = useState(false)
-  const [name, setName] = useState(profile?.name ?? '')
+  const [name, setName] = useState(resolvedName)
   const [avatarUrl, setAvatarUrl] = useState<string | null>(profile?.avatar_url ?? null)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
@@ -46,11 +58,45 @@ export default function ProfileClient({ profile, logs }: Props) {
   const [aboutMe, setAboutMe] = useState(initialAbout)
   const aboutFilled = !!(aboutMe.bio || aboutMe.occupation || aboutMe.birth_date || aboutMe.location || (aboutMe.interests?.length))
 
-  // Stats
-  const avgScore = logs.length > 0
-    ? Math.round(logs.reduce((s, l) => s + l.identity_score, 0) / logs.length) : 0
-  const bestScore = logs.reduce((max, l) => Math.max(max, l.identity_score), 0)
-  const daysLogged = logs.length
+  // Email reports prefs
+  const [emailDaily, setEmailDaily]   = useState<boolean>(!!profile?.notify_email_daily)
+  const [emailWeekly, setEmailWeekly] = useState<boolean>(!!profile?.notify_email_weekly)
+  const [savingPref, setSavingPref]   = useState<string | null>(null)
+  const [sendingTest, setSendingTest] = useState<'daily' | 'weekly' | null>(null)
+
+  // Delete account
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteText, setDeleteText] = useState('')
+  const [deleting, setDeleting] = useState(false)
+
+  // Badges
+  const [badgeOpen, setBadgeOpen] = useState<BadgeDef | null>(null)
+  const earnedCount = Object.keys(earnedBadges).length
+  const totalCount  = BADGES.length
+
+  async function shareBadge(b: BadgeDef) {
+    const text =
+      `${b.emoji} I just earned the "${b.name}" badge on NAFS!\n` +
+      `${b.description}\n\n` +
+      `Tracking my self-accountability journey, one day at a time.`
+    try {
+      if (typeof navigator !== 'undefined' && (navigator as any).share) {
+        await (navigator as any).share({ title: `NAFS — ${b.name}`, text })
+      } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(text)
+        flash('ok', 'Copied to clipboard')
+      }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') flash('err', 'Share failed')
+    }
+  }
+
+  // Stats — computed from the same engagement-aware daily scores as the dashboard
+  const validDays = dailyScores.filter((d) => d.max > 0)
+  const avgScore   = validDays.length > 0
+    ? Math.round(validDays.reduce((s, d) => s + d.pct, 0) / validDays.length) : 0
+  const bestScore  = validDays.length > 0 ? Math.max(...validDays.map((d) => d.pct)) : 0
+  const daysLogged = validDays.length
 
   function flash(type: 'ok' | 'err', text: string) {
     setToast({ type, text })
@@ -190,7 +236,7 @@ export default function ProfileClient({ profile, logs }: Props) {
   async function exportData() {
     const data = {
       profile: { name: profile.name, email: profile.email },
-      logs,
+      daily_scores: dailyScores,
       exported_at: new Date().toISOString(),
     }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -207,6 +253,53 @@ export default function ProfileClient({ profile, logs }: Props) {
     setSigningOut(true)
     await supabase.auth.signOut()
     router.push('/auth')
+  }
+
+  async function deleteAccount() {
+    if (deleteText !== 'DELETE') return
+    setDeleting(true)
+    try {
+      const res = await fetch('/api/user/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: 'DELETE' }),
+      })
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}))
+        flash('err', b?.error || 'Delete failed')
+        setDeleting(false)
+        return
+      }
+      router.push('/auth')
+    } catch (e: any) {
+      flash('err', e?.message || 'Network error')
+      setDeleting(false)
+    }
+  }
+
+  async function toggleEmailPref(key: 'notify_email_daily' | 'notify_email_weekly', value: boolean) {
+    setSavingPref(key)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setSavingPref(null); flash('err', 'Not signed in'); return }
+    const { error } = await supabase.from('users').update({ [key]: value }).eq('id', user.id)
+    setSavingPref(null)
+    if (error) { flash('err', error.message); return }
+    if (key === 'notify_email_daily')  setEmailDaily(value)
+    if (key === 'notify_email_weekly') setEmailWeekly(value)
+    flash('ok', value ? 'Email reports enabled' : 'Email reports disabled')
+  }
+
+  async function sendTestReport(which: 'daily' | 'weekly') {
+    setSendingTest(which)
+    try {
+      const res = await fetch(`/api/cron/${which === 'daily' ? 'daily-report' : 'weekly-report'}?test=1`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { flash('err', data?.error || 'Failed to send'); return }
+      flash('ok', `${which === 'daily' ? 'Daily' : 'Weekly'} test sent to ${profile?.email}`)
+    } catch (e: any) {
+      flash('err', e?.message || 'Network error')
+    }
+    setSendingTest(null)
   }
 
   async function saveAbout() {
@@ -273,7 +366,7 @@ export default function ProfileClient({ profile, logs }: Props) {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={avatarUrl} alt="avatar" className="h-full w-full object-cover" />
               ) : (
-                <span>{(name[0] ?? 'A').toUpperCase()}</span>
+                <span>{((name || emailPrefix || 'N').trim()[0] ?? 'N').toUpperCase()}</span>
               )}
               {uploadingAvatar && (
                 <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
@@ -306,7 +399,7 @@ export default function ProfileClient({ profile, logs }: Props) {
               </div>
             ) : (
               <>
-                <p className="text-lg font-bold text-foreground truncate">{name || 'No name'}</p>
+                <p className="text-lg font-bold text-foreground truncate">{name || emailPrefix || 'Friend'}</p>
                 <p className="text-xs text-muted-foreground truncate">{profile?.email}</p>
                 {(() => {
                   const raw = profile?.created_at
@@ -380,6 +473,19 @@ export default function ProfileClient({ profile, logs }: Props) {
           onClick={() => setAboutOpen(true)} />
       </Section>
 
+      {/* BADGES */}
+      <div>
+        <div className="flex items-baseline justify-between mb-2 px-1">
+          <p className="section-header flex items-center gap-1.5">
+            <Award size={11} className="text-gold" /> Badges
+          </p>
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {earnedCount} / {totalCount} earned
+          </span>
+        </div>
+        <BadgesGrid earned={earnedBadges} onSelect={setBadgeOpen} />
+      </div>
+
       {/* PERFORMANCE */}
       <Section title="Performance & sharing">
         <Row icon={<Share2 size={15} />} label="Share my progress"
@@ -395,6 +501,28 @@ export default function ProfileClient({ profile, logs }: Props) {
 
       {/* NOTIFICATIONS */}
       <Section title="Notifications">
+        <ToggleRow icon={<Mail size={15} />} label="Daily email report"
+          subLabel="Score + AI verdict + tomorrow's focus, every night"
+          value={emailDaily}
+          saving={savingPref === 'notify_email_daily'}
+          onToggle={(v) => toggleEmailPref('notify_email_daily', v)} />
+        {emailDaily && (
+          <Row icon={<Send size={15} />} label="Send a test daily report now"
+            subLabel={`Goes to ${profile?.email}`}
+            onClick={() => sendTestReport('daily')}
+            loading={sendingTest === 'daily'} />
+        )}
+        <ToggleRow icon={<Mail size={15} />} label="Weekly tribunal email"
+          subLabel="Full weekly verdict + goal alignment, Sunday 9pm"
+          value={emailWeekly}
+          saving={savingPref === 'notify_email_weekly'}
+          onToggle={(v) => toggleEmailPref('notify_email_weekly', v)} />
+        {emailWeekly && (
+          <Row icon={<Send size={15} />} label="Send a test weekly report now"
+            subLabel={`Goes to ${profile?.email}`}
+            onClick={() => sendTestReport('weekly')}
+            loading={sendingTest === 'weekly'} />
+        )}
         <Row icon={<Bell size={15} />} label="Push notifications"
           value="Coming soon" rightDim />
       </Section>
@@ -410,18 +538,116 @@ export default function ProfileClient({ profile, logs }: Props) {
         <Row icon={<Info size={15} />} label="Version" value="0.1.0" rightDim />
       </Section>
 
-      {/* Sign out */}
-      <button onClick={signOut} disabled={signingOut}
-        className="w-full rounded-2xl border border-red-500/25 bg-red-500/5 px-4 py-3.5
-                   text-sm font-semibold text-red-400 hover:bg-red-500/10 transition-all
-                   flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.98]">
-        <LogOut size={16} />
-        {signingOut ? 'Signing out…' : 'Sign out'}
-      </button>
+      {/* Sign out + Delete account */}
+      <div className="space-y-2">
+        <button onClick={signOut} disabled={signingOut}
+          className="w-full rounded-2xl border border-red-500/25 bg-red-500/5 px-4 py-3.5
+                     text-sm font-semibold text-red-400 hover:bg-red-500/10 transition-all
+                     flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.98]">
+          <LogOut size={16} />
+          {signingOut ? 'Signing out…' : 'Sign out'}
+        </button>
+
+        <button onClick={() => { setDeleteOpen(true); setDeleteText('') }}
+          className="w-full rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3
+                     text-xs font-semibold text-red-400 hover:bg-red-500/20 transition-all
+                     flex items-center justify-center gap-2 active:scale-[0.98]">
+          <Trash2 size={14} />
+          Delete account permanently
+        </button>
+      </div>
 
       <p className="text-center text-[10px] text-muted-foreground/60 pt-2">
         NAFS · v0.1.0 · built for self-accountability
       </p>
+
+      {/* Delete account confirmation */}
+      {deleteOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-5"
+          onClick={() => !deleting && setDeleteOpen(false)}>
+          <div className="w-full max-w-sm bg-[#0f2235] border border-red-500/40 rounded-3xl p-6"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="text-center mb-4">
+              <div className="mx-auto h-14 w-14 rounded-2xl bg-red-500/15 border border-red-500/40 flex items-center justify-center text-2xl mb-3">
+                <AlertTriangle size={26} className="text-red-400" />
+              </div>
+              <h2 className="text-lg font-bold text-foreground">Delete account?</h2>
+              <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+                This permanently deletes your profile, habits, prayers, tasks, challenges, goals, health logs and all history. <span className="text-red-400 font-semibold">This cannot be undone.</span>
+              </p>
+            </div>
+
+            <label className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1 block">
+              Type <span className="font-bold text-red-400">DELETE</span> to confirm
+            </label>
+            <input type="text" value={deleteText}
+              onChange={(e) => setDeleteText(e.target.value)}
+              placeholder="DELETE"
+              className="log-input text-center font-bold tracking-widest"
+              autoFocus />
+
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => setDeleteOpen(false)} disabled={deleting}
+                className="flex-1 rounded-xl border border-white/10 py-3 text-sm text-muted-foreground hover:bg-white/5">
+                Cancel
+              </button>
+              <button onClick={deleteAccount} disabled={deleting || deleteText !== 'DELETE'}
+                className="flex-1 rounded-xl bg-red-500 py-3 text-sm font-semibold text-white
+                           hover:bg-red-600 transition-all disabled:opacity-30 disabled:cursor-not-allowed active:scale-95">
+                {deleting ? 'Deleting…' : 'Delete forever'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Badge detail sheet */}
+      {badgeOpen && (() => {
+        const tone = TIER_COLORS[badgeOpen.tier]
+        const earnedAt = earnedBadges[badgeOpen.id]
+        const isEarned = !!earnedAt
+        return (
+          <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center"
+            onClick={() => setBadgeOpen(null)}>
+            <div className="w-full max-w-sm bg-[#0f2235] border-t sm:border border-white/10
+                            rounded-t-3xl sm:rounded-3xl p-6 text-center"
+              onClick={(e) => e.stopPropagation()}>
+              <div className={cn('mx-auto h-24 w-24 rounded-3xl flex items-center justify-center text-5xl ring-2',
+                tone.bg, tone.ring, !isEarned && 'opacity-30 grayscale'
+              )}>
+                {badgeOpen.emoji}
+              </div>
+              <p className={cn('mt-3 text-[10px] uppercase tracking-widest font-semibold', tone.text)}>
+                {tone.label}
+              </p>
+              <h3 className="mt-1 text-lg font-bold text-foreground">{badgeOpen.name}</h3>
+              <p className="mt-1 text-sm text-muted-foreground leading-relaxed">{badgeOpen.description}</p>
+              {isEarned ? (
+                <p className="mt-3 text-[11px] text-emerald-400">
+                  ✓ Earned {new Date(earnedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                </p>
+              ) : (
+                <p className="mt-3 text-[11px] text-muted-foreground/70 flex items-center justify-center gap-1">
+                  <Lock size={10} /> Not yet earned
+                </p>
+              )}
+              <div className="flex gap-2 mt-5">
+                <button onClick={() => setBadgeOpen(null)}
+                  className="flex-1 rounded-xl border border-white/10 py-3 text-sm text-muted-foreground hover:bg-white/5">
+                  Close
+                </button>
+                {isEarned && (
+                  <button onClick={() => shareBadge(badgeOpen)}
+                    className="flex-[2] rounded-xl bg-primary py-3 text-sm font-semibold text-white
+                               hover:bg-teal-light transition-all flex items-center justify-center gap-2">
+                    <Share2 size={14} /> Share
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* About-you sheet */}
       {aboutOpen && (
@@ -606,5 +832,100 @@ function RowLink({
         right={value ? <span className="text-xs text-muted-foreground">{value}</span> : null}
         asLink />
     </Link>
+  )
+}
+
+function BadgesGrid({ earned, onSelect }: {
+  earned: Record<string, string>
+  onSelect: (b: BadgeDef) => void
+}) {
+  const groups = badgesByFeature()
+  const FEATURE_LABEL: Record<BadgeFeature, { emoji: string; label: string }> = {
+    overall:    { emoji: '✨', label: 'Overall' },
+    deen:       { emoji: '🕌', label: 'Deen' },
+    habits:     { emoji: '🔄', label: 'Habits' },
+    tasks:      { emoji: '✅', label: 'Tasks' },
+    challenges: { emoji: '🎯', label: 'Challenges' },
+    health:     { emoji: '❤️', label: 'Health' },
+    goals:      { emoji: '🏆', label: 'Goals' },
+  }
+  const order: BadgeFeature[] = ['overall', 'deen', 'habits', 'tasks', 'challenges', 'health', 'goals']
+
+  return (
+    <div className="space-y-3">
+      {order.map((f) => {
+        const list = groups[f]
+        if (list.length === 0) return null
+        const earnedInGroup = list.filter((b) => earned[b.id]).length
+        return (
+          <div key={f} className="nafs-card p-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-foreground">
+                {FEATURE_LABEL[f].emoji} {FEATURE_LABEL[f].label}
+              </p>
+              <span className="text-[10px] tabular-nums text-muted-foreground">
+                {earnedInGroup} / {list.length}
+              </span>
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {list.map((b) => {
+                const isEarned = !!earned[b.id]
+                const tone = TIER_COLORS[b.tier]
+                return (
+                  <button key={b.id} onClick={() => onSelect(b)}
+                    className={cn(
+                      'aspect-square rounded-xl border flex flex-col items-center justify-center gap-0.5 transition-all active:scale-90',
+                      isEarned
+                        ? `${tone.bg} ${tone.ring} ring-2 hover:brightness-125`
+                        : 'border-white/10 bg-white/3 opacity-30 grayscale hover:opacity-50'
+                    )}
+                    title={`${b.name}${isEarned ? '' : ' (locked)'}`}>
+                    <span className="text-2xl leading-none">{b.emoji}</span>
+                    <span className={cn('text-[8px] uppercase tracking-wider font-bold leading-none',
+                      isEarned ? tone.text : 'text-muted-foreground'
+                    )}>{tone.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function ToggleRow({
+  icon, label, subLabel, value, saving, onToggle,
+}: {
+  icon: React.ReactNode
+  label: string
+  subLabel?: string
+  value: boolean
+  saving: boolean
+  onToggle: (next: boolean) => void
+}) {
+  return (
+    <button onClick={() => !saving && onToggle(!value)} disabled={saving}
+      className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-white/5 transition-colors text-left disabled:opacity-60">
+      <div className="h-8 w-8 rounded-xl bg-white/5 border border-white/8 flex items-center justify-center text-muted-foreground flex-shrink-0">
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-foreground leading-tight">{label}</p>
+        {subLabel && <p className="text-[11px] text-muted-foreground/80 mt-0.5">{subLabel}</p>}
+      </div>
+      <div className={cn('relative h-5 w-9 rounded-full transition-colors flex-shrink-0',
+        value ? 'bg-gold' : 'bg-white/15'
+      )}>
+        {saving ? (
+          <Loader2 size={11} className="animate-spin absolute inset-0 m-auto text-white" />
+        ) : (
+          <div className={cn('h-5 w-5 rounded-full bg-white transition-transform shadow',
+            value && 'translate-x-4'
+          )} />
+        )}
+      </div>
+    </button>
   )
 }

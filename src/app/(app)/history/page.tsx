@@ -1,12 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+import { requireUser } from '@/lib/supabase/require-user'
 import HistoryPageClient from './HistoryClient'
 import { todayString } from '@/lib/utils'
 
 export default async function HistoryPage() {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/auth')
+  const user = await requireUser(supabase)
 
   const today = todayString()
   const thirtyAgo = new Date()
@@ -18,15 +17,7 @@ export default async function HistoryPage() {
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
   const tasksStart = sixMonthsAgo.toISOString().split('T')[0]
 
-  const [
-    { data: habits },
-    { data: habitLogs30 },
-    { data: prayerLogs30 },
-    { data: challenges },
-    { data: challengeCheckins30 },
-    { data: allTasks },
-    { data: healthLogs30 },
-  ] = await Promise.all([
+  const results = await Promise.allSettled([
     supabase.from('habits').select('*').eq('user_id', user.id).eq('is_active', true),
     supabase.from('habit_logs').select('*').eq('user_id', user.id).gte('date', start),
     supabase.from('prayer_logs').select('*').eq('user_id', user.id).gte('date', start),
@@ -35,6 +26,15 @@ export default async function HistoryPage() {
     supabase.from('tasks').select('*').eq('user_id', user.id).gte('period_date', tasksStart),
     supabase.from('health_logs').select('*').eq('user_id', user.id).gte('date', start),
   ])
+  const data = (i: number): any =>
+    results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
+  const habits              = data(0)
+  const habitLogs30         = data(1)
+  const prayerLogs30        = data(2)
+  const challenges          = data(3)
+  const challengeCheckins30 = data(4)
+  const allTasks            = data(5)
+  const healthLogs30        = data(6)
 
   return (
     <HistoryPageClient

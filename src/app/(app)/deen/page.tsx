@@ -104,13 +104,21 @@ export default function DeenPage() {
         .order('date', { ascending: true })
       setPastLogs(past ?? [])
 
-      // Hijri
+      // Hijri date (external API — abort after 5s so it never blocks the page)
       try {
         const now = new Date()
-        const res = await fetch(`https://api.aladhan.com/v1/gToH/${now.getDate()}-${now.getMonth() + 1}-${now.getFullYear()}`)
+        const ctrl = new AbortController()
+        const timer = setTimeout(() => ctrl.abort(), 5000)
+        const res = await fetch(
+          `https://api.aladhan.com/v1/gToH/${now.getDate()}-${now.getMonth() + 1}-${now.getFullYear()}`,
+          { signal: ctrl.signal }
+        )
+        clearTimeout(timer)
         const json = await res.json()
         if (json.data) setHijriDate(`${json.data.hijri.day} ${json.data.hijri.month.en} ${json.data.hijri.year} AH`)
-      } catch {}
+      } catch {
+        // Non-fatal — Hijri date is decorative
+      }
 
       setLoading(false)
     }

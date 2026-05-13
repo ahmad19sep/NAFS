@@ -1,12 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
+import { requireUser } from '@/lib/supabase/require-user'
 import GoalsClient from './GoalsClient'
 import { todayString } from '@/lib/utils'
 
 export default async function GoalsPage() {
   const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/auth')
+  const user = await requireUser(supabase)
 
   const [{ data: goals }, { data: habits }] = await Promise.all([
     supabase

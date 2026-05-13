@@ -39,15 +39,21 @@ export default function DeenClient({ logs, quranLogs }: Props) {
     async function loadHijri() {
       try {
         const now = new Date()
+        const ctrl = new AbortController()
+        const timer = setTimeout(() => ctrl.abort(), 5000)
         const res = await fetch(
-          `https://api.aladhan.com/v1/gToH/${now.getDate()}-${now.getMonth() + 1}-${now.getFullYear()}`
+          `https://api.aladhan.com/v1/gToH/${now.getDate()}-${now.getMonth() + 1}-${now.getFullYear()}`,
+          { signal: ctrl.signal }
         )
+        clearTimeout(timer)
         const json = await res.json()
         if (json.data) {
           const h = json.data.hijri
           setHijriDate(`${h.day} ${h.month.en} ${h.year} AH`)
         }
-      } catch {}
+      } catch {
+        // Non-fatal — Hijri date is decorative
+      }
     }
     loadHijri()
   }, [])

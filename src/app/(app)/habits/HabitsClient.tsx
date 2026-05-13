@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, MoreVertical, Bell, X, Pencil, Pause, Play, Trash2, BarChart3, Check, Minus } from 'lucide-react'
+import { Plus, MoreVertical, Bell, X, Pencil, Pause, Play, Trash2, BarChart3, Check, Minus, Sparkles, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Habit, HabitLog, HabitType, ScheduleKind, Weekday } from '@/types'
 import HistoryTeaserCard from '@/components/HistoryTeaserCard'
@@ -156,6 +156,56 @@ export default function HabitsClient({ userId, habits, logs, today }: Props) {
     await fetch(`/api/habits/${id}`, { method: 'DELETE' })
     router.refresh()
   }
+
+  async function dismissAiStarter(id: string) {
+    await fetch(`/api/habits/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ai_starter_pack: null }),
+    })
+    router.refresh()
+  }
+
+  const [generatingAiFor, setGeneratingAiFor] = useState<string | null>(null)
+  async function generateAiStarter(id: string) {
+    setGeneratingAiFor(id)
+    try {
+      const res = await fetch('/api/ai/habit-starter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ habitId: id }),
+      })
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}))
+        alert(b?.error || 'AI tips failed — try again')
+      } else {
+        router.refresh()
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Network error')
+    }
+    setGeneratingAiFor(null)
+  }
+
+  async function addRelatedHabit(h: any) {
+    await fetch('/api/habits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        name: h.name,
+        emoji: h.emoji || '⭐',
+        type: h.type,
+        target_value: h.target_value ?? 1,
+        unit: h.unit ?? '',
+        time_target_mins: h.time_target_mins ?? 0,
+        category: 'custom',
+        score_weight: 2,
+        schedule_kind: 'daily',
+      }),
+    })
+    router.refresh()
+  }
   async function togglePause(h: Habit) {
     await fetch(`/api/habits/${h.id}`, {
       method: 'PATCH',
@@ -237,6 +287,10 @@ export default function HabitsClient({ userId, habits, logs, today }: Props) {
             onDelete={() => { setMenuOpenId(null); deleteHabit(h.id) }}
             onPause={() => { setMenuOpenId(null); togglePause(h) }}
             onLog={(p) => logHabit(h.id, p)}
+            onDismissAi={() => dismissAiStarter(h.id)}
+            onGenerateAi={() => generateAiStarter(h.id)}
+            generatingAi={generatingAiFor === h.id}
+            onAddRelated={addRelatedHabit}
           />
         ))}
       </div>
@@ -257,7 +311,7 @@ export default function HabitsClient({ userId, habits, logs, today }: Props) {
 // ============================================================
 // HABIT CARD
 // ============================================================
-function HabitCard({ habit, log, onLog, onEdit, onDelete, onPause, menuOpen, onMenuToggle }: {
+function HabitCard({ habit, log, onLog, onEdit, onDelete, onPause, menuOpen, onMenuToggle, onDismissAi, onGenerateAi, generatingAi, onAddRelated }: {
   habit: Habit
   log: HabitLog | undefined
   onLog: (p: Partial<{ completed: boolean; value: number; duration_mins: number; notes: string | null; subject_delta: number }>) => void
@@ -266,6 +320,10 @@ function HabitCard({ habit, log, onLog, onEdit, onDelete, onPause, menuOpen, onM
   onPause: () => void
   menuOpen: boolean
   onMenuToggle: (e: React.MouseEvent) => void
+  onDismissAi: () => void
+  onGenerateAi: () => void
+  generatingAi: boolean
+  onAddRelated: (h: any) => void
 }) {
   const scheduled = isScheduledToday(habit)
   const done = isCompletedToday(habit, log)
@@ -339,6 +397,73 @@ function HabitCard({ habit, log, onLog, onEdit, onDelete, onPause, menuOpen, onM
       {/* Why */}
       {habit.why && (
         <p className="mt-2 text-[11px] text-muted-foreground/70 italic">"{habit.why}"</p>
+      )}
+
+      {/* Manual AI tips trigger when none yet */}
+      {!habit.ai_starter_pack && (
+        <button onClick={(e) => { e.stopPropagation(); onGenerateAi() }} disabled={generatingAi}
+          className="mt-2 w-full flex items-center justify-center gap-1.5 rounded-lg border border-cyan-400/30
+                     bg-cyan-500/8 py-1.5 text-[11px] font-semibold text-cyan-300
+                     hover:bg-cyan-500/15 transition-all disabled:opacity-50">
+          {generatingAi ? <RefreshCw size={11} className="animate-spin" /> : <Sparkles size={11} />}
+          {generatingAi ? 'Asking AI…' : 'Get AI tips'}
+        </button>
+      )}
+
+      {/* AI starter pack */}
+      {habit.ai_starter_pack && (
+        <div className="mt-3 rounded-xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 via-blue-700/5 to-transparent p-3 space-y-2">
+          <div className="flex items-start gap-2">
+            <Sparkles size={12} className="text-cyan-400 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 min-w-0 space-y-1.5">
+              {habit.ai_starter_pack.pattern_insight && (
+                <p className="text-[11px] text-foreground leading-snug">
+                  <span className="text-cyan-300 font-semibold">📊 </span>
+                  {habit.ai_starter_pack.pattern_insight}
+                </p>
+              )}
+              {habit.ai_starter_pack.how_to_succeed && (
+                <p className="text-[11px] text-foreground leading-snug">
+                  <span className="text-emerald-300 font-semibold">✓ </span>
+                  {habit.ai_starter_pack.how_to_succeed}
+                </p>
+              )}
+              {habit.ai_starter_pack.best_time && (
+                <p className="text-[11px] text-foreground leading-snug">
+                  <span className="text-gold font-semibold">⏰ </span>
+                  Best time: {habit.ai_starter_pack.best_time}
+                </p>
+              )}
+            </div>
+            <button onClick={(e) => { e.stopPropagation(); onDismissAi() }}
+              className="h-6 w-6 rounded-md hover:bg-white/10 flex items-center justify-center text-muted-foreground hover:text-red-400 flex-shrink-0">
+              <X size={11} />
+            </button>
+          </div>
+
+          {(habit.ai_starter_pack.related_habits?.length ?? 0) > 0 && (
+            <div className="space-y-1 pt-1 border-t border-white/5">
+              <p className="text-[10px] uppercase tracking-wider text-cyan-300">Stack with these</p>
+              {habit.ai_starter_pack.related_habits!.map((r, i) => (
+                <div key={i} className="rounded-lg border border-white/10 bg-white/5 p-2 flex items-center gap-2">
+                  <span className="text-base">{r.emoji || '⭐'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] font-semibold text-foreground truncate">{r.name}</p>
+                    <p className="text-[9px] text-muted-foreground">
+                      {r.type === 'simple' ? 'Yes/No · daily'
+                        : r.type === 'counter' ? `${r.target_value ?? '?'} ${r.unit ?? ''} · daily`
+                        : `${r.time_target_mins ?? '?'} min · daily`}
+                    </p>
+                  </div>
+                  <button onClick={(e) => { e.stopPropagation(); onAddRelated(r) }}
+                    className="rounded-md bg-cyan-500 px-2 py-1 text-[9px] font-semibold text-white hover:bg-cyan-400">
+                    + Add
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
@@ -612,6 +737,21 @@ function HabitForm({ form, onClose, onSaved, userId }: {
       setSaving(false)
       setError(body?.error || `Save failed (${res.status})`)
       return
+    }
+
+    // For new habits (not edits), fire AI starter pack in background
+    if (!isEdit) {
+      try {
+        const body = await res.json().catch(() => ({}))
+        const newId = body?.habit?.id
+        if (newId) {
+          fetch('/api/ai/habit-starter', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ habitId: newId }),
+          }).catch(() => {})
+        }
+      } catch {}
     }
 
     setSaving(false)

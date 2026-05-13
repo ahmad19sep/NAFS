@@ -3,15 +3,27 @@
 import { useState, useRef, useMemo, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Plus, Camera, Trash2, RotateCcw, Sparkles, Quote } from 'lucide-react'
+import { Plus, Camera, Trash2, Sparkles, Quote, RefreshCw } from 'lucide-react'
 import { cn, todayString } from '@/lib/utils'
 import HistoryTeaserCard from '@/components/HistoryTeaserCard'
 import { computeChallengesHistory } from '@/lib/history'
 import {
   type ChallengeFrequency, FREQUENCY,
   totalUnits, unitsElapsed, hasCheckedThisPeriod,
-  shouldAutoRestart, periodStreak,
+  periodStreak,
 } from '@/lib/challenges'
+
+interface ChallengeAiStarter {
+  why_this_works: string
+  hardest_obstacle: string
+  daily_anchor: string
+  supporting_habits: Array<{
+    name: string; emoji: string
+    type: 'simple' | 'counter' | 'duration'
+    target_value?: number; unit?: string; time_target_mins?: number
+  }>
+  generated_at: string
+}
 
 interface Challenge {
   id: string
@@ -29,6 +41,7 @@ interface Challenge {
   restart_count: number
   last_restart_at: string | null
   status: 'active' | 'completed' | 'failed'
+  ai_starter_pack: ChallengeAiStarter | null
   challenge_checkins: {
     date: string
     completed: boolean
@@ -77,22 +90,21 @@ export default function ChallengesClient({ challenges, userId }: Props) {
   const active = challenges.filter((c) => c.status === 'active')
   const finished = challenges.filter((c) => c.status === 'completed')
 
-  // ---- auto-restart on page load ----
+  // ---- auto-complete challenges past their deadline ----
   useEffect(() => {
-    async function autoRestart() {
+    async function autoComplete() {
+      let touched = false
       for (const c of active) {
-        if (shouldAutoRestart(c.frequency, c.start_date, c.challenge_checkins ?? [], today)) {
-          await supabase.from('challenges').update({
-            start_date: today,
-            current_streak: 0,
-            restart_count: (c.restart_count ?? 0) + 1,
-            last_restart_at: new Date().toISOString(),
-          }).eq('id', c.id)
+        const elapsed = unitsElapsed(c.frequency, c.start_date, today)
+        const total = totalUnits(c.frequency, c.duration_days)
+        if (elapsed >= total) {
+          await supabase.from('challenges').update({ status: 'completed' }).eq('id', c.id)
+          touched = true
         }
       }
-      router.refresh()
+      if (touched) router.refresh()
     }
-    if (active.length > 0) autoRestart()
+    if (active.length > 0) autoComplete()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -120,11 +132,11 @@ export default function ChallengesClient({ challenges, userId }: Props) {
     if (!reason.trim()) { setCreateError('Please write your reason'); return }
     setCreating(true); setCreateError(null)
 
-    const { error } = await supabase.from('challenges').insert({
+    const { data: created, error } = await supabase.from('challenges').insert({
       user_id: userId,
       title: title.trim(),
       emoji,
-      description: reason.trim(),       // reused field
+      description: reason.trim(),
       duration_days: duration,
       start_date: today,
       frequency,
@@ -135,12 +147,68 @@ export default function ChallengesClient({ challenges, userId }: Props) {
       longest_streak: 0,
       restart_count: 0,
       status: 'active',
-    })
+    }).select().single()
     setCreating(false)
     if (error) { setCreateError(error.message); return }
+
+    // Fire AI starter pack in background
+    if (created?.id) {
+      fetch('/api/ai/challenge-starter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeId: created.id }),
+      }).then(() => router.refresh()).catch(() => {})
+    }
+
     setShowCreate(false)
     setTitle(''); setReason(''); setEmoji('🎯'); setRequiresPhoto(false)
     setFrequency('daily'); setDuration(30)
+    router.refresh()
+  }
+
+  async function dismissChallengeStarter(id: string) {
+    await supabase.from('challenges').update({ ai_starter_pack: null }).eq('id', id)
+    router.refresh()
+  }
+
+  const [generatingAiFor, setGeneratingAiFor] = useState<string | null>(null)
+  async function generateChallengeStarter(id: string) {
+    setGeneratingAiFor(id)
+    try {
+      const res = await fetch('/api/ai/challenge-starter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeId: id }),
+      })
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}))
+        alert(b?.error || 'AI tips failed — try again')
+      } else {
+        router.refresh()
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Network error')
+    }
+    setGeneratingAiFor(null)
+  }
+
+  async function addSupportingHabit(h: any) {
+    await fetch('/api/habits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        name: h.name,
+        emoji: h.emoji || '⭐',
+        type: h.type,
+        target_value: h.target_value ?? 1,
+        unit: h.unit ?? '',
+        time_target_mins: h.time_target_mins ?? 0,
+        category: 'custom',
+        score_weight: 2,
+        schedule_kind: 'daily',
+      }),
+    })
     router.refresh()
   }
 
@@ -165,41 +233,33 @@ export default function ChallengesClient({ challenges, userId }: Props) {
       return
     }
 
-    if (completed) {
-      // Insert check-in for today (one per day max regardless of freq)
-      await supabase.from('challenge_checkins').upsert({
-        challenge_id: challenge.id,
-        date: today,
-        completed: true,
-        photo_url: photoForChallenge,
-      }, { onConflict: 'challenge_id,date' })
+    // Insert/upsert today's checkin (success OR miss)
+    await supabase.from('challenge_checkins').upsert({
+      challenge_id: challenge.id,
+      date: today,
+      completed,
+      photo_url: completed ? photoForChallenge : null,
+    }, { onConflict: 'challenge_id,date' })
 
-      // Recompute streak (period-aware)
-      const updatedCheckins = [
-        ...(challenge.challenge_checkins ?? []),
-        { date: today, completed: true, photo_url: photoForChallenge, sadqa_paid: false },
-      ]
-      const newStreak = periodStreak(challenge.frequency, challenge.start_date, updatedCheckins, today)
+    // Recompute streak from history. Missed today → streak resets to 0
+    // (because periodStreak walks back from today and stops at first non-completed).
+    // Challenge itself keeps running until its deadline.
+    const updatedCheckins = [
+      ...(challenge.challenge_checkins ?? []).filter((c) => c.date !== today),
+      { date: today, completed, photo_url: completed ? photoForChallenge : null, sadqa_paid: false },
+    ]
+    const newStreak = periodStreak(challenge.frequency, challenge.start_date, updatedCheckins, today)
 
-      // Check if challenge is fully complete
-      const elapsed = unitsElapsed(challenge.frequency, challenge.start_date, today)
-      const totalU = totalUnits(challenge.frequency, challenge.duration_days)
-      const isComplete = elapsed >= totalU
+    // Auto-complete if we've reached the deadline
+    const elapsed = unitsElapsed(challenge.frequency, challenge.start_date, today)
+    const totalU = totalUnits(challenge.frequency, challenge.duration_days)
+    const isComplete = elapsed >= totalU
 
-      await supabase.from('challenges').update({
-        current_streak: newStreak,
-        longest_streak: Math.max(challenge.longest_streak, newStreak),
-        ...(isComplete ? { status: 'completed' } : {}),
-      }).eq('id', challenge.id)
-    } else {
-      // RESTART: reset start_date + streak, increment restart_count
-      await supabase.from('challenges').update({
-        start_date: today,
-        current_streak: 0,
-        restart_count: (challenge.restart_count ?? 0) + 1,
-        last_restart_at: new Date().toISOString(),
-      }).eq('id', challenge.id)
-    }
+    await supabase.from('challenges').update({
+      current_streak: newStreak,
+      longest_streak: Math.max(challenge.longest_streak, newStreak),
+      ...(isComplete ? { status: 'completed' } : {}),
+    }).eq('id', challenge.id)
 
     setPhotoForChallenge(null)
     setCheckingIn(null)
@@ -378,6 +438,10 @@ export default function ChallengesClient({ challenges, userId }: Props) {
             onCheckIn={(done) => checkIn(c, done)}
             onDelete={() => deleteChallenge(c.id)}
             onCapturePhoto={() => { setCheckingIn(c.id); fileRef.current?.click() }}
+            onDismissAi={() => dismissChallengeStarter(c.id)}
+            onGenerateAi={() => generateChallengeStarter(c.id)}
+            generatingAi={generatingAiFor === c.id}
+            onAddSupportingHabit={addSupportingHabit}
           />
         ))}
       </div>
@@ -414,7 +478,7 @@ export default function ChallengesClient({ challenges, userId }: Props) {
 // ============================================================
 function ChallengeCard({
   challenge: c, today, checkingIn, photoForChallenge, uploadingPhoto,
-  onCheckIn, onDelete, onCapturePhoto,
+  onCheckIn, onDelete, onCapturePhoto, onDismissAi, onGenerateAi, generatingAi, onAddSupportingHabit,
 }: {
   challenge: Challenge
   today: string
@@ -424,6 +488,10 @@ function ChallengeCard({
   onCheckIn: (done: boolean) => void
   onDelete: () => void
   onCapturePhoto: () => void
+  onDismissAi: () => void
+  onGenerateAi: () => void
+  generatingAi: boolean
+  onAddSupportingHabit: (h: any) => void
 }) {
   const tone = FREQ_TONE[c.frequency]
   const meta = FREQUENCY[c.frequency]
@@ -431,6 +499,8 @@ function ChallengeCard({
   const total = totalUnits(c.frequency, c.duration_days)
   const pct = Math.min(100, Math.round((elapsed / total) * 100))
   const periodChecked = hasCheckedThisPeriod(c.frequency, c.challenge_checkins ?? [], today)
+  const completedDays = (c.challenge_checkins ?? []).filter((ck) => ck.completed).length
+  const completionRate = total > 0 ? Math.round((completedDays / total) * 100) : 0
 
   return (
     <div className={cn(
@@ -449,11 +519,6 @@ function ChallengeCard({
             <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider', tone.chip)}>
               {meta.emoji} {meta.label}
             </span>
-            {c.restart_count > 0 && (
-              <span className="inline-flex items-center gap-0.5 text-[10px] text-orange-400">
-                <RotateCcw size={9} /> restarted {c.restart_count}×
-              </span>
-            )}
           </div>
           <p className="font-bold text-foreground leading-tight">{c.title}</p>
         </div>
@@ -476,6 +541,73 @@ function ChallengeCard({
         </div>
       )}
 
+      {/* Manual AI tips trigger when none yet */}
+      {!c.ai_starter_pack && (
+        <button onClick={(e) => { e.stopPropagation(); onGenerateAi() }} disabled={generatingAi}
+          className="relative w-full flex items-center justify-center gap-1.5 rounded-lg border border-cyan-400/30
+                     bg-cyan-500/8 py-1.5 text-[11px] font-semibold text-cyan-300
+                     hover:bg-cyan-500/15 transition-all disabled:opacity-50">
+          {generatingAi ? <RefreshCw size={11} className="animate-spin" /> : <Sparkles size={11} />}
+          {generatingAi ? 'Asking AI…' : 'Get AI tips'}
+        </button>
+      )}
+
+      {/* AI starter pack */}
+      {c.ai_starter_pack && (
+        <div className="relative rounded-xl border border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 via-blue-700/5 to-transparent p-3 space-y-2">
+          <div className="flex items-start gap-2">
+            <Sparkles size={12} className="text-cyan-400 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 min-w-0 space-y-1.5">
+              {c.ai_starter_pack.why_this_works && (
+                <p className="text-[11px] text-foreground leading-snug">
+                  <span className="text-emerald-300 font-semibold">✓ </span>
+                  {c.ai_starter_pack.why_this_works}
+                </p>
+              )}
+              {c.ai_starter_pack.hardest_obstacle && (
+                <p className="text-[11px] text-foreground leading-snug">
+                  <span className="text-orange-300 font-semibold">⚠ </span>
+                  {c.ai_starter_pack.hardest_obstacle}
+                </p>
+              )}
+              {c.ai_starter_pack.daily_anchor && (
+                <p className="text-[11px] text-foreground leading-snug">
+                  <span className="text-gold font-semibold">⚓ </span>
+                  Anchor: {c.ai_starter_pack.daily_anchor}
+                </p>
+              )}
+            </div>
+            <button onClick={(e) => { e.stopPropagation(); onDismissAi() }}
+              className="h-6 w-6 rounded-md hover:bg-white/10 flex items-center justify-center text-muted-foreground hover:text-red-400 flex-shrink-0">
+              <Trash2 size={10} />
+            </button>
+          </div>
+
+          {(c.ai_starter_pack.supporting_habits?.length ?? 0) > 0 && (
+            <div className="space-y-1 pt-1 border-t border-white/5">
+              <p className="text-[10px] uppercase tracking-wider text-cyan-300">Supporting habits</p>
+              {c.ai_starter_pack.supporting_habits!.map((h, i) => (
+                <div key={i} className="rounded-lg border border-white/10 bg-white/5 p-2 flex items-center gap-2">
+                  <span className="text-base">{h.emoji || '⭐'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[11px] font-semibold text-foreground truncate">{h.name}</p>
+                    <p className="text-[9px] text-muted-foreground">
+                      {h.type === 'simple' ? 'Yes/No · daily'
+                        : h.type === 'counter' ? `${h.target_value ?? '?'} ${h.unit ?? ''} · daily`
+                        : `${h.time_target_mins ?? '?'} min · daily`}
+                    </p>
+                  </div>
+                  <button onClick={(e) => { e.stopPropagation(); onAddSupportingHabit(h) }}
+                    className="rounded-md bg-cyan-500 px-2 py-1 text-[9px] font-semibold text-white hover:bg-cyan-400">
+                    + Add
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Progress */}
       <div className="relative">
         <div className="flex justify-between text-[11px] text-muted-foreground mb-1.5">
@@ -492,6 +624,11 @@ function ChallengeCard({
           <span>Started {new Date(c.start_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
           <span>{Math.max(0, total - elapsed)} {meta.unitLabel}{total - elapsed === 1 ? '' : 's'} left</span>
         </div>
+        {completedDays > 0 && (
+          <p className="text-[10px] text-muted-foreground mt-1">
+            ✓ {completedDays} of {total} {meta.unitLabel}s done so far ({completionRate}% completion)
+          </p>
+        )}
       </div>
 
       {/* Photo proof badge */}
@@ -530,12 +667,12 @@ function ChallengeCard({
             </button>
             <button
               onClick={() => {
-                if (confirm(`Mark missed? Your ${meta.unitLabel} streak resets and the challenge restarts from today.`))
+                if (confirm(`Mark this ${meta.unitLabel} as missed? Your streak resets, but the challenge keeps running until ${new Date(new Date(c.start_date + 'T12:00:00').getTime() + c.duration_days * 86400000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.`))
                   onCheckIn(false)
               }}
               className="rounded-xl bg-red-500/10 border border-red-500/20 py-3.5
                          text-sm font-semibold text-red-400 active:scale-95 transition-all">
-              ⟲ Missed (restart)
+              ✗ Missed
             </button>
           </div>
         )}
