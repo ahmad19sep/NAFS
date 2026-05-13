@@ -131,18 +131,40 @@ export default function ChallengesClient({ challenges, userId }: Props) {
 
   return (
     <div className="mx-auto max-w-md px-4 space-y-6">
-      <div className="flex items-center justify-between pt-3">
-        <div>
-          <p className="text-xs text-muted-foreground">
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-          </p>
-          <h1 className="text-2xl font-bold text-foreground">Challenges</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{active.length} active</p>
-        </div>
+      <div className="pt-3">
+        <p className="text-xs text-muted-foreground">
+          {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+        </p>
+        {(() => {
+          const todayDone = active.filter((c) => c.challenge_checkins?.some((ci) => ci.date === today && ci.completed)).length
+          const pct = active.length > 0 ? Math.round((todayDone / active.length) * 100) : 0
+          return (
+            <>
+              <div className="flex items-baseline justify-between">
+                <h1 className="text-2xl font-bold text-foreground">Challenges</h1>
+                <span className={cn('text-2xl font-bold tabular-nums',
+                  pct === 100 && active.length > 0 ? 'text-emerald-400'
+                  : pct >= 50 ? 'text-gold' : 'text-muted-foreground'
+                )}>{pct}%</span>
+              </div>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {active.length} active · {todayDone}/{active.length} done today
+              </p>
+              <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
+                <div className={cn('h-full rounded-full transition-all',
+                  pct === 100 && active.length > 0 ? 'bg-emerald-400' : 'bg-gold')}
+                  style={{ width: `${pct}%` }} />
+              </div>
+            </>
+          )
+        })()}
+      </div>
+
+      <div className="flex justify-end">
         <button onClick={() => setShowCreate(!showCreate)}
           className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white
                      transition-all hover:bg-teal-light active:scale-95">
-          <Plus size={16} /> New
+          <Plus size={16} /> New challenge
         </button>
       </div>
 

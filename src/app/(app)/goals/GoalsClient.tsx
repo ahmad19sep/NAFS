@@ -123,14 +123,35 @@ export default function GoalsClient({ userId, goals, habits }: Props) {
 
   return (
     <div className="mx-auto max-w-md px-4 space-y-6">
-      <div className="flex items-center justify-between pt-3">
-        <div>
-          <p className="text-xs text-muted-foreground">
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-          </p>
-          <h1 className="text-2xl font-bold text-foreground">Goals</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{goals.length} goal{goals.length !== 1 ? 's' : ''}</p>
-        </div>
+      <div className="pt-3">
+        <p className="text-xs text-muted-foreground">
+          {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+        </p>
+        {(() => {
+          const avgPct = goals.length > 0
+            ? Math.round(goals.reduce((s, g) => s + (g.progress_pct ?? 0), 0) / goals.length)
+            : 0
+          return (
+            <>
+              <div className="flex items-baseline justify-between">
+                <h1 className="text-2xl font-bold text-foreground">Goals</h1>
+                <span className={cn('text-2xl font-bold tabular-nums',
+                  avgPct >= 75 ? 'text-emerald-400' : avgPct >= 40 ? 'text-gold' : 'text-muted-foreground'
+                )}>{avgPct}%</span>
+              </div>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {goals.length} goal{goals.length !== 1 ? 's' : ''} · average progress
+              </p>
+              <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-gradient-to-r from-primary to-gold transition-all"
+                  style={{ width: `${avgPct}%` }} />
+              </div>
+            </>
+          )
+        })()}
+      </div>
+
+      <div className="flex justify-end">
         <button onClick={() => setShowCreate(!showCreate)}
           className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white
                      transition-all hover:bg-teal-light active:scale-95">

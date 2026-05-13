@@ -1,5 +1,55 @@
 export type { Database } from './database'
 
+// ---------- Habits (v3) ----------
+export type HabitType = 'simple' | 'counter' | 'duration' | 'subject'
+export type ScheduleKind = 'daily' | 'weekdays' | 'per_week'
+export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
+
+export interface Habit {
+  id: string
+  user_id: string
+  name: string
+  emoji: string
+  type: HabitType
+  // counter / duration target
+  target_value: number
+  unit: string
+  time_target_mins: number
+  // subject-tracked
+  subject_name: string | null
+  subject_total: number | null
+  subject_position: number
+  subject_unit: string | null
+  // schedule
+  schedule_kind: ScheduleKind
+  schedule_days: Weekday[] | null
+  weekly_target: number | null
+  reminder_time: string | null   // 'HH:MM' from postgres TIME
+  // meta
+  why: string | null
+  category: string
+  score_weight: number
+  note_template: string | null
+  current_streak: number
+  longest_streak: number
+  is_active: boolean
+  is_paused: boolean
+  sort_order: number
+  created_at: string
+}
+
+export interface HabitLog {
+  id: string
+  user_id: string
+  habit_id: string
+  date: string
+  value: number          // counter total / minutes / subject pages-today
+  completed: boolean
+  duration_mins: number
+  notes: string | null
+  created_at: string
+}
+
 export interface Prayer {
   name: string
   completed: boolean

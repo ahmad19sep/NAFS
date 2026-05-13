@@ -10,16 +10,16 @@ import { cn } from '@/lib/utils'
 
 // No prayers here — prayers live in Daily Tasks on the home screen
 const STARTER_HABITS = [
-  { name: 'Exercise', emoji: '💪', type: 'boolean', target_value: 1, time_target_mins: 30, unit: '', category: 'health', score_weight: 3 },
+  { name: 'Exercise', emoji: '💪', type: 'simple', target_value: 1, time_target_mins: 30, unit: '', category: 'health', score_weight: 3 },
   { name: 'Reading', emoji: '📚', type: 'duration', target_value: 30, time_target_mins: 30, unit: 'mins', category: 'health', score_weight: 2 },
   { name: 'Deep Work / Coding', emoji: '💻', type: 'duration', target_value: 120, time_target_mins: 120, unit: 'mins', category: 'work', score_weight: 5 },
-  { name: 'No Social Media', emoji: '📵', type: 'boolean', target_value: 1, time_target_mins: 0, unit: '', category: 'discipline', score_weight: 3 },
-  { name: 'Sleep by 11 PM', emoji: '😴', type: 'boolean', target_value: 1, time_target_mins: 0, unit: '', category: 'health', score_weight: 2 },
-  { name: 'Drink Water (8 glasses)', emoji: '💧', type: 'count', target_value: 8, time_target_mins: 0, unit: 'glasses', category: 'health', score_weight: 1 },
+  { name: 'No Social Media', emoji: '📵', type: 'simple', target_value: 1, time_target_mins: 0, unit: '', category: 'discipline', score_weight: 3 },
+  { name: 'Sleep by 11 PM', emoji: '😴', type: 'simple', target_value: 1, time_target_mins: 0, unit: '', category: 'health', score_weight: 2 },
+  { name: 'Drink Water (8 glasses)', emoji: '💧', type: 'counter', target_value: 8, time_target_mins: 0, unit: 'glasses', category: 'health', score_weight: 1 },
   { name: 'Journaling', emoji: '✍️', type: 'duration', target_value: 15, time_target_mins: 15, unit: 'mins', category: 'mindset', score_weight: 2 },
-  { name: 'Cold Shower', emoji: '🚿', type: 'boolean', target_value: 1, time_target_mins: 0, unit: '', category: 'discipline', score_weight: 1 },
-  { name: 'Quran Reading', emoji: '📖', type: 'count', target_value: 5, time_target_mins: 20, unit: 'pages', category: 'islamic', score_weight: 3 },
-  { name: 'Dhikr', emoji: '📿', type: 'count', target_value: 100, time_target_mins: 10, unit: 'count', category: 'islamic', score_weight: 2 },
+  { name: 'Cold Shower', emoji: '🚿', type: 'simple', target_value: 1, time_target_mins: 0, unit: '', category: 'discipline', score_weight: 1 },
+  { name: 'Quran Reading', emoji: '📖', type: 'counter', target_value: 5, time_target_mins: 20, unit: 'pages', category: 'islamic', score_weight: 3 },
+  { name: 'Dhikr', emoji: '📿', type: 'counter', target_value: 100, time_target_mins: 10, unit: 'count', category: 'islamic', score_weight: 2 },
 ]
 
 export default function OnboardingPage() {

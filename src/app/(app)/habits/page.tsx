@@ -14,8 +14,19 @@ export default async function HabitsPage() {
   const ninetyDaysStr = ninetyDaysAgo.toISOString().split('T')[0]
 
   const [{ data: habits }, { data: logs }] = await Promise.all([
-    supabase.from('habits').select('*').eq('user_id', user.id).eq('is_active', true).order('sort_order'),
-    supabase.from('habit_logs').select('*').eq('user_id', user.id).gte('date', ninetyDaysStr).order('date'),
+    supabase
+      .from('habits')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .order('is_paused', { ascending: true })
+      .order('sort_order'),
+    supabase
+      .from('habit_logs')
+      .select('*')
+      .eq('user_id', user.id)
+      .gte('date', ninetyDaysStr)
+      .order('date'),
   ])
 
   return (
