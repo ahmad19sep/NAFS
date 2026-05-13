@@ -2,11 +2,13 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { cn, todayString } from '@/lib/utils'
 import { Plus, X, Flame } from 'lucide-react'
 import { PRAYERS, type PrayerStatus } from '@/lib/scoring'
+import HistoryTeaserCard from '@/components/HistoryTeaserCard'
+import { computeDeenHistory } from '@/lib/history'
 
 const PRAYER_EMOJIS: Record<string, string> = {
   Fajr: '🌙', Dhuhr: '☀️', Asr: '🌤️', Maghrib: '🌅', Isha: '⭐'
@@ -219,6 +221,12 @@ export default function DeenPage() {
   }
   const todayScore = computeDayScore(todayLog, items)
 
+  // 30-day Deen history (for teaser sparkline)
+  const deenHistory = useMemo(
+    () => computeDeenHistory(pastLogs as any, today),
+    [pastLogs, today]
+  )
+
   // Build heatmap of last 90 days
   const heatmapDays = (() => {
     const days: { date: string; pct: number; acceptable: boolean; perfect: boolean; isToday: boolean }[] = []
@@ -302,8 +310,8 @@ export default function DeenPage() {
         </div>
       </div>
 
-      {/* Streak + Heatmap */}
-      <div className="nafs-card p-5 space-y-4">
+      {/* Streak card */}
+      <div className="nafs-card p-5 space-y-3">
         <div className="flex items-center justify-between">
           <div>
             <p className="section-header mb-1">Deen streak</p>
@@ -317,37 +325,20 @@ export default function DeenPage() {
             <p className="text-lg font-bold tabular-nums text-gold">{longestStreak} 🏆</p>
           </div>
         </div>
-
         <p className="text-[10px] text-muted-foreground -mt-1 leading-relaxed">
           Pray all 5 (alone is OK) + complete every deen item → streak continues.
           Jamat is a bonus 🌟. Miss a prayer or task → streak resets.
         </p>
-
-        {/* 90-day heatmap */}
-        <div className="grid gap-1" style={{ gridTemplateColumns: 'repeat(15, 1fr)' }}>
-          {heatmapDays.map((d) => (
-            <div key={d.date} title={`${d.date} — ${Math.round(d.pct)}%${d.perfect ? ' · perfect' : ''}`}
-              className={cn(
-                'aspect-square rounded-sm transition-all',
-                heatmapColor(d),
-                d.isToday && 'ring-1 ring-gold/60'
-              )} />
-          ))}
-        </div>
-        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-          <span>90 days ago</span>
-          <div className="flex items-center gap-1">
-            <span>Less</span>
-            <div className="h-2 w-2 rounded-sm bg-white/8" />
-            <div className="h-2 w-2 rounded-sm bg-orange-500/30" />
-            <div className="h-2 w-2 rounded-sm bg-gold/40" />
-            <div className="h-2 w-2 rounded-sm bg-emerald-500/60" title="All prayed" />
-            <div className="h-2 w-2 rounded-sm bg-emerald-400" title="All in jamat" />
-            <span>More</span>
-          </div>
-          <span>Today</span>
-        </div>
       </div>
+
+      {/* History teaser */}
+      <HistoryTeaserCard
+        days={deenHistory}
+        title="Deen history"
+        href="/history?tab=deen"
+        emoji="🕌"
+        accent="gold"
+      />
 
       {/* 5 Daily Prayers */}
       <div className="nafs-card p-4 space-y-2">

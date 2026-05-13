@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { grokVision, grokText } from '@/lib/grok'
+import { geminiVision, generateText, safeParseJSON } from '@/lib/gemini'
 
 export const maxDuration = 60
-
-// Try multiple vision model names in order
-const VISION_MODELS = ['grok-2-vision', 'grok-vision-beta', 'grok-2-vision-1212']
 
 const VISION_PROMPT = `This is a phone screen time screenshot. Extract every app and exact time shown.
 
@@ -26,8 +23,8 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    if (!process.env.GROK_API_KEY) {
-      return NextResponse.json({ error: 'GROK_API_KEY not set in .env.local' }, { status: 500 })
+    if (!process.env.GEMINI_API_KEY) {
+      return NextResponse.json({ error: 'GEMINI_API_KEY not set in .env.local' }, { status: 500 })
     }
 
     const body = await req.json()
@@ -45,7 +42,7 @@ Apps: ${manualData.apps.map((a: any) => `${a.app}: ${a.minutes}m`).join(', ')}
 
 Give an honest analysis.`
 
-      const summary = await grokText(prompt, system)
+      const summary = await generateText(prompt, system)
 
       return NextResponse.json({
         total_mins: manualData.totalMins,
@@ -54,38 +51,16 @@ Give an honest analysis.`
       })
     }
 
-    // --- Vision path (try each model until one works) ---
+    // --- Vision path (Gemini Flash supports vision natively) ---
     if (!base64) return NextResponse.json({ error: 'No image data' }, { status: 400 })
 
-    let text = ''
-    let visionWorked = false
+    const text = await geminiVision(base64, mimeType || 'image/jpeg', VISION_PROMPT)
+    const parsed = safeParseJSON<any>(text)
 
-    for (const model of VISION_MODELS) {
-      try {
-        text = await grokVision(base64, mimeType || 'image/jpeg', VISION_PROMPT, model)
-        visionWorked = true
-        break
-      } catch (e: any) {
-        // Try next model
-        if (!e.message?.includes('not found') && !e.message?.includes('400')) throw e
-      }
-    }
-
-    if (!visionWorked) {
+    if (!parsed) {
       return NextResponse.json({
-        error: 'vision_not_available',
-        message: 'Vision models are not available on your Grok plan. Use manual entry instead.',
+        error: 'Could not read screenshot. Try manual entry.',
       }, { status: 422 })
-    }
-
-    const cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim()
-    let parsed: any
-    try {
-      parsed = JSON.parse(cleaned)
-    } catch {
-      const match = cleaned.match(/\{[\s\S]*\}/)
-      if (!match) return NextResponse.json({ error: 'Could not read screenshot. Try manual entry.' }, { status: 422 })
-      parsed = JSON.parse(match[0])
     }
 
     if (parsed.error) return NextResponse.json({ error: parsed.error }, { status: 422 })
@@ -96,10 +71,12 @@ Give an honest analysis.`
       summary: parsed.summary ?? '',
     })
   } catch (err: any) {
+    console.error('screentime analyze error:', err)
     return NextResponse.json({ error: err.message ?? 'Analysis failed' }, { status: 500 })
   }
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function guessCategory(app: string): string {
   const name = app.toLowerCase()
   if (/instagram|tiktok|twitter|snapchat|facebook|x\.com/.test(name)) return 'social'

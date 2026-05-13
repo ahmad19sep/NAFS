@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { grokChat } from '@/lib/grok'
+import { chatGemini, isRateLimit } from '@/lib/gemini'
+import { chatGroq, hasGroq } from '@/lib/groq'
 import { ASK_NAFS_SYSTEM, buildChatPrompt } from '@/lib/ai-prompts'
 
 export async function POST(req: NextRequest) {
@@ -44,8 +45,8 @@ export async function POST(req: NextRequest) {
       user_question: userQuestion,
     })
 
-    // Build message history for Grok
-    const grokMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+    // Build message history (system + last 8 turns, last user msg gets context-injected prompt)
+    const aiMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
       { role: 'system', content: ASK_NAFS_SYSTEM },
       ...messages.slice(-8).map((m: any) => ({
         role: m.role as 'user' | 'assistant',
@@ -53,7 +54,38 @@ export async function POST(req: NextRequest) {
       })),
     ]
 
-    const reply = await grokChat(grokMessages)
+    // Try Gemini first; fall back to Groq if rate-limited and Groq key available
+    let reply: string
+    let provider: 'gemini' | 'groq' = 'gemini'
+    const groqAvailable = hasGroq()
+    try {
+      reply = await chatGemini(aiMessages)
+      console.log('[chat] Gemini OK')
+    } catch (err: any) {
+      const { rateLimited, retryAfterSec } = isRateLimit(err)
+      console.warn('[chat] Gemini failed:', { status: err?.status, rateLimited, retryAfterSec, groqAvailable })
+
+      if (rateLimited && groqAvailable) {
+        try {
+          reply = await chatGroq(aiMessages)
+          provider = 'groq'
+          console.log('[chat] Groq fallback OK')
+        } catch (groqErr: any) {
+          console.error('[chat] Groq fallback failed:', groqErr?.message)
+          return NextResponse.json({
+            error: `Both AI providers failed. Gemini: rate-limited (retry in ${retryAfterSec ?? 60}s). Groq: ${groqErr?.message ?? 'unknown error'}`,
+          }, { status: 503 })
+        }
+      } else if (rateLimited) {
+        return NextResponse.json({
+          error: `Gemini is busy. Try again in ${retryAfterSec ?? 60} seconds.`,
+          hint: groqAvailable ? undefined : 'Add GROQ_API_KEY to .env.local for automatic fallback.',
+          retryAfter: retryAfterSec ?? 60,
+        }, { status: 429 })
+      } else {
+        throw err
+      }
+    }
 
     await supabase.from('ai_conversations').upsert({
       user_id: user.id,
@@ -61,8 +93,12 @@ export async function POST(req: NextRequest) {
       created_at: new Date().toISOString(),
     })
 
-    return NextResponse.json({ reply })
+    return NextResponse.json({ reply, provider })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    console.error('chat AI error:', err)
+    return NextResponse.json({
+      error: err?.message || 'AI chat failed',
+      hint: 'Check GEMINI_API_KEY (and optionally GROQ_API_KEY) in .env.local. Restart dev server after changes.',
+    }, { status: 500 })
   }
 }

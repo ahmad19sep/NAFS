@@ -28,7 +28,6 @@ export async function POST(req: NextRequest) {
     unit: body.unit ?? '',
     category: body.category ?? 'custom',
     score_weight: body.score_weight ?? 1,
-    note_template: body.note_template ?? null,
     why: body.why ?? null,
     schedule_kind: body.schedule_kind ?? 'daily',
     schedule_days: body.schedule_days ?? null,

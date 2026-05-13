@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation'
 import { Plus, MoreVertical, Bell, X, Pencil, Pause, Play, Trash2, BarChart3, Check, Minus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Habit, HabitLog, HabitType, ScheduleKind, Weekday } from '@/types'
+import HistoryTeaserCard from '@/components/HistoryTeaserCard'
+import { computeHabitsHistory } from '@/lib/history'
 
 // ---------- helpers ----------
 const WEEKDAY_CODES: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -120,6 +122,8 @@ export default function HabitsClient({ userId, habits, logs, today }: Props) {
   const [formOpen, setFormOpen] = useState<FormState | null>(null)
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
 
+  const history = useMemo(() => computeHabitsHistory(habits, logs, today), [habits, logs, today])
+
   useEffect(() => {
     function close() { setMenuOpenId(null) }
     window.addEventListener('click', close)
@@ -202,6 +206,17 @@ export default function HabitsClient({ userId, habits, logs, today }: Props) {
           )}
         </div>
       </div>
+
+      {/* History teaser */}
+      {visible.length > 0 && (
+        <HistoryTeaserCard
+          days={history}
+          title="Habits history"
+          href="/history?tab=habits"
+          emoji="🔄"
+          accent="teal"
+        />
+      )}
 
       {/* Empty state */}
       {visible.length === 0 && (

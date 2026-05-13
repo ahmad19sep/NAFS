@@ -1,11 +1,15 @@
 -- v3 Habits — full spec migration
 -- Adds: 4 types (simple/counter/duration/subject), schedule (daily/weekdays/per-week),
 -- reminder time, why, paused state, and subject-tracking fields.
+-- Also ensures legacy v2 columns exist so this single file is sufficient.
 
 -- ============================================================
--- 1. New columns on habits
+-- 1. New columns on habits (+ v2 stragglers, idempotent)
 -- ============================================================
 ALTER TABLE public.habits
+  ADD COLUMN IF NOT EXISTS score_weight INTEGER NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS time_target_mins INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS note_template TEXT,
   ADD COLUMN IF NOT EXISTS subject_name TEXT,
   ADD COLUMN IF NOT EXISTS subject_total INTEGER,
   ADD COLUMN IF NOT EXISTS subject_position INTEGER NOT NULL DEFAULT 0,
@@ -16,6 +20,10 @@ ALTER TABLE public.habits
   ADD COLUMN IF NOT EXISTS reminder_time TIME,
   ADD COLUMN IF NOT EXISTS why TEXT,
   ADD COLUMN IF NOT EXISTS is_paused BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE public.habit_logs
+  ADD COLUMN IF NOT EXISTS duration_mins INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS notes TEXT;
 
 -- Schedule kind constraint
 ALTER TABLE public.habits DROP CONSTRAINT IF EXISTS habits_schedule_kind_check;

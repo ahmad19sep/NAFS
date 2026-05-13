@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { grokText } from '@/lib/grok'
+import { generateText } from '@/lib/gemini'
 
 export async function POST(req: NextRequest) {
   try {
@@ -23,9 +23,9 @@ Write a plan with:
 2. The daily habit that will move the needle most
 3. How to know if they're on track in 30 days`
 
-    const plan = await grokText(prompt, system)
+    const plan = await generateText(prompt, system)
     return NextResponse.json({ plan })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 })
   }
 }

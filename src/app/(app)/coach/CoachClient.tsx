@@ -67,14 +67,25 @@ export default function CoachClient({ userId, reports, letters, lastConversation
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: newMessages, userId }),
       })
-      const data = await res.json()
-      if (data.reply) {
+      const data = await res.json().catch(() => ({} as any))
+
+      if (res.ok && data.reply) {
         setMessages([...newMessages, { role: 'assistant', content: data.reply }])
+      } else {
+        // Surface server-side error so the user sees it instead of dead silence
+        const errMsg =
+          data?.error ??
+          (res.status === 429 ? 'AI is rate-limited. Try again in a minute.'
+            : `Request failed (${res.status})`)
+        setMessages([...newMessages, {
+          role: 'assistant',
+          content: `⚠️ ${errMsg}${data?.hint ? `\n\n${data.hint}` : ''}`,
+        }])
       }
-    } catch {
+    } catch (err: any) {
       setMessages([...newMessages, {
         role: 'assistant',
-        content: 'I had trouble connecting. Please try again.',
+        content: `⚠️ Network error: ${err?.message ?? 'Could not reach the server.'}`,
       }])
     }
     setSending(false)

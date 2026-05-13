@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { grokText } from '@/lib/grok'
+import { generateText } from '@/lib/gemini'
 import { TRIBUNAL_SYSTEM, buildTribunalPrompt } from '@/lib/ai-prompts'
 
 export async function POST(req: NextRequest) {
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     const weekScoreAvg = Math.round(thisWeekLogs.reduce((s, l) => s + l.identity_score, 0) / thisWeekLogs.length)
     const weekStart = thisWeekLogs[0]?.date
 
-    const verdict = await grokText(buildTribunalPrompt({
+    const verdict = await generateText(buildTribunalPrompt({
       dream_statement: dream?.statement ?? 'Not set',
       week_score_avg: weekScoreAvg,
       last_week_score_avg: weekScoreAvg,
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
       type: 'tribunal',
       week_start: weekStart,
       content_md: verdict,
-      model_used: 'grok-3-fast',
+      model_used: 'gemini-2.0-flash',
     })
 
     return NextResponse.json({ verdict })

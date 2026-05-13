@@ -10,19 +10,50 @@ export async function GET(request: Request) {
     const supabase = createClient()
     const { data } = await supabase.auth.exchangeCodeForSession(code)
 
-    // Save user profile if this is first sign-in (e.g. Google OAuth)
     if (data?.user) {
       const meta = data.user.user_metadata ?? {}
-      const name = meta.full_name || meta.name || meta.user_name || data.user.email?.split('@')[0] || ''
-      const gender = meta.gender || null
+      const appMeta = (data.user as any).app_metadata ?? {}
+      const provider = appMeta.provider ?? 'email'
+      const isOAuth = provider !== 'email'
 
-      await supabase.from('users').upsert({
+      const name =
+        meta.full_name ||
+        meta.name ||
+        meta.user_name ||
+        data.user.email?.split('@')[0] ||
+        ''
+      const googleAvatar: string | null =
+        meta.avatar_url || meta.picture || null
+
+      // Read existing row so we can preserve user-uploaded fields
+      const { data: existing } = await supabase
+        .from('users')
+        .select('avatar_url, onboarding_complete, name')
+        .eq('id', data.user.id)
+        .maybeSingle()
+
+      const patch: Record<string, any> = {
         id: data.user.id,
         email: data.user.email!,
-        name,
-        gender,
-        // Don't overwrite onboarding_complete if user already exists
-      }, { onConflict: 'id', ignoreDuplicates: false })
+      }
+
+      // Always keep name in sync (so Google name change reflects)
+      if (name) patch.name = name
+
+      // Only set avatar from OAuth provider if user hasn't uploaded a custom one
+      if (googleAvatar && !existing?.avatar_url) {
+        patch.avatar_url = googleAvatar
+      }
+
+      // For OAuth users on their first sign-in, mark onboarding complete
+      // so they go straight to the dashboard. Preserve true if already true.
+      if (isOAuth && !existing?.onboarding_complete) {
+        patch.onboarding_complete = true
+      }
+
+      await supabase
+        .from('users')
+        .upsert(patch, { onConflict: 'id', ignoreDuplicates: false })
     }
   }
 

@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 const ALLOWED_FIELDS = [
   'name', 'emoji', 'type',
   'target_value', 'time_target_mins', 'unit',
-  'category', 'score_weight', 'note_template',
+  'category', 'score_weight',
   'why', 'schedule_kind', 'schedule_days', 'weekly_target', 'reminder_time',
   'subject_name', 'subject_total', 'subject_position', 'subject_unit',
   'is_active', 'is_paused', 'sort_order',

@@ -1,23 +1,33 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Plus, Camera, Flame } from 'lucide-react'
+import { Plus, Camera, Trash2, RotateCcw, Sparkles, Quote } from 'lucide-react'
 import { cn, todayString } from '@/lib/utils'
+import HistoryTeaserCard from '@/components/HistoryTeaserCard'
+import { computeChallengesHistory } from '@/lib/history'
+import {
+  type ChallengeFrequency, FREQUENCY,
+  totalUnits, unitsElapsed, hasCheckedThisPeriod,
+  shouldAutoRestart, periodStreak,
+} from '@/lib/challenges'
 
 interface Challenge {
   id: string
   title: string
   emoji: string
-  description: string
+  description: string                  // = "reason / why"
   duration_days: number
   start_date: string
+  frequency: ChallengeFrequency
   requires_photo: boolean
   sadqa_amount: number | null
   sadqa_currency: string
   current_streak: number
   longest_streak: number
+  restart_count: number
+  last_restart_at: string | null
   status: 'active' | 'completed' | 'failed'
   challenge_checkins: {
     date: string
@@ -32,48 +42,105 @@ interface Props {
   userId: string
 }
 
+const FREQ_KEYS: ChallengeFrequency[] = ['daily', 'weekly', 'monthly', 'yearly']
+const FREQ_TONE: Record<ChallengeFrequency, { card: string; chip: string; ring: string }> = {
+  daily:   { card: 'from-emerald-500/10 via-white/3 to-transparent border-emerald-400/20', chip: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30', ring: 'ring-emerald-400/30' },
+  weekly:  { card: 'from-cyan-500/10 via-white/3 to-transparent border-cyan-400/20',       chip: 'bg-cyan-500/15 text-cyan-300 border-cyan-400/30',         ring: 'ring-cyan-400/30' },
+  monthly: { card: 'from-violet-500/10 via-white/3 to-transparent border-violet-400/20',   chip: 'bg-violet-500/15 text-violet-300 border-violet-400/30',   ring: 'ring-violet-400/30' },
+  yearly:  { card: 'from-gold/10 via-white/3 to-transparent border-gold/25',                chip: 'bg-gold/15 text-gold border-gold/30',                       ring: 'ring-gold/30' },
+}
+
+// ============================================================
+// Page
+// ============================================================
 export default function ChallengesClient({ challenges, userId }: Props) {
   const router = useRouter()
   const supabase = createClient()
   const fileRef = useRef<HTMLInputElement>(null)
+  const today = todayString()
 
+  // Create form state
   const [showCreate, setShowCreate] = useState(false)
   const [title, setTitle] = useState('')
   const [emoji, setEmoji] = useState('🎯')
-  const [description, setDescription] = useState('')
-  const [duration, setDuration] = useState(21)
+  const [reason, setReason] = useState('')
+  const [frequency, setFrequency] = useState<ChallengeFrequency>('daily')
+  const [duration, setDuration] = useState(30)
   const [requiresPhoto, setRequiresPhoto] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
 
   const [checkingIn, setCheckingIn] = useState<string | null>(null)
   const [photoForChallenge, setPhotoForChallenge] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
 
-  const today = todayString()
   const active = challenges.filter((c) => c.status === 'active')
-  const finished = challenges.filter((c) => c.status !== 'active')
+  const finished = challenges.filter((c) => c.status === 'completed')
+
+  // ---- auto-restart on page load ----
+  useEffect(() => {
+    async function autoRestart() {
+      for (const c of active) {
+        if (shouldAutoRestart(c.frequency, c.start_date, c.challenge_checkins ?? [], today)) {
+          await supabase.from('challenges').update({
+            start_date: today,
+            current_streak: 0,
+            restart_count: (c.restart_count ?? 0) + 1,
+            last_restart_at: new Date().toISOString(),
+          }).eq('id', c.id)
+        }
+      }
+      router.refresh()
+    }
+    if (active.length > 0) autoRestart()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ---- history teaser ----
+  const history = useMemo(() => {
+    const all = challenges.flatMap((c) =>
+      (c.challenge_checkins ?? []).map((ci: any) => ({
+        challenge_id: c.id, date: ci.date, completed: ci.completed,
+      }))
+    )
+    return computeChallengesHistory(challenges as any, all, today)
+  }, [challenges, today])
+
+  // Default duration when frequency changes
+  function selectFrequency(f: ChallengeFrequency) {
+    setFrequency(f)
+    if (f === 'daily')   setDuration(30)
+    if (f === 'weekly')  setDuration(84)   // 12 weeks
+    if (f === 'monthly') setDuration(180)  // 6 months
+    if (f === 'yearly')  setDuration(365)  // 1 year
+  }
 
   async function createChallenge() {
-    if (!title.trim()) return
-    setCreating(true)
-    await supabase.from('challenges').insert({
+    if (!title.trim()) { setCreateError('Title required'); return }
+    if (!reason.trim()) { setCreateError('Please write your reason'); return }
+    setCreating(true); setCreateError(null)
+
+    const { error } = await supabase.from('challenges').insert({
       user_id: userId,
-      title,
+      title: title.trim(),
       emoji,
-      description,
+      description: reason.trim(),       // reused field
       duration_days: duration,
       start_date: today,
+      frequency,
       requires_photo: requiresPhoto,
       sadqa_amount: null,
       sadqa_currency: 'PKR',
       current_streak: 0,
       longest_streak: 0,
+      restart_count: 0,
       status: 'active',
     })
     setCreating(false)
+    if (error) { setCreateError(error.message); return }
     setShowCreate(false)
-    setTitle('')
-    setDescription('')
+    setTitle(''); setReason(''); setEmoji('🎯'); setRequiresPhoto(false)
+    setFrequency('daily'); setDuration(30)
     router.refresh()
   }
 
@@ -81,7 +148,6 @@ export default function ChallengesClient({ challenges, userId }: Props) {
     const file = e.target.files?.[0]
     if (!file || !checkingIn) return
     setUploadingPhoto(true)
-
     const ext = file.name.split('.').pop()
     const path = `${userId}/challenges/${checkingIn}-${today}.${ext}`
     const { error } = await supabase.storage.from('challenge-photos').upload(path, file, { upsert: true })
@@ -93,80 +159,108 @@ export default function ChallengesClient({ challenges, userId }: Props) {
   }
 
   async function checkIn(challenge: Challenge, completed: boolean) {
-    const alreadyDone = challenge.challenge_checkins.some((c) => c.date === today)
-    if (alreadyDone) return
-
     if (completed && challenge.requires_photo && !photoForChallenge) {
       setCheckingIn(challenge.id)
       fileRef.current?.click()
       return
     }
 
-    const newStreak = completed ? challenge.current_streak + 1 : 0
+    if (completed) {
+      // Insert check-in for today (one per day max regardless of freq)
+      await supabase.from('challenge_checkins').upsert({
+        challenge_id: challenge.id,
+        date: today,
+        completed: true,
+        photo_url: photoForChallenge,
+      }, { onConflict: 'challenge_id,date' })
 
-    await supabase.from('challenge_checkins').insert({
-      challenge_id: challenge.id,
-      date: today,
-      completed,
-      photo_url: photoForChallenge,
-    })
+      // Recompute streak (period-aware)
+      const updatedCheckins = [
+        ...(challenge.challenge_checkins ?? []),
+        { date: today, completed: true, photo_url: photoForChallenge, sadqa_paid: false },
+      ]
+      const newStreak = periodStreak(challenge.frequency, challenge.start_date, updatedCheckins, today)
 
-    await supabase.from('challenges').update({
-      current_streak: newStreak,
-      longest_streak: Math.max(challenge.longest_streak, newStreak),
-      // If missed → challenge fails (strict mode)
-      status: !completed ? 'failed' : challenge.status,
-    }).eq('id', challenge.id)
+      // Check if challenge is fully complete
+      const elapsed = unitsElapsed(challenge.frequency, challenge.start_date, today)
+      const totalU = totalUnits(challenge.frequency, challenge.duration_days)
+      const isComplete = elapsed >= totalU
+
+      await supabase.from('challenges').update({
+        current_streak: newStreak,
+        longest_streak: Math.max(challenge.longest_streak, newStreak),
+        ...(isComplete ? { status: 'completed' } : {}),
+      }).eq('id', challenge.id)
+    } else {
+      // RESTART: reset start_date + streak, increment restart_count
+      await supabase.from('challenges').update({
+        start_date: today,
+        current_streak: 0,
+        restart_count: (challenge.restart_count ?? 0) + 1,
+        last_restart_at: new Date().toISOString(),
+      }).eq('id', challenge.id)
+    }
 
     setPhotoForChallenge(null)
     setCheckingIn(null)
     router.refresh()
   }
 
-  const _UNUSED = [
-    { name: 'Edhi Foundation', url: 'https://edhi.org' },
-    { name: 'Saylani Welfare', url: 'https://saylani.org' },
-    { name: 'Al-Khidmat', url: 'https://alkhidmat.org' },
-  ]
+  async function deleteChallenge(id: string) {
+    if (!confirm('Delete this challenge?')) return
+    await fetch(`/api/challenges/${id}`, { method: 'DELETE' })
+    router.refresh()
+  }
+
+  // Today's progress (for header)
+  const todayDone = active.filter((c) => hasCheckedThisPeriod(c.frequency, c.challenge_checkins ?? [], today)).length
+  const pct = active.length > 0 ? Math.round((todayDone / active.length) * 100) : 0
 
   return (
-    <div className="mx-auto max-w-md px-4 space-y-6">
+    <div className="mx-auto max-w-md px-4 space-y-4 pb-8">
+      {/* Header */}
       <div className="pt-3">
         <p className="text-xs text-muted-foreground">
           {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
         </p>
-        {(() => {
-          const todayDone = active.filter((c) => c.challenge_checkins?.some((ci) => ci.date === today && ci.completed)).length
-          const pct = active.length > 0 ? Math.round((todayDone / active.length) * 100) : 0
-          return (
-            <>
-              <div className="flex items-baseline justify-between">
-                <h1 className="text-2xl font-bold text-foreground">Challenges</h1>
-                <span className={cn('text-2xl font-bold tabular-nums',
-                  pct === 100 && active.length > 0 ? 'text-emerald-400'
-                  : pct >= 50 ? 'text-gold' : 'text-muted-foreground'
-                )}>{pct}%</span>
-              </div>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                {active.length} active · {todayDone}/{active.length} done today
-              </p>
-              <div className="mt-2 h-1.5 w-full rounded-full bg-white/10">
-                <div className={cn('h-full rounded-full transition-all',
-                  pct === 100 && active.length > 0 ? 'bg-emerald-400' : 'bg-gold')}
-                  style={{ width: `${pct}%` }} />
-              </div>
-            </>
-          )
-        })()}
+        <div className="flex items-baseline justify-between mt-0.5">
+          <h1 className="text-2xl font-bold text-foreground">Challenges</h1>
+          <button onClick={() => setShowCreate(!showCreate)}
+            className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2 text-sm font-semibold
+                       text-foreground hover:bg-white/10 hover:border-gold/40 transition-all active:scale-95">
+            <Plus size={14} className="text-gold" /> New
+          </button>
+        </div>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          {active.length} active · {todayDone} on track this period
+        </p>
       </div>
 
-      <div className="flex justify-end">
-        <button onClick={() => setShowCreate(!showCreate)}
-          className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white
-                     transition-all hover:bg-teal-light active:scale-95">
-          <Plus size={16} /> New challenge
-        </button>
+      {/* Aggregate progress */}
+      <div className="nafs-card p-4">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm font-semibold text-foreground">Today's check-in progress</p>
+          <span className={cn('text-xl font-bold tabular-nums',
+            pct === 100 && active.length > 0 ? 'text-emerald-400' : pct >= 50 ? 'text-gold' : 'text-muted-foreground'
+          )}>{pct}%</span>
+        </div>
+        <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+          <div className={cn('h-full rounded-full transition-all',
+            pct === 100 && active.length > 0 ? 'bg-emerald-400' : 'bg-gold'
+          )} style={{ width: `${pct}%` }} />
+        </div>
       </div>
+
+      {/* History teaser */}
+      {challenges.length > 0 && (
+        <HistoryTeaserCard
+          days={history}
+          title="Challenges history"
+          href="/history?tab=challenges"
+          emoji="🎯"
+          accent="pink"
+        />
+      )}
 
       {/* Hidden file input */}
       <input ref={fileRef} type="file" accept="image/*" capture="environment"
@@ -177,46 +271,86 @@ export default function ChallengesClient({ challenges, userId }: Props) {
         <div className="nafs-card p-5 space-y-4 animate-slide-up">
           <p className="font-semibold text-foreground">New challenge</p>
 
+          {/* Emoji + Title */}
           <div className="flex gap-3">
-            <input type="text" value={emoji} onChange={(e) => setEmoji(e.target.value)}
+            <input value={emoji} onChange={(e) => setEmoji(e.target.value)}
               className="log-input w-16 text-center text-2xl" maxLength={2} />
-            <input type="text" value={title} onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. No YouTube, Brush teeth daily…"
+            <input value={title} onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Pray Tahajjud, No social media…"
               className="log-input flex-1" />
           </div>
 
-          <input type="text" value={description} onChange={(e) => setDescription(e.target.value)}
-            placeholder="Why this challenge? (optional)"
-            className="log-input" />
-
+          {/* Reason — REQUIRED, prominent */}
           <div>
-            <label className="section-header mb-2 block">Duration: {duration} days</label>
-            <input type="range" min={7} max={365} step={1} value={duration}
-              onChange={(e) => setDuration(Number(e.target.value))} className="w-full" />
-            <div className="flex justify-between text-xs text-muted-foreground mt-1">
-              <span>7d</span><span>30d</span><span>90d</span><span>365d</span>
+            <label className="section-header mb-1.5 block flex items-center gap-1">
+              <Sparkles size={11} className="text-gold" /> Why this challenge? (required)
+            </label>
+            <textarea value={reason} onChange={(e) => setReason(e.target.value)}
+              placeholder="Tell yourself why. You'll see this on every check-in."
+              rows={3} className="log-input resize-none text-sm" />
+            <p className="text-[10px] text-muted-foreground mt-1">A clear reason makes you 3× more likely to follow through.</p>
+          </div>
+
+          {/* Frequency */}
+          <div>
+            <label className="section-header mb-2 block">Frequency</label>
+            <div className="grid grid-cols-4 gap-2">
+              {FREQ_KEYS.map((f) => (
+                <button key={f} onClick={() => selectFrequency(f)}
+                  className={cn('rounded-xl border py-2.5 text-xs font-semibold transition-all flex flex-col items-center gap-0.5',
+                    frequency === f
+                      ? 'border-gold/50 bg-gold/10 text-gold'
+                      : 'border-white/10 bg-white/5 text-muted-foreground hover:border-white/20'
+                  )}>
+                  <span className="text-base">{FREQUENCY[f].emoji}</span>
+                  <span>{FREQUENCY[f].label}</span>
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Photo required toggle */}
+          {/* Duration */}
+          <div>
+            <label className="section-header mb-2 block">
+              Duration: <span className="text-foreground tabular-nums">{totalUnits(frequency, duration)} {FREQUENCY[frequency].unitLabel}{totalUnits(frequency, duration) !== 1 ? 's' : ''}</span>
+            </label>
+            <input type="range"
+              min={frequency === 'yearly' ? 365 : frequency === 'monthly' ? 30 : frequency === 'weekly' ? 7 : 7}
+              max={frequency === 'yearly' ? 365 * 5 : frequency === 'monthly' ? 365 : frequency === 'weekly' ? 365 : 365}
+              step={frequency === 'yearly' ? 365 : frequency === 'monthly' ? 30 : frequency === 'weekly' ? 7 : 1}
+              value={duration}
+              onChange={(e) => setDuration(Number(e.target.value))} className="w-full" />
+          </div>
+
+          {/* Photo proof */}
           <button onClick={() => setRequiresPhoto(!requiresPhoto)}
-            className={cn('w-full rounded-xl border p-3 text-sm font-medium text-left flex items-center gap-3 transition-all',
+            className={cn('w-full rounded-xl border p-3 text-left flex items-center gap-3 transition-all',
               requiresPhoto ? 'border-gold/50 bg-gold/10 text-gold' : 'border-white/10 bg-white/5 text-muted-foreground'
             )}>
             <Camera size={18} />
-            <div>
-              <p className="font-semibold">Require photo proof daily</p>
-              <p className="text-xs opacity-70">No photo = challenge ends. Forces honesty.</p>
+            <div className="flex-1">
+              <p className="font-semibold text-sm">Photo proof each time</p>
+              <p className="text-[10px] opacity-70">Forces honesty. You can't fake a check-in.</p>
+            </div>
+            <div className={cn('h-5 w-9 rounded-full transition-all',
+              requiresPhoto ? 'bg-gold' : 'bg-white/15'
+            )}>
+              <div className={cn('h-5 w-5 rounded-full bg-white transition-transform',
+                requiresPhoto && 'translate-x-4'
+              )} />
             </div>
           </button>
 
+          {createError && (
+            <p className="text-xs text-red-400">{createError}</p>
+          )}
 
           <div className="flex gap-2">
-            <button onClick={() => setShowCreate(false)}
+            <button onClick={() => { setShowCreate(false); setCreateError(null) }}
               className="flex-1 rounded-xl border border-white/10 py-3 text-sm text-muted-foreground hover:bg-white/5">
               Cancel
             </button>
-            <button onClick={createChallenge} disabled={!title.trim() || creating}
+            <button onClick={createChallenge} disabled={!title.trim() || !reason.trim() || creating}
               className="flex-[2] rounded-xl bg-primary py-3 text-sm font-semibold text-white
                          hover:bg-teal-light transition-all disabled:opacity-40 active:scale-95">
               {creating ? 'Starting…' : 'Start challenge'}
@@ -225,142 +359,47 @@ export default function ChallengesClient({ challenges, userId }: Props) {
         </div>
       )}
 
-      {/* Active challenges */}
+      {/* Empty state */}
       {active.length === 0 && !showCreate && (
         <div className="text-center py-14">
-          <p className="text-5xl">🔥</p>
+          <p className="text-5xl">🎯</p>
           <p className="mt-3 font-semibold text-foreground">No active challenges</p>
-          <p className="mt-1 text-sm text-muted-foreground">Create a challenge and commit. Miss a day — it ends.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Pick something hard. Skip a period → it auto-restarts.</p>
         </div>
       )}
 
-      {active.map((c) => {
-        const daysIn = Math.max(1, Math.ceil((Date.now() - new Date(c.start_date).getTime()) / 86400000))
-        const pct = Math.min(100, Math.round((daysIn / c.duration_days) * 100))
-        const todayCheckin = c.challenge_checkins.find((ci) => ci.date === today)
-        const waitingForPhoto = checkingIn === c.id && c.requires_photo && !photoForChallenge
+      {/* Active cards */}
+      <div className="space-y-3">
+        {active.map((c) => (
+          <ChallengeCard key={c.id} challenge={c} today={today}
+            checkingIn={checkingIn === c.id}
+            photoForChallenge={photoForChallenge}
+            uploadingPhoto={uploadingPhoto}
+            onCheckIn={(done) => checkIn(c, done)}
+            onDelete={() => deleteChallenge(c.id)}
+            onCapturePhoto={() => { setCheckingIn(c.id); fileRef.current?.click() }}
+          />
+        ))}
+      </div>
 
-        return (
-          <div key={c.id} className="nafs-card p-5 space-y-4">
-            {/* Header */}
-            <div className="flex items-start gap-3">
-              <span className="text-3xl">{c.emoji}</span>
-              <div className="flex-1">
-                <p className="font-bold text-foreground">{c.title}</p>
-                {c.description && <p className="text-xs text-muted-foreground mt-0.5">{c.description}</p>}
-              </div>
-              <div className="flex items-start gap-2">
-                <button onClick={() => deleteChallenge(c.id)}
-                  className="h-7 w-7 rounded-lg flex items-center justify-center text-xs
-                             text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-all">
-                  🗑️
-                </button>
-              <div className="text-right">
-                <p className="text-lg font-bold text-orange-400">🔥 {c.current_streak}</p>
-                <p className="text-[10px] text-muted-foreground">day streak</p>
-              </div>
-              </div>
-            </div>
-
-            {/* Progress */}
-            <div>
-              <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                <span>
-                  Day {daysIn}/{c.duration_days} · Started {new Date(c.start_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                </span>
-                <span className="font-semibold">{pct}%</span>
-              </div>
-              <div className="h-2 w-full rounded-full bg-white/10">
-                <div className="h-full rounded-full bg-gradient-to-r from-primary to-gold transition-all" style={{ width: `${pct}%` }} />
-              </div>
-              <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
-                <span>Ends: {new Date(new Date(c.start_date).getTime() + c.duration_days * 86400000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                <span>{c.duration_days - daysIn} days left</span>
-              </div>
-            </div>
-
-            {/* Photo required badge */}
-            {c.requires_photo && (
-              <div className="flex items-center gap-2 text-xs text-gold">
-                <Camera size={12} /> Photo proof required daily
-              </div>
-            )}
-
-            {/* Photo preview if uploaded */}
-            {waitingForPhoto && photoForChallenge && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={photoForChallenge} alt="Proof" className="w-full h-32 object-cover rounded-xl" />
-            )}
-
-            {/* Check-in */}
-            {!todayCheckin ? (
-              <div className="space-y-2">
-                {waitingForPhoto && !photoForChallenge && (
-                  <p className="text-sm text-gold text-center">
-                    📸 {uploadingPhoto ? 'Uploading photo…' : 'Tap below to take your proof photo'}
-                  </p>
-                )}
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => {
-                      if (c.requires_photo && !photoForChallenge) {
-                        setCheckingIn(c.id)
-                        fileRef.current?.click()
-                      } else {
-                        checkIn(c, true)
-                      }
-                    }}
-                    className="rounded-xl bg-emerald-500/20 border border-emerald-500/30 py-3.5
-                               text-sm font-semibold text-emerald-400 active:scale-95 transition-all">
-                    ✅ Done today
-                  </button>
-                  <button
-                    onClick={() => checkIn(c, false)}
-                    className="rounded-xl bg-red-500/10 border border-red-500/20 py-3.5
-                               text-sm font-semibold text-red-400 active:scale-95 transition-all">
-                    ❌ Missed
-                  </button>
-                </div>
-                {waitingForPhoto && photoForChallenge && (
-                  <button onClick={() => checkIn(c, true)}
-                    className="w-full rounded-xl bg-emerald-500 py-3 text-sm font-semibold text-white active:scale-95">
-                    ✅ Submit with photo
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className={cn('rounded-xl border py-3 text-center text-sm font-semibold',
-                todayCheckin.completed
-                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                  : 'border-red-500/20 bg-red-500/10 text-red-400'
-              )}>
-                {todayCheckin.completed
-                  ? `✅ Done — ${c.current_streak} day streak 🔥`
-                  : '❌ Missed today — challenge failed'}
-              </div>
-            )}
-
-          </div>
-        )
-      })}
-
-      {/* Completed / Failed */}
+      {/* Completed */}
       {finished.length > 0 && (
-        <div className="space-y-2 pb-8">
-          <p className="section-header">Past challenges</p>
+        <div className="space-y-2 pb-4">
+          <p className="section-header">🏆 Completed</p>
           {finished.map((c) => (
-            <div key={c.id} className={cn('nafs-card p-4 flex items-center gap-3 opacity-70',
-              c.status === 'completed' ? '' : 'border-red-500/20'
-            )}>
+            <div key={c.id} className="nafs-card p-4 flex items-center gap-3 opacity-80">
               <span className="text-2xl">{c.emoji}</span>
               <div className="flex-1">
                 <p className="text-sm font-medium text-foreground">{c.title}</p>
-                <p className="text-xs text-muted-foreground">{c.duration_days} days • Best streak: {c.longest_streak}</p>
+                <p className="text-xs text-muted-foreground">
+                  {totalUnits(c.frequency, c.duration_days)} {FREQUENCY[c.frequency].unitLabel}s ·
+                  best streak {c.longest_streak}
+                </p>
               </div>
-              <span className="text-xl">{c.status === 'completed' ? '🏆' : '💔'}</span>
+              <span className="text-xl">🏆</span>
               <button onClick={() => deleteChallenge(c.id)}
-                className="h-8 w-8 rounded-xl flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-all">
-                🗑️
+                className="h-8 w-8 rounded-xl flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                <Trash2 size={12} />
               </button>
             </div>
           ))}
@@ -368,10 +407,145 @@ export default function ChallengesClient({ challenges, userId }: Props) {
       )}
     </div>
   )
+}
 
-  async function deleteChallenge(id: string) {
-    if (!confirm('Delete this challenge?')) return
-    await fetch(`/api/challenges/${id}`, { method: 'DELETE' })
-    router.refresh()
-  }
+// ============================================================
+// Challenge card
+// ============================================================
+function ChallengeCard({
+  challenge: c, today, checkingIn, photoForChallenge, uploadingPhoto,
+  onCheckIn, onDelete, onCapturePhoto,
+}: {
+  challenge: Challenge
+  today: string
+  checkingIn: boolean
+  photoForChallenge: string | null
+  uploadingPhoto: boolean
+  onCheckIn: (done: boolean) => void
+  onDelete: () => void
+  onCapturePhoto: () => void
+}) {
+  const tone = FREQ_TONE[c.frequency]
+  const meta = FREQUENCY[c.frequency]
+  const elapsed = unitsElapsed(c.frequency, c.start_date, today)
+  const total = totalUnits(c.frequency, c.duration_days)
+  const pct = Math.min(100, Math.round((elapsed / total) * 100))
+  const periodChecked = hasCheckedThisPeriod(c.frequency, c.challenge_checkins ?? [], today)
+
+  return (
+    <div className={cn(
+      'relative overflow-hidden rounded-2xl border bg-gradient-to-br p-5 space-y-4',
+      tone.card
+    )}>
+      <div className="pointer-events-none absolute -right-6 -top-6 h-24 w-24 rounded-full bg-white/3 blur-2xl" />
+
+      {/* Header */}
+      <div className="relative flex items-start gap-3">
+        <div className={cn('h-11 w-11 rounded-xl flex items-center justify-center text-2xl flex-shrink-0 ring-1', tone.chip, tone.ring)}>
+          {c.emoji}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider', tone.chip)}>
+              {meta.emoji} {meta.label}
+            </span>
+            {c.restart_count > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-[10px] text-orange-400">
+                <RotateCcw size={9} /> restarted {c.restart_count}×
+              </span>
+            )}
+          </div>
+          <p className="font-bold text-foreground leading-tight">{c.title}</p>
+        </div>
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+          {c.current_streak > 0 ? (
+            <p className="text-base font-bold text-orange-400">🔥 {c.current_streak}</p>
+          ) : null}
+          <button onClick={onDelete}
+            className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+            <Trash2 size={11} />
+          </button>
+        </div>
+      </div>
+
+      {/* Reason quote */}
+      {c.description && (
+        <div className="relative flex gap-2 text-xs text-muted-foreground italic border-l-2 border-gold/40 pl-3 py-0.5">
+          <Quote size={11} className="text-gold/60 flex-shrink-0 mt-0.5" />
+          <p className="leading-snug">{c.description}</p>
+        </div>
+      )}
+
+      {/* Progress */}
+      <div className="relative">
+        <div className="flex justify-between text-[11px] text-muted-foreground mb-1.5">
+          <span className="font-medium">
+            {meta.label.replace('ly', '')} {elapsed} <span className="text-muted-foreground/50">of</span> {total}
+          </span>
+          <span className="font-semibold tabular-nums">{pct}%</span>
+        </div>
+        <div className="h-2 w-full rounded-full bg-white/10">
+          <div className="h-full rounded-full bg-gradient-to-r from-primary via-teal-light to-gold transition-all"
+            style={{ width: `${pct}%` }} />
+        </div>
+        <div className="flex justify-between text-[10px] text-muted-foreground/60 mt-1">
+          <span>Started {new Date(c.start_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+          <span>{Math.max(0, total - elapsed)} {meta.unitLabel}{total - elapsed === 1 ? '' : 's'} left</span>
+        </div>
+      </div>
+
+      {/* Photo proof badge */}
+      {c.requires_photo && (
+        <div className="relative flex items-center gap-2 text-[11px] text-gold">
+          <Camera size={11} /> Photo proof required each {meta.unitLabel}
+        </div>
+      )}
+
+      {/* Photo preview */}
+      {checkingIn && photoForChallenge && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={photoForChallenge} alt="proof" className="relative w-full h-32 object-cover rounded-xl" />
+      )}
+
+      {/* Check-in actions */}
+      <div className="relative">
+        {periodChecked ? (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 py-3 text-center text-sm font-semibold text-emerald-300">
+            ✓ Done {meta.unitLabel === 'day' ? 'today' : `this ${meta.unitLabel}`} · {c.current_streak} {meta.unitLabel}{c.current_streak === 1 ? '' : 's'} streak 🔥
+          </div>
+        ) : checkingIn && !photoForChallenge && c.requires_photo ? (
+          <div className="text-center text-sm text-gold py-3">
+            📸 {uploadingPhoto ? 'Uploading…' : 'Take your proof photo'}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => {
+                if (c.requires_photo && !photoForChallenge) onCapturePhoto()
+                else onCheckIn(true)
+              }}
+              className="rounded-xl bg-emerald-500/20 border border-emerald-500/30 py-3.5
+                         text-sm font-semibold text-emerald-400 active:scale-95 transition-all">
+              ✅ Done {meta.unitLabel === 'day' ? 'today' : `this ${meta.unitLabel}`}
+            </button>
+            <button
+              onClick={() => {
+                if (confirm(`Mark missed? Your ${meta.unitLabel} streak resets and the challenge restarts from today.`))
+                  onCheckIn(false)
+              }}
+              className="rounded-xl bg-red-500/10 border border-red-500/20 py-3.5
+                         text-sm font-semibold text-red-400 active:scale-95 transition-all">
+              ⟲ Missed (restart)
+            </button>
+          </div>
+        )}
+        {checkingIn && photoForChallenge && (
+          <button onClick={() => onCheckIn(true)}
+            className="mt-2 w-full rounded-xl bg-emerald-500 py-3 text-sm font-semibold text-white active:scale-95">
+            ✅ Submit with photo
+          </button>
+        )}
+      </div>
+    </div>
+  )
 }

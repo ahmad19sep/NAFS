@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { grokText } from '@/lib/grok'
+import { generateText } from '@/lib/gemini'
 
 export async function POST(req: NextRequest) {
   try {
@@ -44,13 +44,13 @@ TODAY'S DATA:
 
 Give the evening verdict.`
 
-    const verdict = await grokText(prompt, system)
+    const verdict = await generateText(prompt, system)
 
     await supabase.from('ai_reports').insert({
       user_id: user.id,
       type: 'pull',
       content_md: verdict,
-      model_used: 'grok-3-fast',
+      model_used: 'gemini-2.0-flash',
     })
 
     return NextResponse.json({ verdict })
