@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import { validateEmail } from '@/lib/email-validator'
+import PasswordInput from '@/components/PasswordInput'
 
 type Mode = 'signin' | 'signup' | 'forgot' | 'reset'
 type Gender = 'male' | 'female' | 'prefer_not_to_say'
@@ -296,8 +297,8 @@ function AuthInner() {
                   </button>
                 )}
               </div>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••" required minLength={6} className="log-input"
+              <PasswordInput value={password} onChange={setPassword}
+                required minLength={6}
                 autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} />
               {mode === 'signup' && (
                 <p className="mt-1 text-xs text-muted-foreground">At least 6 characters</p>
@@ -310,16 +311,14 @@ function AuthInner() {
             <>
               <div>
                 <label className="section-header mb-1.5 block">New password</label>
-                <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="••••••••" required minLength={6} className="log-input"
-                  autoComplete="new-password" />
+                <PasswordInput value={newPassword} onChange={setNewPassword}
+                  required minLength={6} autoComplete="new-password" />
                 <p className="mt-1 text-xs text-muted-foreground">At least 6 characters</p>
               </div>
               <div>
                 <label className="section-header mb-1.5 block">Confirm new password</label>
-                <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="••••••••" required minLength={6} className="log-input"
-                  autoComplete="new-password" />
+                <PasswordInput value={confirmPassword} onChange={setConfirmPassword}
+                  required minLength={6} autoComplete="new-password" />
               </div>
             </>
           )}
