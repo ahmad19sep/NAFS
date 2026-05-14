@@ -11,6 +11,7 @@ import {
   UserCircle2, Briefcase, MapPin, Cake, Heart, Send, Award, Lock, AlertTriangle,
 } from 'lucide-react'
 import { BADGES, TIER_COLORS, badgesByFeature, type BadgeDef, type BadgeFeature } from '@/lib/badges'
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 
 interface DayScore { date: string; pct: number; earned: number; max: number }
 interface Props {
@@ -71,6 +72,7 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
 
   // Badges
   const [badgeOpen, setBadgeOpen] = useState<BadgeDef | null>(null)
+  useBodyScrollLock(aboutOpen || deleteOpen || badgeOpen !== null)
   const earnedCount = Object.keys(earnedBadges).length
   const totalCount  = BADGES.length
 
@@ -563,9 +565,9 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
 
       {/* Delete account confirmation */}
       {deleteOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-5"
+        <div className="modal-overlay items-center bg-black/80 p-5"
           onClick={() => !deleting && setDeleteOpen(false)}>
-          <div className="w-full max-w-sm bg-[#0f2235] border border-red-500/40 rounded-3xl p-6"
+          <div className="w-full max-w-sm bg-[#0f2235] border border-red-500/40 rounded-3xl p-6 m-auto"
             onClick={(e) => e.stopPropagation()}>
             <div className="text-center mb-4">
               <div className="mx-auto h-14 w-14 rounded-2xl bg-red-500/15 border border-red-500/40 flex items-center justify-center text-2xl mb-3">
@@ -607,7 +609,7 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
         const earnedAt = earnedBadges[badgeOpen.id]
         const isEarned = !!earnedAt
         return (
-          <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center"
+          <div className="modal-overlay items-end sm:items-center"
             onClick={() => setBadgeOpen(null)}>
             <div className="w-full max-w-sm bg-[#0f2235] border-t sm:border border-white/10
                             rounded-t-3xl sm:rounded-3xl p-6 text-center"
@@ -651,10 +653,9 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
 
       {/* About-you sheet */}
       {aboutOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-end sm:items-center justify-center"
+        <div className="modal-overlay items-end sm:items-center"
           onClick={() => setAboutOpen(false)}>
-          <div className="w-full max-w-md bg-[#0f2235] border-t sm:border border-white/10
-                          rounded-t-3xl sm:rounded-3xl max-h-[90vh] overflow-y-auto"
+          <div className="modal-sheet modal-sheet-scroll"
             onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 bg-[#0f2235] border-b border-white/10 px-5 py-4 flex items-center justify-between">
               <div>

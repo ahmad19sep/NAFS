@@ -110,6 +110,36 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 
+  /* Modal/sheet overlay — covers full screen, but reserves space at the
+     bottom on mobile so the modal content sits above the BottomNav.
+     Also locks horizontal overflow on small screens. */
+  .modal-overlay {
+    @apply fixed inset-0 z-[60] flex justify-center bg-black/70;
+    overscroll-behavior: contain;
+    /* Mobile: leave room for the ~80px BottomNav + iOS safe area */
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
+  }
+  @media (min-width: 640px) {
+    .modal-overlay { padding-bottom: 0; }
+  }
+
+  /* The inner sheet/dialog container */
+  .modal-sheet {
+    @apply w-full max-w-md bg-[#0f2235] border-t sm:border border-white/10
+           rounded-t-3xl sm:rounded-3xl overflow-hidden;
+    max-height: calc(100vh - env(safe-area-inset-bottom, 0px) - 100px);
+    overscroll-behavior: contain;
+  }
+  @media (min-width: 640px) {
+    .modal-sheet { max-height: 90vh; }
+  }
+  .modal-sheet-scroll {
+    @apply overflow-y-auto;
+    max-height: inherit;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
   /* Page container — accounts for bottom nav + iOS notch */
   .page-container {
     @apply pb-24 pt-4;

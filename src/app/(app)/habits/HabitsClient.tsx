@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import type { Habit, HabitLog, HabitType, ScheduleKind, Weekday } from '@/types'
 import HistoryTeaserCard from '@/components/HistoryTeaserCard'
 import { computeHabitsHistory } from '@/lib/history'
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 
 // ---------- helpers ----------
 const WEEKDAY_CODES: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -692,6 +693,7 @@ function HabitForm({ form, onClose, onSaved, userId }: {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const isEdit = !!f.id
+  useBodyScrollLock(true)
 
   async function save() {
     if (!f.name.trim()) return
@@ -759,11 +761,11 @@ function HabitForm({ form, onClose, onSaved, userId }: {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center"
+    <div className="modal-overlay items-end sm:items-center"
       onClick={onClose}>
-      <div className="w-full max-w-md bg-[#0f2235] border-t sm:border border-white/10
-                      rounded-t-3xl sm:rounded-3xl max-h-[90vh] overflow-y-auto"
+      <div className="modal-sheet flex flex-col"
         onClick={(e) => e.stopPropagation()}>
+        <div className="modal-sheet-scroll flex-1">
         {/* Header */}
         <div className="sticky top-0 bg-[#0f2235] border-b border-white/10 px-5 py-4 flex items-center justify-between">
           <p className="font-bold text-foreground">{isEdit ? 'Edit habit' : 'New habit'}</p>
@@ -955,6 +957,7 @@ function HabitForm({ form, onClose, onSaved, userId }: {
               {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create habit'}
             </button>
           </div>
+        </div>
         </div>
       </div>
     </div>

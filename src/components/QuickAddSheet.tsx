@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 
 interface Props {
   open: boolean
@@ -19,11 +20,12 @@ const ACTIONS: { href: string; emoji: string; label: string; tone: string; ring:
 ]
 
 export default function QuickAddSheet({ open, onClose }: Props) {
+  useBodyScrollLock(open)
   if (!open) return null
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/70 backdrop-blur-sm animate-in fade-in"
+      className="modal-overlay items-end backdrop-blur-sm animate-in fade-in"
       onClick={onClose}
     >
       <div
