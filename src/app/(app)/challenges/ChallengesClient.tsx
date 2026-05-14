@@ -3,7 +3,7 @@
 import { useState, useRef, useMemo, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Plus, Camera, Trash2, Sparkles, Quote, RefreshCw } from 'lucide-react'
+import { Plus, Camera, Trash2, Sparkles, Quote, RefreshCw, X } from 'lucide-react'
 import { cn, todayString } from '@/lib/utils'
 import HistoryTeaserCard from '@/components/HistoryTeaserCard'
 import { computeChallengesHistory } from '@/lib/history'
@@ -578,8 +578,9 @@ function ChallengeCard({
               )}
             </div>
             <button onClick={(e) => { e.stopPropagation(); onDismissAi() }}
-              className="h-6 w-6 rounded-md hover:bg-white/10 flex items-center justify-center text-muted-foreground hover:text-red-400 flex-shrink-0">
-              <Trash2 size={10} />
+              className="h-9 w-9 rounded-lg border border-white/10 bg-white/5 hover:bg-red-500/10 hover:text-red-400 flex items-center justify-center text-muted-foreground flex-shrink-0"
+              aria-label="Close AI tips">
+              <X size={16} />
             </button>
           </div>
 

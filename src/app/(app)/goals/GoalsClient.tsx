@@ -951,14 +951,14 @@ function StarterPackCard({
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
           <button onClick={onGenerate} disabled={loading}
-            className="h-7 w-7 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-muted-foreground hover:bg-white/10 transition-colors disabled:opacity-50"
+            className="h-9 w-9 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-muted-foreground hover:bg-white/10 transition-colors disabled:opacity-50"
             aria-label="Re-generate">
-            <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           </button>
           <button onClick={onDismiss} disabled={loading}
-            className="h-7 w-7 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
-            aria-label="Dismiss">
-            <X size={12} />
+            className="h-9 w-9 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+            aria-label="Close">
+            <X size={16} />
           </button>
         </div>
       </div>

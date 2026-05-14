@@ -76,6 +76,7 @@ export default function HealthPage() {
   }
   const [aiRec, setAiRec] = useState<AiHealthRec | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
+  const [aiDismissed, setAiDismissed] = useState(false)
   const [adding, setAdding] = useState<string | null>(null)
   const [addedKeys, setAddedKeys] = useState<Set<string>>(new Set())
 
@@ -518,7 +519,10 @@ export default function HealthPage() {
       <AiHealthCard
         rec={aiRec}
         loading={aiLoading}
-        onGenerate={generateAiRecommendation}
+        dismissed={aiDismissed}
+        onGenerate={() => { setAiDismissed(false); generateAiRecommendation() }}
+        onDismiss={() => setAiDismissed(true)}
+        onShow={() => setAiDismissed(false)}
         onAddGoal={addSuggestedGoal}
         onAddHabit={addSuggestedHabit}
         addingKey={adding}
@@ -772,16 +776,31 @@ export default function HealthPage() {
 // AI health recommendation card
 // ============================================================
 function AiHealthCard({
-  rec, loading, onGenerate, onAddGoal, onAddHabit, addingKey, addedKeys,
+  rec, loading, dismissed, onGenerate, onDismiss, onShow, onAddGoal, onAddHabit, addingKey, addedKeys,
 }: {
   rec: any | null
   loading: boolean
+  dismissed: boolean
   onGenerate: () => void
+  onDismiss: () => void
+  onShow: () => void
   onAddGoal: (g: any, key: string) => void
   onAddHabit: (h: any, key: string) => void
   addingKey: string | null
   addedKeys: Set<string>
 }) {
+  if (rec && dismissed) {
+    return (
+      <button onClick={onShow}
+        className="flex w-full items-center justify-center gap-2 rounded-2xl border border-fuchsia-400/20
+                   bg-fuchsia-500/8 py-2.5 text-xs font-semibold text-fuchsia-300
+                   hover:bg-fuchsia-500/12 transition-all">
+        <Sparkles size={12} />
+        Show AI health plan
+      </button>
+    )
+  }
+
   if (!rec && !loading) {
     return (
       <button onClick={onGenerate}
@@ -820,11 +839,18 @@ function AiHealthCard({
           <p className="text-[10px] uppercase tracking-wider text-muted-foreground">AI health plan · {dateStr}</p>
           <p className="text-sm font-bold text-foreground leading-snug mt-0.5">Your personalized starting point</p>
         </div>
-        <button onClick={onGenerate} disabled={loading}
-          className="h-8 w-8 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-muted-foreground hover:bg-white/10 transition-colors disabled:opacity-50"
-          aria-label="Re-generate">
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button onClick={onGenerate} disabled={loading}
+            className="h-10 w-10 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-muted-foreground hover:bg-white/10 transition-colors disabled:opacity-50"
+            aria-label="Re-generate">
+            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <button onClick={onDismiss}
+            className="h-10 w-10 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+            aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
       </div>
 
       {/* Summary */}

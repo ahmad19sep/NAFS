@@ -437,8 +437,9 @@ function HabitCard({ habit, log, onLog, onEdit, onDelete, onPause, menuOpen, onM
               )}
             </div>
             <button onClick={(e) => { e.stopPropagation(); onDismissAi() }}
-              className="h-6 w-6 rounded-md hover:bg-white/10 flex items-center justify-center text-muted-foreground hover:text-red-400 flex-shrink-0">
-              <X size={11} />
+              className="h-9 w-9 rounded-lg border border-white/10 bg-white/5 hover:bg-red-500/10 hover:text-red-400 flex items-center justify-center text-muted-foreground flex-shrink-0"
+              aria-label="Close AI tips">
+              <X size={16} />
             </button>
           </div>
 
