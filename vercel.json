@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/notify-tasks",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 18 * * *"
     },
     {
       "path": "/api/cron/daily-report",
