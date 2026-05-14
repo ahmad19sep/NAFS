@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
 import { requireUser } from '@/lib/supabase/require-user'
-import { redirect } from 'next/navigation'
 import HomeClient from './HomeClient'
 import { todayString } from '@/lib/utils'
 
@@ -39,8 +38,6 @@ export default async function DashboardPage() {
   const goals               = data(7)
   const aiReports           = data(8)
   const healthLogs30        = data(9)
-
-  if (!profile?.onboarding_complete) redirect('/onboarding')
 
   const todayPrayerLog = (prayerLogs30 ?? []).find((p: any) => p.date === today) ?? null
   const todayTasks = (tasks30 ?? []).filter((t: any) => t.period_date === today)

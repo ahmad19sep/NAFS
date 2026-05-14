@@ -83,9 +83,9 @@ function AuthInner() {
             email: data.user.email!,
             name: name.trim(),
             gender,
-            onboarding_complete: false,
+            onboarding_complete: true,
           })
-          router.push('/onboarding')
+          router.push('/dashboard')
         } else {
           setMessage(
             `We sent a confirmation link to ${email.trim().toLowerCase()}. ` +
