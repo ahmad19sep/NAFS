@@ -95,6 +95,12 @@
     font-family: var(--font-arabic), 'Arial Unicode MS', serif;
     direction: rtl;
   }
+
+  /* Display typeface for all headings — instant typographic hierarchy */
+  h1, h2, h3 {
+    font-family: var(--font-display), var(--font-inter), system-ui, sans-serif;
+    letter-spacing: -0.02em;
+  }
 }
 
 @layer components {
@@ -202,9 +208,10 @@
            transition-all duration-200;
   }
 
-  /* Section header */
+  /* Section header — quiet, refined */
   .section-header {
-    @apply text-xs font-semibold uppercase tracking-widest text-muted-foreground;
+    @apply text-[11px] font-medium uppercase text-muted-foreground/80;
+    letter-spacing: 0.14em;
   }
 }
 

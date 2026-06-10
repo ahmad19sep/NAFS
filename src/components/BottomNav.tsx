@@ -37,17 +37,14 @@ export default function BottomNav() {
                   className="flex flex-col items-center"
                 >
                   <div className="relative">
-                    {/* Glow ring */}
-                    <div className="absolute inset-0 -m-1 rounded-full bg-gold/20 blur-md animate-pulse-gold" />
-                    <div className="relative flex h-14 w-14 items-center justify-center rounded-full
-                                    bg-gradient-to-br from-gold via-gold to-amber-600
-                                    border-2 border-gold/60 -mt-5
-                                    shadow-[0_8px_24px_rgba(201,162,39,0.4)]
+                    <div className="relative flex h-[52px] w-[52px] items-center justify-center rounded-2xl
+                                    bg-gradient-to-b from-[#E0BC45] to-[#B8922A] -mt-5
+                                    shadow-[0_6px_18px_rgba(201,162,39,0.35),inset_0_1px_0_rgba(255,255,255,0.35)]
                                     transition-transform active:scale-90">
-                      <Plus size={26} className="text-[#0b1a2b] stroke-[3]" />
+                      <Plus size={24} className="text-[#0b1a2b] stroke-[2.5]" />
                     </div>
                   </div>
-                  <span className="mt-1 text-[10px] font-semibold text-gold">{tab.label}</span>
+                  <span className="mt-1.5 text-[10px] font-medium text-gold/90">{tab.label}</span>
                 </button>
               )
             }
@@ -62,11 +59,11 @@ export default function BottomNav() {
                 )}
               >
                 <div className={cn('relative flex items-center justify-center',
-                  isActive && 'after:absolute after:-top-2.5 after:h-1 after:w-6 after:rounded-full after:bg-gold after:shadow-[0_0_8px_rgba(201,162,39,0.6)]'
+                  isActive && 'after:absolute after:-top-2 after:h-[3px] after:w-5 after:rounded-full after:bg-gold'
                 )}>
-                  <Icon size={20} className={cn(isActive && 'drop-shadow-[0_0_6px_rgba(201,162,39,0.6)]')} />
+                  <Icon size={20} strokeWidth={isActive ? 2.2 : 1.8} />
                 </div>
-                <span className={cn('text-[10px]', isActive && 'font-semibold')}>{tab.label}</span>
+                <span className={cn('text-[10px]', isActive ? 'font-semibold' : 'font-medium')}>{tab.label}</span>
               </Link>
             )
           })}
