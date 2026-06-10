@@ -35,6 +35,28 @@
 
     --radius: 0.75rem;
   }
+
+  /* ---- Theme presets (Settings → Preferences → Theme) ---- */
+  /* Obsidian — near-black, moodier */
+  [data-theme='obsidian'] {
+    --background: 222 28% 5%;
+    --card: 222 24% 8%;
+    --popover: 222 24% 8%;
+    --secondary: 222 20% 11%;
+    --muted: 222 18% 13%;
+    --border: 222 18% 15%;
+    --input: 222 18% 15%;
+  }
+  /* Ocean — deep teal-tinted */
+  [data-theme='ocean'] {
+    --background: 196 55% 8%;
+    --card: 196 48% 11%;
+    --popover: 196 48% 11%;
+    --secondary: 196 40% 14%;
+    --muted: 196 35% 16%;
+    --border: 196 35% 18%;
+    --input: 196 35% 18%;
+  }
 }
 
 @layer base {

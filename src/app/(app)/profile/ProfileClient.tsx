@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -10,7 +10,7 @@ import {
   Info, LogOut, ChevronRight, Check, X, Loader2, Mail, Camera, Trash2,
   UserCircle2, Briefcase, MapPin, Cake, Heart, Send, Award, Lock, AlertTriangle,
 } from 'lucide-react'
-import { BADGES, TIER_COLORS, badgesByFeature, type BadgeDef, type BadgeFeature } from '@/lib/badges'
+import { BADGES, TIER_COLORS, type BadgeDef } from '@/lib/badges'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 
 interface DayScore { date: string; pct: number; earned: number; max: number }
@@ -70,6 +70,29 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteText, setDeleteText] = useState('')
   const [deleting, setDeleting] = useState(false)
+
+  // Theme (persisted in localStorage; applied on <html data-theme>)
+  const [theme, setTheme] = useState<string>('midnight')
+  useEffect(() => {
+    try { setTheme(localStorage.getItem('ascend-theme') || 'midnight') } catch {}
+  }, [])
+  function applyTheme(t: string) {
+    setTheme(t)
+    try { localStorage.setItem('ascend-theme', t) } catch {}
+    if (t === 'midnight') delete document.documentElement.dataset.theme
+    else document.documentElement.dataset.theme = t
+  }
+
+  // Timezone — auto-detect from the device and keep the DB in sync
+  const detectedTz = typeof Intl !== 'undefined'
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC'
+  useEffect(() => {
+    if (!detectedTz || detectedTz === profile?.timezone) return
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) supabase.from('users').update({ timezone: detectedTz }).eq('id', user.id).then(() => {})
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Badges
   const [badgeOpen, setBadgeOpen] = useState<BadgeDef | null>(null)
@@ -549,8 +572,33 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
           value={deenOn}
           saving={savingPref === 'deen_enabled'}
           onToggle={toggleDeen} />
-        <Row icon={<Moon size={15} />} label="Theme"     value="Dark"            rightDim />
-        <Row icon={<Globe size={15} />} label="Timezone" value={profile?.timezone ?? 'Auto'} rightDim />
+        <div className="px-4 py-3.5">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-8 w-8 rounded-xl bg-white/5 border border-white/8 flex items-center justify-center text-muted-foreground">
+              <Moon size={15} />
+            </div>
+            <p className="text-sm font-medium text-foreground">Theme</p>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { id: 'midnight', label: 'Midnight', swatch: 'linear-gradient(135deg,#0B1A2B,#16314a)' },
+              { id: 'obsidian', label: 'Obsidian', swatch: 'linear-gradient(135deg,#090b10,#161a23)' },
+              { id: 'ocean',    label: 'Ocean',    swatch: 'linear-gradient(135deg,#0a1d24,#11313c)' },
+            ]).map((t) => (
+              <button key={t.id} onClick={() => applyTheme(t.id)}
+                className={cn('rounded-xl border p-2 transition-all active:scale-95',
+                  theme === t.id ? 'border-gold/60 bg-gold/10' : 'border-white/10 hover:border-white/25'
+                )}>
+                <div className="h-9 w-full rounded-lg border border-white/10" style={{ background: t.swatch }} />
+                <p className={cn('mt-1.5 text-[10px] font-semibold',
+                  theme === t.id ? 'text-gold' : 'text-muted-foreground')}>{t.label}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+        <Row icon={<Globe size={15} />} label="Timezone"
+          subLabel="Detected from your device automatically"
+          value={detectedTz} rightDim />
       </Section>
 
       {/* ABOUT */}
@@ -858,58 +906,70 @@ function BadgesGrid({ earned, onSelect }: {
   earned: Record<string, string>
   onSelect: (b: BadgeDef) => void
 }) {
-  const groups = badgesByFeature()
-  const FEATURE_LABEL: Record<BadgeFeature, { emoji: string; label: string }> = {
-    overall:    { emoji: '✨', label: 'Overall' },
-    deen:       { emoji: '🕌', label: 'Deen' },
-    habits:     { emoji: '🔄', label: 'Habits' },
-    tasks:      { emoji: '✅', label: 'Tasks' },
-    challenges: { emoji: '🎯', label: 'Challenges' },
-    health:     { emoji: '❤️', label: 'Health' },
-    goals:      { emoji: '🏆', label: 'Goals' },
-  }
-  const order: BadgeFeature[] = ['overall', 'deen', 'habits', 'tasks', 'challenges', 'health', 'goals']
+  const [showLocked, setShowLocked] = useState(false)
+  const earnedList = BADGES.filter((b) => earned[b.id])
+  const lockedList = BADGES.filter((b) => !earned[b.id])
 
   return (
-    <div className="space-y-3">
-      {order.map((f) => {
-        const list = groups[f]
-        if (list.length === 0) return null
-        const earnedInGroup = list.filter((b) => earned[b.id]).length
-        return (
-          <div key={f} className="nafs-card p-3">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-foreground">
-                {FEATURE_LABEL[f].emoji} {FEATURE_LABEL[f].label}
-              </p>
-              <span className="text-[10px] tabular-nums text-muted-foreground">
-                {earnedInGroup} / {list.length}
-              </span>
-            </div>
-            <div className="grid grid-cols-4 gap-2">
-              {list.map((b) => {
-                const isEarned = !!earned[b.id]
-                const tone = TIER_COLORS[b.tier]
-                return (
-                  <button key={b.id} onClick={() => onSelect(b)}
-                    className={cn(
-                      'aspect-square rounded-xl border flex flex-col items-center justify-center gap-0.5 transition-all active:scale-90',
-                      isEarned
-                        ? `${tone.bg} ${tone.ring} ring-2 hover:brightness-125`
-                        : 'border-white/10 bg-white/3 opacity-30 grayscale hover:opacity-50'
-                    )}
-                    title={`${b.name}${isEarned ? '' : ' (locked)'}`}>
-                    <span className="text-2xl leading-none">{b.emoji}</span>
-                    <span className={cn('text-[8px] uppercase tracking-wider font-bold leading-none',
-                      isEarned ? tone.text : 'text-muted-foreground'
-                    )}>{tone.label}</span>
-                  </button>
-                )
-              })}
-            </div>
+    <div className="nafs-card overflow-hidden">
+      {/* Earned shelf */}
+      {earnedList.length === 0 ? (
+        <div className="px-4 py-6 text-center">
+          <p className="text-3xl">🏅</p>
+          <p className="mt-2 text-sm font-semibold text-foreground">No badges yet</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Your first one is a single log away — they unlock as you show up.
+          </p>
+        </div>
+      ) : (
+        <div className="-mx-0 overflow-x-auto scrollbar-hide">
+          <div className="flex gap-2.5 px-4 py-4 min-w-max">
+            {earnedList.map((b) => {
+              const tone = TIER_COLORS[b.tier]
+              return (
+                <button key={b.id} onClick={() => onSelect(b)}
+                  className={cn(
+                    'w-[76px] shrink-0 rounded-2xl border px-2 py-3 text-center transition-all active:scale-90',
+                    tone.bg, 'border-white/10 hover:brightness-125'
+                  )}>
+                  <span className="block text-[26px] leading-none drop-shadow">{b.emoji}</span>
+                  <span className="mt-1.5 block text-[9px] font-semibold text-foreground leading-tight line-clamp-2">
+                    {b.name}
+                  </span>
+                  <span className={cn('mt-1 inline-block rounded-full px-1.5 py-px text-[7px] font-bold uppercase tracking-wider', tone.text, 'bg-black/25')}>
+                    {tone.label}
+                  </span>
+                </button>
+              )
+            })}
           </div>
-        )
-      })}
+        </div>
+      )}
+
+      {/* Locked — collapsed by default */}
+      {lockedList.length > 0 && (
+        <div className="border-t border-white/5">
+          <button onClick={() => setShowLocked(!showLocked)}
+            className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <Lock size={11} /> {lockedList.length} locked
+            </span>
+            <ChevronRight size={13}
+              className={cn('text-muted-foreground/60 transition-transform', showLocked && 'rotate-90')} />
+          </button>
+          {showLocked && (
+            <div className="px-4 pb-4 flex flex-wrap gap-2">
+              {lockedList.map((b) => (
+                <button key={b.id} onClick={() => onSelect(b)} title={b.name}
+                  className="h-11 w-11 rounded-xl border border-white/8 bg-white/[0.03] flex items-center justify-center
+                             text-lg opacity-40 grayscale hover:opacity-80 hover:grayscale-0 transition-all active:scale-90">
+                  {b.emoji}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
