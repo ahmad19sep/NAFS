@@ -1,0 +1,29 @@
+# Task deadline alerts — pings the notify-tasks endpoint every 15 minutes.
+#
+# Vercel's free (Hobby) plan only runs cron jobs ONCE PER DAY, but task
+# reminders need minute-level checks ("1 hour left", "30 min left").
+# GitHub Actions scheduled workflows are free on public/private repos,
+# so this workflow does the frequent pinging instead.
+#
+# REQUIRED SETUP (one time):
+#   GitHub repo → Settings → Secrets and variables → Actions →
+#   New repository secret:  name CRON_SECRET, value = same as Vercel env var.
+
+name: Task deadline alerts
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping notify-tasks
+        run: |
+          curl -fsS --max-time 60 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://nafs-one.vercel.app/api/cron/notify-tasks" \
+            || echo "ping failed (will retry next run)"

@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
       supabase.from('challenges').select('title, current_streak, duration_days, status').eq('user_id', user.id),
       supabase.from('dreams').select('statement, dream_date, total_hours_required').eq('user_id', user.id).maybeSingle(),
       supabase.from('daily_logs').select('date, weighted_hours_today, todays_pull_days').eq('user_id', user.id).gte('date', start),
+      supabase.from('screentime_logs').select('date, total_mins, apps').eq('user_id', user.id).gte('date', start),
     ])
     const data = (i: number): any =>
       results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
     const challenges = data(7) ?? []
     const dream      = data(8)
     const dreamLogs  = data(9) ?? []
+    const screenLogs = data(10) ?? []
 
     const deenOn = (profile?.deen_enabled ?? true) as boolean
 
@@ -78,6 +80,24 @@ export async function POST(req: NextRequest) {
 
     const dreamHours = dreamLogs.reduce((s: number, l: any) => s + Number(l.weighted_hours_today ?? 0), 0)
 
+    // Screen time: daily totals + which apps eat the most minutes overall
+    const screenDays = screenLogs.filter((s: any) => Number(s.total_mins ?? 0) > 0)
+    const appTotals: Record<string, number> = {}
+    for (const s of screenDays) {
+      for (const a of (s.apps ?? [])) {
+        appTotals[a.app] = (appTotals[a.app] ?? 0) + Number(a.minutes ?? 0)
+      }
+    }
+    const topApps = Object.entries(appTotals)
+      .sort((a, b) => b[1] - a[1]).slice(0, 5)
+      .map(([app, mins]) => ({ app, total_mins: mins }))
+    const screenSummary = screenDays.length ? {
+      days_logged: screenDays.length,
+      avg_daily_mins: Math.round(screenDays.reduce((s: number, x: any) => s + x.total_mins, 0) / screenDays.length),
+      worst_day_mins: Math.max(...screenDays.map((x: any) => x.total_mins)),
+      top_apps: topApps,
+    } : undefined
+
     const context = {
       user: {
         name: profile?.name || 'the user',
@@ -92,6 +112,7 @@ export async function POST(req: NextRequest) {
         ...(prayerSummary ? { prayers: prayerSummary } : {}),
         tasks: { total: tasks.length, completed: tasksDone },
         health: { days_logged: healthLogs.length, avg_sleep_hours: avgSleep, exercise_days: exerciseDays },
+        ...(screenSummary ? { phone_screen_time: screenSummary } : {}),
       },
       goals: goals.map((g: any) => ({
         title: g.title, progress_pct: g.progress_pct, deadline: g.deadline,

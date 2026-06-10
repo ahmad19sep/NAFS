@@ -11,6 +11,7 @@ import {
   UserCircle2, Briefcase, MapPin, Cake, Heart, Send, Award, Lock, AlertTriangle,
 } from 'lucide-react'
 import { BADGES, TIER_COLORS, type BadgeDef } from '@/lib/badges'
+import { enablePush, pushSupported } from '@/lib/push'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 
 interface DayScore { date: string; pct: number; earned: number; max: number }
@@ -63,6 +64,9 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
   const [emailDaily, setEmailDaily]   = useState<boolean>(!!profile?.notify_email_daily)
   const [emailWeekly, setEmailWeekly] = useState<boolean>(!!profile?.notify_email_weekly)
   const [deenOn, setDeenOn]           = useState<boolean>((profile?.deen_enabled ?? true) as boolean)
+  const [pushOn, setPushOn]           = useState<boolean>(
+    !!profile?.push_subscription && profile?.notifications_enabled !== false
+  )
   const [savingPref, setSavingPref]   = useState<string | null>(null)
   const [sendingTest, setSendingTest] = useState<'daily' | 'weekly' | null>(null)
 
@@ -327,6 +331,51 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
     router.refresh()
   }
 
+  async function togglePush(value: boolean) {
+    setSavingPref('push')
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { flash('err', 'Not signed in'); return }
+
+      if (value) {
+        const r = await enablePush()
+        if (!r.ok) {
+          const msg =
+            r.reason === 'unsupported'
+              ? 'Not supported here. On iPhone: install Ascend to your home screen first (Share → Add to Home Screen), then enable from inside the app.'
+              : r.reason === 'denied'
+                ? 'Permission denied. Allow notifications for Ascend in your phone settings, then try again.'
+                : 'Could not subscribe. Try again.'
+          flash('err', msg)
+          return
+        }
+        await supabase.from('users').update({ notifications_enabled: true }).eq('id', user.id)
+        setPushOn(true)
+        flash('ok', 'Notifications on — sending a test…')
+        fetch('/api/notifications/test', { method: 'POST' }).catch(() => {})
+      } else {
+        await supabase.from('users').update({ notifications_enabled: false }).eq('id', user.id)
+        setPushOn(false)
+        flash('ok', 'Notifications off')
+      }
+    } finally {
+      setSavingPref(null)
+    }
+  }
+
+  async function sendTestPush() {
+    setSendingTest('push' as any)
+    try {
+      const res = await fetch('/api/notifications/test', { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) flash('err', data?.error || 'Test failed')
+      else flash('ok', 'Sent! Check your notifications.')
+    } catch (e: any) {
+      flash('err', e?.message || 'Network error')
+    }
+    setSendingTest(null)
+  }
+
   async function sendTestReport(which: 'daily' | 'weekly') {
     setSendingTest(which)
     try {
@@ -561,8 +610,19 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
             onClick={() => sendTestReport('weekly')}
             loading={sendingTest === 'weekly'} />
         )}
-        <Row icon={<Bell size={15} />} label="Push notifications"
-          value="Coming soon" rightDim />
+        <ToggleRow icon={<Bell size={15} />} label="Push notifications"
+          subLabel={pushSupported()
+            ? 'Task deadline alerts on this device'
+            : 'On iPhone: install to home screen first'}
+          value={pushOn}
+          saving={savingPref === 'push'}
+          onToggle={togglePush} />
+        {pushOn && (
+          <Row icon={<Send size={15} />} label="Send a test notification"
+            subLabel="Arrives on this device in seconds"
+            onClick={sendTestPush}
+            loading={sendingTest === ('push' as any)} />
+        )}
       </Section>
 
       {/* PREFERENCES */}
