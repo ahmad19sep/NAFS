@@ -107,9 +107,13 @@ export default function HomeClient({
   const healthDone = healthTargets.filter(Boolean).length
   const healthTotal = 4
 
+  // ---- Faith mode: Deen module is opt-in (signup question / Profile toggle).
+  // Default true when the column is missing so pre-migration DBs keep working.
+  const deenOn = (profile?.deen_enabled ?? true) as boolean
+
   // ---- Engagement signals: only count a feature in scoring after user
   // has interacted with it at least once. New users start at 0/0, not 0/N.
-  const deenEngaged       = (prayerLogs30 ?? []).length > 0 || !!prayerLog
+  const deenEngaged       = deenOn && ((prayerLogs30 ?? []).length > 0 || !!prayerLog)
   const healthEngaged     = !!profile?.height_cm || (healthLogs30 ?? []).length > 0
   const tasksEngaged      = tasksTotal > 0
   const habitsEngaged     = habitsTotal > 0
@@ -130,7 +134,7 @@ export default function HomeClient({
 
   // ---- 30-day history (for sparkline + delta vs yesterday) ----
   const habitsHistory     = useMemo(() => computeHabitsHistory(habits as Habit[], habitLogs30 as HabitLog[], today), [habits, habitLogs30, today])
-  const deenHistory       = useMemo(() => computeDeenHistory(prayerLogs30, today), [prayerLogs30, today])
+  const deenHistory       = useMemo(() => deenOn ? computeDeenHistory(prayerLogs30, today) : [], [deenOn, prayerLogs30, today])
   const challengesHistory = useMemo(() => computeChallengesHistory(allChallenges, challengeCheckins30, today), [allChallenges, challengeCheckins30, today])
   const healthHistory     = useMemo(() => computeHealthHistory(healthLogs30, today), [healthLogs30, today])
   const tasksHistory      = useMemo(() => computeDailyTasksHistory(tasks30, today), [tasks30, today])
@@ -227,7 +231,7 @@ export default function HomeClient({
             {noEngagement ? (
               <>
                 <p className="text-sm font-semibold text-foreground leading-snug">
-                  Welcome to NAFS 👋
+                  Welcome to Ascend 👋
                 </p>
                 <p className="text-xs text-muted-foreground mt-1.5 leading-snug">
                   Tap any feature below to start. Your score will grow as you engage.
@@ -271,9 +275,11 @@ export default function HomeClient({
           <FeatureCard href="/challenges" emoji="🎯" gradient="from-pink-500/25 via-rose-700/10 to-transparent"        iconBg="bg-pink-500/30"    iconRing="ring-pink-400/30"
             title="Challenges"     sub={`${challengesDone} / ${challengesTotal} today`}    pct={challengesTotal ? (challengesDone / challengesTotal) * 100 : 0} barColor="bg-pink-400" notStarted={!challengesEngaged} />
 
+          {deenOn && (
           <FeatureCard href="/deen"       emoji="🕌" gradient="from-yellow-500/25 via-amber-700/10 to-transparent"     iconBg="bg-amber-500/30"   iconRing="ring-amber-400/30"
             title="Deen"           sub={deenEngaged ? `${prayerDone} / ${prayerTotal} pts` : 'Track prayers'}
             pct={deenEngaged && prayerTotal ? (prayerDone / prayerTotal) * 100 : 0}        barColor="bg-amber-400" notStarted={!deenEngaged} />
+          )}
 
           <FeatureCard href="/health"     emoji="❤️" gradient="from-red-500/25 via-pink-700/10 to-transparent"          iconBg="bg-red-500/30"     iconRing="ring-red-400/30"
             title="Health"         sub={healthEngaged ? `${healthDone} / ${healthTotal} logged` : 'Set up profile'}

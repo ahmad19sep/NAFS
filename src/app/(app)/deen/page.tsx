@@ -9,6 +9,8 @@ import { Plus, X, Flame } from 'lucide-react'
 import { PRAYERS, type PrayerStatus } from '@/lib/scoring'
 import HistoryTeaserCard from '@/components/HistoryTeaserCard'
 import { computeDeenHistory } from '@/lib/history'
+import { useDeenEnabled } from '@/hooks/useDeenEnabled'
+import Link from 'next/link'
 
 const PRAYER_EMOJIS: Record<string, string> = {
   Fajr: '🌙', Dhuhr: '☀️', Asr: '🌤️', Maghrib: '🌅', Isha: '⭐'
@@ -59,6 +61,7 @@ interface PastLog {
 export default function DeenPage() {
   const supabase = createClient()
   const today = todayString()
+  const deenEnabled = useDeenEnabled()
 
   const [loading, setLoading] = useState(true)
   const [prayers, setPrayers] = useState<Record<string, PrayerStatus>>(
@@ -283,6 +286,21 @@ export default function DeenPage() {
     if (d.pct > 0) return 'bg-red-500/20'
     return 'bg-white/8'
   }
+
+  if (!deenEnabled) return (
+    <div className="mx-auto max-w-md px-4 pt-16 text-center space-y-4">
+      <p className="text-5xl">🕌</p>
+      <h1 className="text-xl font-bold text-foreground">Faith features are off</h1>
+      <p className="text-sm text-muted-foreground leading-relaxed">
+        The Deen module (daily prayers, Qur&apos;an &amp; dhikr tracking) is currently
+        disabled for your account. You can switch it on anytime.
+      </p>
+      <Link href="/profile"
+        className="inline-block rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-white">
+        Enable in Profile
+      </Link>
+    </div>
+  )
 
   if (loading) return (
     <div className="flex items-center justify-center min-h-[60vh]">

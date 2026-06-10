@@ -24,8 +24,8 @@ export default function ErrorBoundary({ error, reset }: { error: Error & { diges
           </h1>
           <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
             {isNetworkErr
-              ? 'Your connection to NAFS dropped. Check your wifi/internet and try again — your data is safe.'
-              : 'NAFS hit an unexpected error. The team has been notified. Try refreshing.'}
+              ? 'Your connection to Ascend dropped. Check your wifi/internet and try again — your data is safe.'
+              : 'Ascend hit an unexpected error. The team has been notified. Try refreshing.'}
           </p>
         </div>
 

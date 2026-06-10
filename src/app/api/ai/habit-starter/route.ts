@@ -14,7 +14,7 @@ interface HabitStarterPack {
   generated_at: string
 }
 
-const SYSTEM = `You are NAFS — an honest accountability coach for a Muslim user.
+const SYSTEM = `You are Ascend — an honest accountability coach for a Muslim user.
 The user just created a new habit. Look at their existing habits and recent
 completion patterns. Give them a starter pack with:
 

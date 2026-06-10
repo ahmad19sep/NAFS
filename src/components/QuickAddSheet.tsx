@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
+import { useDeenEnabled } from '@/hooks/useDeenEnabled'
 
 interface Props {
   open: boolean
@@ -21,7 +22,10 @@ const ACTIONS: { href: string; emoji: string; label: string; tone: string; ring:
 
 export default function QuickAddSheet({ open, onClose }: Props) {
   useBodyScrollLock(open)
+  const deenEnabled = useDeenEnabled()
   if (!open) return null
+
+  const actions = ACTIONS.filter((a) => deenEnabled || a.href !== '/deen')
 
   return (
     <div
@@ -51,7 +55,7 @@ export default function QuickAddSheet({ open, onClose }: Props) {
 
         {/* Action grid */}
         <div className="px-5 grid grid-cols-3 gap-3">
-          {ACTIONS.map((a) => (
+          {actions.map((a) => (
             <Link key={a.href} href={a.href} onClick={onClose}
               className={cn(
                 'rounded-2xl border border-white/10 bg-gradient-to-br p-4 text-center transition-all active:scale-95 hover:border-white/30',

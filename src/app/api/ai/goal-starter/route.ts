@@ -23,7 +23,7 @@ interface StarterPack {
   generated_at: string
 }
 
-const SYSTEM = `You are NAFS — an honest accountability coach for a Muslim user.
+const SYSTEM = `You are Ascend — an honest accountability coach for a Muslim user.
 The user is creating a goal. Suggest a starter pack of THREE kinds of actions:
 1. 2–3 concrete TASKS they can do TODAY toward this goal
 2. 2–3 HABITS to build that compound over time

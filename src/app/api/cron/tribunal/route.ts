@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
         await webpush.sendNotification(
           user.push_subscription as any,
           JSON.stringify({
-            title: 'NAFS — Weekly Tribunal',
+            title: 'Ascend — Weekly Tribunal',
             body: 'Your weekly verdict is ready. Tap to face it.',
             icon: '/icons/icon-192x192.png',
             badge: '/icons/icon-72x72.png',

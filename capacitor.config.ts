@@ -8,7 +8,7 @@ import type { CapacitorConfig } from '@capacitor/cli'
 // to Vercel, no app rebuild required.
 const config: CapacitorConfig = {
   appId: 'com.ahmad.nafs',
-  appName: 'NAFS',
+  appName: 'Ascend',
   webDir: 'www', // offline fallback shell only — real app comes from server.url
   server: {
     url: 'https://nafs-one.vercel.app',

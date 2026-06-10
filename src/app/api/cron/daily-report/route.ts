@@ -168,7 +168,7 @@ async function buildAndSend(u: User, today: string, yest: string, supabase: any,
   const delta = yTotalWeight > 0 ? score - yScore : null
 
   // ----- AI verdict + tomorrow tip -----
-  const system = `You are NAFS — an honest, caring Muslim accountability coach.
+  const system = `You are Ascend — an honest, caring Muslim accountability coach.
 Write a 2–3 sentence verdict on today, citing real numbers. Then in a new line write
 a single concrete focus for tomorrow. Format:
 
@@ -219,7 +219,7 @@ Health metrics logged: ${healthDone}/${healthTotal}`
 
   await sendEmail({
     to: recipient,
-    subject: `${isTest ? '[TEST] ' : ''}Your NAFS daily verdict — ${score}%`,
+    subject: `${isTest ? '[TEST] ' : ''}Your Ascend daily verdict — ${score}%`,
     html,
   })
   return true

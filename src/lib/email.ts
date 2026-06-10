@@ -20,8 +20,8 @@ export async function sendEmail({ to, subject, html, text, from }: SendEmailInpu
   if (!apiKey) throw new Error('RESEND_API_KEY missing')
 
   const sender = from
-    ?? process.env.NAFS_EMAIL_FROM
-    ?? 'NAFS <onboarding@resend.dev>'  // works without domain verification for testing
+    ?? process.env.Ascend_EMAIL_FROM
+    ?? 'Ascend <onboarding@resend.dev>'  // works without domain verification for testing
 
   const res = await fetch(RESEND_API, {
     method: 'POST',
@@ -42,8 +42,8 @@ export async function sendEmail({ to, subject, html, text, from }: SendEmailInpu
 // Template helpers
 // ============================================================
 
-/** Shared shell for all NAFS emails — dark navy + gold accent. */
-function shell(title: string, bodyHtml: string, ctaUrl?: string, ctaLabel = 'Open NAFS'): string {
+/** Shared shell for all Ascend emails — dark navy + gold accent. */
+function shell(title: string, bodyHtml: string, ctaUrl?: string, ctaLabel = 'Open Ascend'): string {
   const url = ctaUrl ?? process.env.NEXT_PUBLIC_APP_URL ?? 'https://nafs.app'
   return `<!DOCTYPE html>
 <html>
@@ -55,7 +55,7 @@ function shell(title: string, bodyHtml: string, ctaUrl?: string, ctaLabel = 'Ope
         <tr><td>
           <div style="text-align:center;margin-bottom:24px;">
             <div style="display:inline-block;height:56px;width:56px;border-radius:18px;background:#0F4C5C;line-height:56px;font-size:28px;color:#C9A227;">ن</div>
-            <h1 style="margin:8px 0 0 0;font-size:20px;color:#C9A227;letter-spacing:1px;">NAFS</h1>
+            <h1 style="margin:8px 0 0 0;font-size:20px;color:#C9A227;letter-spacing:1px;">Ascend</h1>
             <p style="margin:4px 0 0 0;font-size:11px;color:#7e93ad;letter-spacing:2px;text-transform:uppercase;">${escapeHtml(title)}</p>
           </div>
           ${bodyHtml}
@@ -63,7 +63,7 @@ function shell(title: string, bodyHtml: string, ctaUrl?: string, ctaLabel = 'Ope
             <a href="${escapeHtml(url)}" style="display:inline-block;background:#0F4C5C;color:#fff;text-decoration:none;padding:12px 24px;border-radius:12px;font-weight:600;font-size:14px;">${escapeHtml(ctaLabel)} →</a>
           </div>
           <p style="margin:32px 0 0 0;font-size:11px;color:#5d7185;text-align:center;line-height:1.6;">
-            You're receiving this because email reports are enabled in NAFS Settings.<br />
+            You're receiving this because email reports are enabled in Ascend Settings.<br />
             Disable any time from your profile.
           </p>
         </td></tr>

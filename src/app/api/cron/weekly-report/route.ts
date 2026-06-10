@@ -157,7 +157,7 @@ async function buildAndSend(u: User, supabase: any, isTest: boolean) {
   const prayerTotal = (prayerLogs ?? []).reduce((s: number, p: any) =>
     s + ['fajr','dhuhr','asr','maghrib','isha'].reduce((a, k) => a + Number(p[k] ?? 0), 0), 0)
 
-  const system = `You are NAFS — an honest, caring Muslim accountability coach.
+  const system = `You are Ascend — an honest, caring Muslim accountability coach.
 Write a brutally honest weekly tribunal in 4-6 sentences. Cite real numbers.
 Then on a new line, list 2-3 concrete recommendations for the coming week.
 
@@ -213,7 +213,7 @@ Active goals: ${(goals ?? []).length}`
 
   await sendEmail({
     to: recipient,
-    subject: `${isTest ? '[TEST] ' : ''}Your NAFS week — ${avg}% avg`,
+    subject: `${isTest ? '[TEST] ' : ''}Your Ascend week — ${avg}% avg`,
     html,
   })
   return true

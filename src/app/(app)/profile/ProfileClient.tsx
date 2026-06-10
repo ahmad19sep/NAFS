@@ -62,6 +62,7 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
   // Email reports prefs
   const [emailDaily, setEmailDaily]   = useState<boolean>(!!profile?.notify_email_daily)
   const [emailWeekly, setEmailWeekly] = useState<boolean>(!!profile?.notify_email_weekly)
+  const [deenOn, setDeenOn]           = useState<boolean>((profile?.deen_enabled ?? true) as boolean)
   const [savingPref, setSavingPref]   = useState<string | null>(null)
   const [sendingTest, setSendingTest] = useState<'daily' | 'weekly' | null>(null)
 
@@ -78,12 +79,12 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
 
   async function shareBadge(b: BadgeDef) {
     const text =
-      `${b.emoji} I just earned the "${b.name}" badge on NAFS!\n` +
+      `${b.emoji} I just earned the "${b.name}" badge on Ascend!\n` +
       `${b.description}\n\n` +
       `Tracking my self-accountability journey, one day at a time.`
     try {
       if (typeof navigator !== 'undefined' && (navigator as any).share) {
-        await (navigator as any).share({ title: `NAFS — ${b.name}`, text })
+        await (navigator as any).share({ title: `Ascend — ${b.name}`, text })
       } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(text)
         flash('ok', 'Copied to clipboard')
@@ -213,7 +214,7 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
   async function shareProgress() {
     setSharing(true)
     const text =
-      `🌙 NAFS — my self-accountability journey\n\n` +
+      `🌙 Ascend — my self-accountability journey\n\n` +
       `Avg score · ${avgScore}%\n` +
       `Best day · ${bestScore}%\n` +
       `Days logged · ${daysLogged}\n\n` +
@@ -221,7 +222,7 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
 
     try {
       if (typeof navigator !== 'undefined' && (navigator as any).share) {
-        await (navigator as any).share({ title: 'My NAFS progress', text })
+        await (navigator as any).share({ title: 'My Ascend progress', text })
         flash('ok', 'Shared')
       } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(text)
@@ -289,6 +290,18 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
     if (key === 'notify_email_daily')  setEmailDaily(value)
     if (key === 'notify_email_weekly') setEmailWeekly(value)
     flash('ok', value ? 'Email reports enabled' : 'Email reports disabled')
+  }
+
+  async function toggleDeen(value: boolean) {
+    setSavingPref('deen_enabled')
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setSavingPref(null); flash('err', 'Not signed in'); return }
+    const { error } = await supabase.from('users').update({ deen_enabled: value }).eq('id', user.id)
+    setSavingPref(null)
+    if (error) { flash('err', error.message); return }
+    setDeenOn(value)
+    flash('ok', value ? 'Faith features enabled' : 'Faith features hidden')
+    router.refresh()
   }
 
   async function sendTestReport(which: 'daily' | 'weekly') {
@@ -531,6 +544,11 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
 
       {/* PREFERENCES */}
       <Section title="Preferences">
+        <ToggleRow icon={<span className="text-sm leading-none">🕌</span>} label="Faith features (Deen)"
+          subLabel="Daily prayers, Qur'an & dhikr tracking and prayer scoring"
+          value={deenOn}
+          saving={savingPref === 'deen_enabled'}
+          onToggle={toggleDeen} />
         <Row icon={<Moon size={15} />} label="Theme"     value="Dark"            rightDim />
         <Row icon={<Globe size={15} />} label="Timezone" value={profile?.timezone ?? 'Auto'} rightDim />
       </Section>
@@ -560,7 +578,7 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
       </div>
 
       <p className="text-center text-[10px] text-muted-foreground/60 pt-2">
-        NAFS · v0.1.0 · built for self-accountability
+        Ascend · v0.1.0 · built for self-accountability
       </p>
 
       {/* Delete account confirmation */}

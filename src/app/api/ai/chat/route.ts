@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { chatGemini, isRateLimit } from '@/lib/gemini'
 import { chatGroq, hasGroq } from '@/lib/groq'
-import { ASK_NAFS_SYSTEM, buildChatPrompt } from '@/lib/ai-prompts'
+import { ASK_ASCEND_SYSTEM, buildChatPrompt } from '@/lib/ai-prompts'
 
 export async function POST(req: NextRequest) {
   try {
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
 
     // Build message history (system + last 8 turns, last user msg gets context-injected prompt)
     const aiMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
-      { role: 'system', content: ASK_NAFS_SYSTEM },
+      { role: 'system', content: ASK_ASCEND_SYSTEM },
       ...messages.slice(-8).map((m: any) => ({
         role: m.role as 'user' | 'assistant',
         content: m.role === 'user' && m === messages[messages.length - 1] ? prompt : m.content,

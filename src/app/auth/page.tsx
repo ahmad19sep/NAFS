@@ -27,6 +27,7 @@ function AuthInner() {
   // Signup fields
   const [name, setName] = useState('')
   const [gender, setGender] = useState<Gender | ''>('')
+  const [deenEnabled, setDeenEnabled] = useState(false)
 
   // Shared
   const [email, setEmail] = useState('')
@@ -72,7 +73,7 @@ function AuthInner() {
           password,
           options: {
             emailRedirectTo: `${window.location.origin}/auth/callback`,
-            data: { name: name.trim(), gender },
+            data: { name: name.trim(), gender, deen_enabled: deenEnabled },
           },
         })
 
@@ -84,6 +85,7 @@ function AuthInner() {
             email: data.user.email!,
             name: name.trim(),
             gender,
+            deen_enabled: deenEnabled,
             onboarding_complete: true,
           })
           router.push('/dashboard')
@@ -153,12 +155,12 @@ function AuthInner() {
 
       {/* Logo */}
       <div className="mb-8 flex flex-col items-center gap-3 animate-slide-up">
-        <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/80 shadow-lg glow-teal">
-          <span className="arabic text-4xl text-gold">ن</span>
+        <div className="h-20 w-20 overflow-hidden rounded-3xl shadow-lg glow-teal">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icons/icon.svg" alt="Ascend" className="h-full w-full" />
         </div>
         <div className="text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-gold-gradient">NAFS</h1>
-          <p className="arabic mt-1 text-lg text-muted-foreground">نَفْس</p>
+          <h1 className="text-3xl font-bold tracking-tight text-gold-gradient">Ascend</h1>
           <p className="mt-2 text-sm text-muted-foreground">The mirror that doesn&apos;t lie.</p>
         </div>
       </div>
@@ -273,6 +275,35 @@ function AuthInner() {
                   </button>
                 </div>
               </div>
+
+              <button
+                type="button"
+                onClick={() => setDeenEnabled(!deenEnabled)}
+                className={cn(
+                  'flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left transition-all',
+                  deenEnabled
+                    ? 'border-gold/50 bg-gold/10'
+                    : 'border-white/10 bg-white/5 hover:border-white/20'
+                )}
+              >
+                <div>
+                  <p className={cn('text-sm font-semibold', deenEnabled ? 'text-gold' : 'text-foreground')}>
+                    🕌 Faith features
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Daily prayers, Qur&apos;an &amp; deen tracking (for Muslim users)
+                  </p>
+                </div>
+                <div className={cn(
+                  'relative h-6 w-11 shrink-0 rounded-full transition-colors',
+                  deenEnabled ? 'bg-gold' : 'bg-white/15'
+                )}>
+                  <div className={cn(
+                    'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all',
+                    deenEnabled ? 'left-[22px]' : 'left-0.5'
+                  )} />
+                </div>
+              </button>
             </>
           )}
 

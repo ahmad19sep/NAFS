@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
 
     // --- Manual entry path (no vision needed) ---
     if (manualData) {
-      const system = `You are NAFS, an AI accountability coach. The user shared their phone screen time data.
+      const system = `You are Ascend, an AI accountability coach. The user shared their phone screen time data.
 Analyze it honestly: what was wasted, what was productive, which apps dominated.
 Keep it under 100 words. Be direct. End with one specific recommendation.`
 

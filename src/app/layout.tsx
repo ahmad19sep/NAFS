@@ -10,13 +10,13 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: 'NAFS — نَفْس',
-  description: 'Self-Accountability App for Muslim Dreamers. Master your Nafs. Master your life.',
+  title: 'Ascend',
+  description: 'The accountability app that holds you to your goals, habits and values — with an AI coach that never sugarcoats.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'NAFS',
+    title: 'Ascend',
   },
   icons: {
     icon: [
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
     ],
     apple: '/icons/icon-192x192.svg',
   },
-  keywords: ['Muslim', 'accountability', 'self-improvement', 'Islam', 'productivity', 'dream'],
+  keywords: ['accountability', 'self-improvement', 'habits', 'goals', 'productivity', 'AI coach'],
   authors: [{ name: 'Ahmad', url: 'https://github.com/ahmad19sep' }],
 }
 

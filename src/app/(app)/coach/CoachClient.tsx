@@ -94,7 +94,7 @@ export default function CoachClient({ userId, reports, letters, lastConversation
   const TABS = [
     { key: 'pull', label: "Today's Pull", icon: Zap },
     { key: 'tribunal', label: 'Tribunal', icon: FileText },
-    { key: 'chat', label: 'Ask NAFS', icon: Send },
+    { key: 'chat', label: 'Ask Ascend', icon: Send },
     { key: 'letters', label: 'Letters', icon: Mail },
   ] as const
 
@@ -205,14 +205,14 @@ export default function CoachClient({ userId, reports, letters, lastConversation
         </div>
       )}
 
-      {/* Ask NAFS Chat */}
+      {/* Ask Ascend Chat */}
       {activeTab === 'chat' && (
         <div className="flex flex-col" style={{ height: 'calc(100vh - 280px)' }}>
           <div className="flex-1 overflow-y-auto space-y-4 pb-4 scrollbar-hide">
             {messages.length === 0 && (
               <div className="text-center py-8">
                 <p className="text-3xl">🤖</p>
-                <p className="mt-3 font-semibold text-foreground">Ask NAFS anything</p>
+                <p className="mt-3 font-semibold text-foreground">Ask Ascend anything</p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   I have access to your last 90 days of data.
                 </p>
@@ -305,7 +305,7 @@ export default function CoachClient({ userId, reports, letters, lastConversation
                 </p>
                 {letter.ai_reply_text && (
                   <div className="border-t border-white/10 pt-4">
-                    <p className="text-xs text-gold font-semibold mb-2">🤖 NAFS reply — based on your current data</p>
+                    <p className="text-xs text-gold font-semibold mb-2">🤖 Ascend reply — based on your current data</p>
                     <p className="text-sm text-muted-foreground leading-relaxed">
                       {letter.ai_reply_text}
                     </p>

@@ -39,7 +39,7 @@ export default function GlobalError({ error, reset }: { error: Error & { digest?
             justifyContent: 'center',
             fontSize: 28,
           }}>!</div>
-          <h1 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>NAFS hit a problem</h1>
+          <h1 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 8px' }}>Ascend hit a problem</h1>
           <p style={{ fontSize: 14, color: '#9CA3AF', margin: '0 0 20px', lineHeight: 1.5 }}>
             Something failed before the app could load. Try refreshing — your data is safe.
           </p>

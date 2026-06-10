@@ -54,6 +54,12 @@
     min-height: 100vh;
     min-height: -webkit-fill-available;
     overscroll-behavior: none;
+    /* Ambient depth — soft gold halo top, teal wash bottom. Fixed so it
+       doesn't repaint on scroll; gives every screen a premium feel. */
+    background-image:
+      radial-gradient(60% 40% at 85% -10%, rgba(201, 162, 39, 0.10), transparent 70%),
+      radial-gradient(50% 35% at -10% 100%, rgba(15, 76, 92, 0.35), transparent 70%);
+    background-attachment: fixed;
   }
 
   /* iOS-safe scrolling */
@@ -70,9 +76,13 @@
 }
 
 @layer components {
-  /* Glassmorphism card — the main NAFS card style */
+  /* Glassmorphism card — the main app card style */
   .nafs-card {
-    @apply rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm;
+    @apply rounded-2xl border border-white/10 backdrop-blur-sm;
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.06) inset,
+      0 8px 24px rgba(0, 0, 0, 0.25);
   }
 
   /* Gold gradient text */
@@ -106,7 +116,9 @@
 
   /* Bottom nav bar */
   .bottom-nav {
-    @apply fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-navy/95 backdrop-blur-md;
+    @apply fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 backdrop-blur-xl;
+    background: linear-gradient(to top, rgba(6, 14, 22, 0.97), rgba(11, 26, 43, 0.88));
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.35);
     padding-bottom: env(safe-area-inset-bottom);
   }
 
@@ -164,7 +176,7 @@
   .log-input {
     @apply w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3
            text-foreground placeholder:text-muted-foreground
-           focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/30
+           focus:border-gold/50 focus:outline-none focus:ring-2 focus:ring-gold/20
            transition-all duration-200;
   }
 
