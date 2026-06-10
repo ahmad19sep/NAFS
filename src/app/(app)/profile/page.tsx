@@ -27,7 +27,7 @@ export default async function ProfilePage() {
   // Fetch profile
   let { data: profile } = await supabase
     .from('users')
-    .select('*, dreams(*, activity_weights(*))')
+    .select('*')
     .eq('id', user.id)
     .maybeSingle()
 
@@ -35,13 +35,13 @@ export default async function ProfilePage() {
     const insertName = authName || emailPrefix
     const { data: created } = await supabase
       .from('users')
-      .insert({
+      .upsert({
         id: user.id,
         email: user.email ?? '',
         name: insertName,
         onboarding_complete: false,
       })
-      .select('*, dreams(*, activity_weights(*))')
+      .select('*')
       .single()
     profile = created
   } else {
@@ -65,7 +65,7 @@ export default async function ProfilePage() {
     if (Object.keys(patch).length > 0) {
       const { data: updated, error: updErr } = await supabase
         .from('users').update(patch).eq('id', user.id)
-        .select('*, dreams(*, activity_weights(*))').maybeSingle()
+        .select('*').maybeSingle()
       if (updErr) console.warn('[profile] backfill failed:', updErr.message)
       if (updated) profile = updated
       else Object.assign(profile, patch)

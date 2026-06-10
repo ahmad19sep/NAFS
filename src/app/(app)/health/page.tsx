@@ -170,9 +170,29 @@ export default function HealthPage() {
       error   = retry.error
     }
 
+    // No row matched → the users profile row is missing (e.g. signup ran
+    // before migrations). Create it now instead of failing.
+    if (!updated && !error) {
+      const meta = (user.user_metadata ?? {}) as Record<string, any>
+      const fallbackName =
+        (meta.name || meta.full_name || '').trim() || (user.email?.split('@')[0] ?? '')
+      const ins = await supabase.from('users')
+        .upsert({
+          id: user.id,
+          email: user.email ?? '',
+          name: fallbackName,
+          onboarding_complete: true,
+          height_cm: h,
+          weight_kg: w,
+        })
+        .select('height_cm, weight_kg').maybeSingle()
+      updated = ins.data
+      error   = ins.error
+    }
+
     setSetupSaving(false)
     if (error) { setSetupError(error.message); return }
-    if (!updated) { setSetupError('Update was blocked. Are you signed in?'); return }
+    if (!updated) { setSetupError('Could not save your profile. Please sign out and back in.'); return }
 
     setHeightCm(updated.height_cm)
     setProfileWeight(updated.weight_kg)

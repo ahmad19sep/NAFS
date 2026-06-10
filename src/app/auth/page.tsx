@@ -80,14 +80,18 @@ function AuthInner() {
         if (error) { setError(error.message); return }
 
         if (data.user && data.session) {
-          await supabase.from('users').upsert({
+          const row = {
             id: data.user.id,
             email: data.user.email!,
             name: name.trim(),
             gender,
-            deen_enabled: deenEnabled,
             onboarding_complete: true,
-          })
+          }
+          const { error: upErr } = await supabase.from('users')
+            .upsert({ ...row, deen_enabled: deenEnabled })
+          // deen_enabled column may not exist yet (migration not run) —
+          // never let that block account creation
+          if (upErr) await supabase.from('users').upsert(row)
           router.push('/dashboard')
         } else {
           setMessage(
