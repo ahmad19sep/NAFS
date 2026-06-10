@@ -183,7 +183,7 @@ export default function HomeClient({
     <div className="mx-auto max-w-md space-y-5 px-4 pb-8">
 
       {/* ───────────── Header ───────────── */}
-      <div className="flex items-start justify-between pt-4">
+      <div className="anim-up flex items-start justify-between pt-4">
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/70">
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
@@ -200,9 +200,9 @@ export default function HomeClient({
       </div>
 
       {/* ───────────── Hero score card ───────────── */}
-      <div className="relative overflow-hidden rounded-3xl border border-white/10
+      <div className="anim-up relative overflow-hidden rounded-3xl border border-white/10
                       bg-gradient-to-br from-[#16314a] via-[#0f2235] to-[#0b1a2b]
-                      p-5 animate-slide-up">
+                      p-5">
         {/* Background glow */}
         <div className="pointer-events-none absolute -top-12 -right-12 h-48 w-48 rounded-full
                         bg-gold/[0.08] blur-3xl" />
@@ -211,20 +211,27 @@ export default function HomeClient({
           {/* Big ring */}
           <div className="relative flex-shrink-0">
             <svg width="108" height="108" style={{ transform: 'rotate(-90deg)' }}>
-              <circle cx="54" cy="54" r="46" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="10" />
+              <defs>
+                <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#E8C547" />
+                  <stop offset="100%" stopColor="#9A7B1E" />
+                </linearGradient>
+              </defs>
+              <circle cx="54" cy="54" r="46" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="9" />
               <circle cx="54" cy="54" r="46" fill="none"
-                stroke={overallScore >= 80 ? '#34d399' : overallScore >= 60 ? '#fbbf24' : overallScore >= 40 ? '#fb923c' : '#f87171'}
-                strokeWidth="10" strokeLinecap="round"
+                stroke="url(#ringGrad)"
+                strokeWidth="9" strokeLinecap="round"
                 strokeDasharray={289}
                 strokeDashoffset={289 * (1 - overallScore / 100)}
-                style={{ transition: 'stroke-dashoffset 1s ease', filter: 'drop-shadow(0 0 10px currentColor)' }}
+                style={{ transition: 'stroke-dashoffset 1s cubic-bezier(0.16,1,0.3,1)',
+                         filter: 'drop-shadow(0 0 6px rgba(201,162,39,0.35))' }}
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className={cn('text-3xl font-bold tabular-nums leading-none', scoreColor(overallScore))}>
+              <span className={cn('font-display text-[34px] font-semibold tabular-nums leading-none tracking-tight', scoreColor(overallScore))}>
                 {overallScore}
               </span>
-              <span className="text-[9px] uppercase tracking-widest text-muted-foreground mt-0.5">today</span>
+              <span className="text-[9px] uppercase tracking-[0.18em] text-muted-foreground mt-1">today</span>
             </div>
           </div>
 
@@ -262,7 +269,7 @@ export default function HomeClient({
       </div>
 
       {/* ───────────── Features grid ───────────── */}
-      <div>
+      <div className="anim-up anim-d2">
         <div className="flex items-center justify-between mb-3">
           <p className="section-header">Features</p>
           <span className="text-[10px] text-muted-foreground tabular-nums">{new Date().getHours() < 21 ? 'tap to log' : 'review today'}</span>
@@ -297,6 +304,7 @@ export default function HomeClient({
       </div>
 
       {/* ───────────── History teaser ───────────── */}
+      <div className="anim-up anim-d3">
       <HistoryTeaserCard
         days={liveTotalHistory}
         title="Your last 30 days"
@@ -305,9 +313,10 @@ export default function HomeClient({
         emoji="📊"
         accent="gold"
       />
+      </div>
 
       {/* ───────────── AI coach ───────────── */}
-      <Link href="/coach">
+      <Link href="/coach" className="anim-up anim-d4 block">
         <div className="nafs-card p-4 flex items-center gap-3 hover:border-gold/25 transition-all active:scale-[0.99]">
           <div className="h-10 w-10 rounded-xl border border-gold/20 bg-gold/[0.07] flex items-center justify-center flex-shrink-0">
             <Sparkles size={16} className="text-gold" />
