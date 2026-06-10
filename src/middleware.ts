@@ -28,7 +28,12 @@ export async function middleware(request: NextRequest) {
   })
 
   try {
-    const { data: { user } } = await supabase.auth.getUser()
+    // getSession() reads the auth cookie locally (no network round-trip per
+    // navigation, unlike getUser). It only hits the network to refresh an
+    // expired token. This is a redirect gate only — every page re-verifies
+    // the user server-side via requireUser()/getUser().
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user ?? null
     const { pathname } = request.nextUrl
     const publicRoutes = ['/auth', '/auth/callback', '/auth/error']
     const isPublicRoute = publicRoutes.some((r) => pathname.startsWith(r))
