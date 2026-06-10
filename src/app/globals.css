@@ -101,6 +101,16 @@
     font-family: var(--font-display), var(--font-inter), system-ui, sans-serif;
     letter-spacing: -0.02em;
   }
+
+  /* iOS: fire taps immediately on interactive elements instead of waiting
+     to disambiguate scroll/zoom gestures — fixes "tap scrolls, doesn't click" */
+  button, a, [role='button'], input, label, select, textarea {
+    touch-action: manipulation;
+  }
+  button, a, [role='button'] {
+    -webkit-user-select: none;
+    user-select: none;
+  }
 }
 
 @layer components {
