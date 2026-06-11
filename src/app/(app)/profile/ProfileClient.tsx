@@ -519,14 +519,17 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
         </div>
       </div>
 
-      {/* Toast */}
+      {/* Toast — fixed overlay so it never shifts the page layout */}
       {toast && (
-        <div className={cn(
-          'rounded-xl border px-4 py-2.5 text-sm font-medium animate-slide-up',
-          toast.type === 'ok' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                              : 'border-red-500/30 bg-red-500/10 text-red-300'
-        )}>
-          {toast.text}
+        <div className="pointer-events-none fixed inset-x-0 z-[80] flex justify-center px-4"
+          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 12px)' }}>
+          <div className={cn(
+            'rounded-xl border px-4 py-2.5 text-sm font-medium shadow-lg backdrop-blur-md animate-slide-up max-w-sm text-center',
+            toast.type === 'ok' ? 'border-emerald-500/30 bg-emerald-950/90 text-emerald-300'
+                                : 'border-red-500/30 bg-red-950/90 text-red-300'
+          )}>
+            {toast.text}
+          </div>
         </div>
       )}
 
