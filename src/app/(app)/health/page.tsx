@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { cn, todayString } from '@/lib/utils'
-import { Droplet, Footprints, Moon, Sun, Dumbbell, Scale, Ruler, Plus, Minus, X, Trash2, EyeOff, Eye, Sparkles, RefreshCw } from 'lucide-react'
+import { Droplet, Footprints, Moon, Sun, Dumbbell, Scale, Ruler, Plus, Minus, X, Trash2, Sparkles, RefreshCw } from 'lucide-react'
 import HistoryTeaserCard from '@/components/HistoryTeaserCard'
 import { computeHealthHistory } from '@/lib/history'
 import { computeBMI, sleepHoursBetween } from '@/lib/bmi'
@@ -303,20 +303,31 @@ export default function HealthPage() {
   }
 
   async function hideDefault(id: string, label: string) {
-    if (!confirm(`Hide "${label}"? You can show it again from the bottom of the page.`)) return
+    if (!confirm(`Remove "${label}"? You can add it back anytime with + Add metric. Past data is kept.`)) return
     const next = Array.from(new Set([...hiddenDefaults, id]))
     setHiddenDefaults(next)
     if (userId) {
       await supabase.from('users').update({ health_defaults_hidden: next }).eq('id', userId)
     }
   }
-  async function restoreDefaults() {
-    setHiddenDefaults([])
+  async function unhideDefault(id: string) {
+    const next = hiddenDefaults.filter((x) => x !== id)
+    setHiddenDefaults(next)
     if (userId) {
-      await supabase.from('users').update({ health_defaults_hidden: [] }).eq('id', userId)
+      await supabase.from('users').update({ health_defaults_hidden: next }).eq('id', userId)
     }
   }
   const isHidden = (id: string) => hiddenDefaults.includes(id)
+
+  // Built-in metrics available in the "+ Add metric" picker when not active
+  const BUILTIN_METRICS = [
+    { id: 'water',    name: 'Water',    icon: Droplet,    tint: 'text-blue-400' },
+    { id: 'steps',    name: 'Steps',    icon: Footprints, tint: 'text-emerald-400' },
+    { id: 'exercise', name: 'Exercise', icon: Dumbbell,   tint: 'text-pink-400' },
+    { id: 'weight',   name: 'Weight',   icon: Scale,      tint: 'text-gold' },
+  ] as const
+  const hiddenBuiltins = BUILTIN_METRICS.filter((b) => isHidden(b.id))
+  const nothingTracked = hiddenBuiltins.length === BUILTIN_METRICS.length && extrasConfig.length === 0
 
   async function save() {
     if (!userId) return
@@ -718,15 +729,46 @@ export default function HealthPage() {
             <Plus size={12} /> Add metric
           </button>
         </div>
-        {extrasConfig.length === 0 && !showAddMetric && (
+        {nothingTracked && !showAddMetric && (
+          <div className="py-6 text-center">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-gold/20 bg-gold/[0.07]">
+              <Plus size={18} className="text-gold" />
+            </div>
+            <p className="text-sm font-semibold text-foreground">Track what matters to you</p>
+            <p className="mx-auto mt-1 max-w-[240px] text-xs text-muted-foreground leading-relaxed">
+              Water, steps, exercise, weight — or anything custom like vitamins, coffee, mood.
+            </p>
+            <button onClick={() => setShowAddMetric(true)}
+              className="btn-gold mt-4 px-6 py-2.5 text-sm">
+              Add your first metric
+            </button>
+          </div>
+        )}
+        {!nothingTracked && extrasConfig.length === 0 && !showAddMetric && hiddenBuiltins.length > 0 && (
           <p className="text-xs text-muted-foreground text-center py-2">
-            Track anything — vitamins, coffee, headache, mood. Tap +Add metric.
+            Add more — {hiddenBuiltins.map((b) => b.name.toLowerCase()).join(', ')} or anything custom.
           </p>
         )}
 
         {/* Add form */}
         {showAddMetric && (
-          <div className="space-y-2 p-3 rounded-xl border border-white/10 bg-white/5">
+          <div className="space-y-3 p-3 rounded-xl border border-white/10 bg-white/5">
+            {hiddenBuiltins.length > 0 && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Quick add</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {hiddenBuiltins.map((b) => (
+                    <button key={b.id} onClick={() => unhideDefault(b.id)}
+                      className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5
+                                 text-xs font-medium text-foreground hover:border-gold/40 hover:bg-gold/10 transition-all active:scale-95">
+                      <b.icon size={12} className={b.tint} />
+                      {b.name}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mt-3 mb-1.5">Or create custom</p>
+              </div>
+            )}
             <div className="flex gap-2">
               <input value={newMetricEmoji} onChange={(e) => setNewMetricEmoji(e.target.value)}
                 maxLength={2} className="log-input w-12 text-center text-lg" />
@@ -799,15 +841,6 @@ export default function HealthPage() {
           </div>
           <p className="text-[10px] text-muted-foreground/70 mt-1">Logging weight updates your BMI banner.</p>
         </div>
-      )}
-
-      {/* Restore hidden */}
-      {hiddenDefaults.length > 0 && (
-        <button onClick={restoreDefaults}
-          className="w-full flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/3
-                     px-4 py-3 text-xs text-muted-foreground hover:bg-white/8 hover:text-foreground transition-all">
-          <Eye size={12} /> Show {hiddenDefaults.length} hidden metric{hiddenDefaults.length === 1 ? '' : 's'}
-        </button>
       )}
 
       {/* Notes */}
