@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -sL -o /dev/null -w \"%{http_code} %{url_effective}\" https://nafs-one.vercel.app)",
+      "Bash(git rm *)",
+      "Bash(npx cap *)",
+      "Bash(mkdir -p assets)",
+      "Bash(node -e ' *)",
+      "Bash(npx capacitor-assets *)",
+      "Bash(git reset *)"
+    ]
+  }
+}
