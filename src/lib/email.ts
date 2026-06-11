@@ -20,7 +20,8 @@ export async function sendEmail({ to, subject, html, text, from }: SendEmailInpu
   if (!apiKey) throw new Error('RESEND_API_KEY missing')
 
   const sender = from
-    ?? process.env.Ascend_EMAIL_FROM
+    ?? process.env.ASCEND_EMAIL_FROM
+    ?? process.env.NAFS_EMAIL_FROM // legacy name, still set in existing envs
     ?? 'Ascend <onboarding@resend.dev>'  // works without domain verification for testing
 
   const res = await fetch(RESEND_API, {
@@ -44,7 +45,7 @@ export async function sendEmail({ to, subject, html, text, from }: SendEmailInpu
 
 /** Shared shell for all Ascend emails — dark navy + gold accent. */
 function shell(title: string, bodyHtml: string, ctaUrl?: string, ctaLabel = 'Open Ascend'): string {
-  const url = ctaUrl ?? process.env.NEXT_PUBLIC_APP_URL ?? 'https://nafs.app'
+  const url = ctaUrl ?? process.env.NEXT_PUBLIC_APP_URL ?? 'https://nafs-one.vercel.app'
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8" /><title>${escapeHtml(title)}</title></head>
@@ -54,7 +55,7 @@ function shell(title: string, bodyHtml: string, ctaUrl?: string, ctaLabel = 'Ope
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;background:#0f2235;border:1px solid rgba(255,255,255,0.08);border-radius:24px;padding:32px 24px;">
         <tr><td>
           <div style="text-align:center;margin-bottom:24px;">
-            <div style="display:inline-block;height:56px;width:56px;border-radius:18px;background:#0F4C5C;line-height:56px;font-size:28px;color:#C9A227;">ن</div>
+            <div style="display:inline-block;height:56px;width:56px;border-radius:18px;background:linear-gradient(135deg,#0B1A2B,#0F4C5C);line-height:56px;font-size:26px;color:#C9A227;">▲</div>
             <h1 style="margin:8px 0 0 0;font-size:20px;color:#C9A227;letter-spacing:1px;">Ascend</h1>
             <p style="margin:4px 0 0 0;font-size:11px;color:#7e93ad;letter-spacing:2px;text-transform:uppercase;">${escapeHtml(title)}</p>
           </div>
