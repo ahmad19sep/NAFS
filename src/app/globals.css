@@ -152,13 +152,7 @@
     @apply bg-white/20 border border-white/30;
   }
 
-  /* Bottom nav bar */
-  .bottom-nav {
-    @apply fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 backdrop-blur-xl;
-    background: linear-gradient(to top, rgba(6, 14, 22, 0.97), rgba(11, 26, 43, 0.88));
-    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.35);
-    padding-bottom: env(safe-area-inset-bottom);
-  }
+  /* (Bottom nav is a floating dock styled inline in BottomNav.tsx) */
 
   /* Modal/sheet overlay — covers full screen, but reserves space at the
      bottom on mobile so the modal content sits above the BottomNav.
@@ -190,9 +184,9 @@
     overscroll-behavior: contain;
   }
 
-  /* Page container — accounts for bottom nav + iOS notch */
+  /* Page container — accounts for the floating dock + iOS notch */
   .page-container {
-    @apply pb-24 pt-4;
+    @apply pb-32 pt-4;
     padding-top: env(safe-area-inset-top, 1rem);
   }
 

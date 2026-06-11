@@ -21,8 +21,14 @@ export default function BottomNav() {
 
   return (
     <>
-      <nav className="bottom-nav">
-        <div className="flex items-end justify-around px-2 py-2">
+      {/* Floating dock */}
+      <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-50 px-4"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 10px)' }}>
+        <div className="pointer-events-auto mx-auto flex max-w-[400px] items-center justify-between
+                        rounded-[26px] border border-white/10 px-2 py-1.5
+                        shadow-[0_18px_40px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.06)]
+                        backdrop-blur-xl"
+          style={{ background: 'linear-gradient(180deg, rgba(20,42,64,0.92), rgba(9,21,35,0.96))' }}>
           {TABS.map((tab) => {
             const isActive = tab.href ? (pathname === tab.href || pathname.startsWith(tab.href + '/')) : false
             const isCenter = tab.href === null
@@ -34,17 +40,15 @@ export default function BottomNav() {
                   key="add"
                   aria-label="Quick add"
                   onClick={() => setQuickAddOpen(true)}
-                  className="flex flex-col items-center"
+                  className="relative -mt-7 flex flex-col items-center px-1"
                 >
-                  <div className="relative">
-                    <div className="relative flex h-[52px] w-[52px] items-center justify-center rounded-2xl
-                                    bg-gradient-to-b from-[#E0BC45] to-[#B8922A] -mt-5
-                                    shadow-[0_6px_18px_rgba(201,162,39,0.35),inset_0_1px_0_rgba(255,255,255,0.35)]
-                                    transition-transform active:scale-90">
-                      <Plus size={24} className="text-[#0b1a2b] stroke-[2.5]" />
-                    </div>
+                  <div className="flex h-14 w-14 items-center justify-center rounded-[20px]
+                                  bg-gradient-to-b from-[#E8C547] to-[#B8922A]
+                                  ring-[5px] ring-[#0a1622]
+                                  shadow-[0_10px_24px_rgba(201,162,39,0.35),inset_0_1.5px_0_rgba(255,255,255,0.4)]
+                                  transition-all active:scale-90 active:shadow-[0_4px_12px_rgba(201,162,39,0.3)]">
+                    <Plus size={24} className="text-[#0b1a2b] stroke-[2.5]" />
                   </div>
-                  <span className="mt-1.5 text-[10px] font-medium text-gold/90">{tab.label}</span>
                 </button>
               )
             }
@@ -54,16 +58,19 @@ export default function BottomNav() {
                 key={tab.href!}
                 href={tab.href!}
                 className={cn(
-                  'flex flex-col items-center gap-0.5 px-2.5 py-1.5 rounded-xl transition-all duration-200 min-w-[60px]',
-                  isActive ? 'text-gold' : 'text-muted-foreground hover:text-foreground'
+                  'relative flex flex-1 flex-col items-center gap-1 rounded-2xl py-2 transition-all duration-200',
+                  isActive ? 'text-gold' : 'text-muted-foreground/70 hover:text-foreground'
                 )}
               >
-                <div className={cn('relative flex items-center justify-center',
-                  isActive && 'after:absolute after:-top-2 after:h-[3px] after:w-5 after:rounded-full after:bg-gold'
-                )}>
-                  <Icon size={20} strokeWidth={isActive ? 2.2 : 1.8} />
-                </div>
-                <span className={cn('text-[10px]', isActive ? 'font-semibold' : 'font-medium')}>{tab.label}</span>
+                {/* Active glow pill */}
+                <span className={cn(
+                  'pointer-events-none absolute inset-x-1 inset-y-0.5 rounded-2xl transition-opacity duration-300',
+                  isActive ? 'opacity-100 bg-gold/[0.09]' : 'opacity-0'
+                )} />
+                <Icon size={20} strokeWidth={isActive ? 2.2 : 1.8} className="relative" />
+                <span className={cn('relative text-[9.5px] leading-none tracking-wide',
+                  isActive ? 'font-semibold' : 'font-medium'
+                )}>{tab.label}</span>
               </Link>
             )
           })}
