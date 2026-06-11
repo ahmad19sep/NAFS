@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { cn, todayString } from '@/lib/utils'
-import { Droplet, Footprints, Moon, Sun, Dumbbell, Scale, Ruler, Plus, X, Trash2, EyeOff, Eye, Sparkles, RefreshCw } from 'lucide-react'
+import { Droplet, Footprints, Moon, Sun, Dumbbell, Scale, Ruler, Plus, Minus, X, Trash2, EyeOff, Eye, Sparkles, RefreshCw } from 'lucide-react'
 import HistoryTeaserCard from '@/components/HistoryTeaserCard'
 import { computeHealthHistory } from '@/lib/history'
 import { computeBMI, sleepHoursBetween } from '@/lib/bmi'
@@ -563,33 +563,50 @@ export default function HealthPage() {
       {/* Water */}
       {!isHidden('water') && (
         <div className="nafs-card p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <Droplet size={18} className="text-blue-400" />
-            <p className="font-semibold text-foreground">Water</p>
-            <span className={cn('ml-auto text-sm font-bold tabular-nums', water >= 8 ? 'text-emerald-400' : 'text-blue-400')}>
-              {water}/8 glasses {water >= 8 && '✓'}
-            </span>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="h-9 w-9 rounded-xl border border-blue-400/20 bg-blue-500/10 flex items-center justify-center">
+              <Droplet size={16} className={water >= 8 ? 'text-emerald-400' : 'text-blue-400'} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[15px] font-semibold text-foreground leading-tight">Water</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">8 glasses ≈ 2 litres</p>
+            </div>
+            <p className="tabular-nums">
+              <span className={cn('text-2xl font-semibold', water >= 8 ? 'text-emerald-400' : 'text-foreground')}>{water}</span>
+              <span className="text-sm text-muted-foreground"> / 8</span>
+            </p>
             <button onClick={() => hideDefault('water', 'Water')}
               className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
               aria-label="Hide water">
               <Trash2 size={11} />
             </button>
           </div>
-          <div className="grid grid-cols-8 gap-1.5">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <button key={i} onClick={() => setWater(water === i + 1 ? i : i + 1)}
-                className={cn('aspect-square rounded-lg border transition-all active:scale-90 flex items-center justify-center text-base',
-                  i < water ? 'border-blue-400/50 bg-blue-500/20' : 'border-white/10 bg-white/5'
-                )}>
-                {i < water ? '💧' : ''}
-              </button>
-            ))}
+          <div className="flex items-center gap-3">
+            <button onClick={() => setWater(Math.max(0, water - 1))} disabled={water <= 0}
+              aria-label="Remove glass"
+              className="h-11 w-11 shrink-0 rounded-xl border border-white/10 bg-white/5 flex items-center justify-center
+                         text-foreground transition-all active:scale-90 disabled:opacity-30">
+              <Minus size={16} />
+            </button>
+            <div className="flex-1 flex gap-1.5">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className={cn('h-2.5 flex-1 rounded-full transition-all duration-300',
+                  i < water
+                    ? (water >= 8 ? 'bg-emerald-400' : 'bg-gradient-to-r from-sky-400 to-blue-400')
+                    : 'bg-white/[0.08]'
+                )} />
+              ))}
+            </div>
+            <button onClick={() => setWater(Math.min(12, water + 1))}
+              aria-label="Add glass"
+              className="h-11 w-11 shrink-0 rounded-xl border border-blue-400/30 bg-blue-500/15 flex items-center justify-center
+                         text-blue-300 transition-all active:scale-90">
+              <Plus size={16} />
+            </button>
           </div>
-          <div className="mt-3 h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-            <div className={cn('h-full rounded-full transition-all',
-              water >= 8 ? 'bg-emerald-400' : 'bg-blue-400'
-            )} style={{ width: `${Math.min(100, (water / 8) * 100)}%` }} />
-          </div>
+          {water >= 8 && (
+            <p className="mt-2.5 text-center text-[11px] font-medium text-emerald-400">Goal reached — well hydrated ✓</p>
+          )}
         </div>
       )}
 
@@ -599,27 +616,49 @@ export default function HealthPage() {
         const stepsTarget = 8000
         const stepsPct = Math.min(100, (stepsNum / stepsTarget) * 100)
         const stepsHit = stepsNum >= stepsTarget
+        const addSteps = (n: number) => setSteps(String(Math.max(0, stepsNum + n)))
         return (
-          <div className="nafs-card p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Footprints size={16} className="text-emerald-400" />
-              <p className="text-sm font-semibold text-foreground">Steps</p>
-              <span className={cn('ml-auto text-xs font-bold tabular-nums', stepsHit ? 'text-emerald-400' : 'text-muted-foreground')}>
-                {stepsNum.toLocaleString()} / {stepsTarget.toLocaleString()} {stepsHit && '✓'}
-              </span>
+          <div className="nafs-card p-5">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-9 w-9 rounded-xl border border-emerald-400/20 bg-emerald-500/10 flex items-center justify-center">
+                <Footprints size={16} className="text-emerald-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[15px] font-semibold text-foreground leading-tight">Steps</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">goal {stepsTarget.toLocaleString()}</p>
+              </div>
+              <p className="tabular-nums">
+                <span className={cn('text-2xl font-semibold', stepsHit ? 'text-emerald-400' : 'text-foreground')}>
+                  {stepsNum.toLocaleString()}
+                </span>
+              </p>
               <button onClick={() => hideDefault('steps', 'Steps')}
                 className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
                 aria-label="Hide steps">
                 <Trash2 size={11} />
               </button>
             </div>
-            <input type="number" value={steps} onChange={(e) => setSteps(e.target.value)}
-              placeholder="8000" min="0"
-              className="log-input text-center text-2xl font-bold" />
-            <div className="mt-3 h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
-              <div className={cn('h-full rounded-full transition-all',
-                stepsHit ? 'bg-emerald-400' : 'bg-emerald-500/70'
+
+            <div className="relative h-2.5 w-full rounded-full bg-white/[0.08] overflow-hidden">
+              <div className={cn('h-full rounded-full transition-all duration-500',
+                stepsHit ? 'bg-emerald-400' : 'bg-gradient-to-r from-emerald-600 to-emerald-400'
               )} style={{ width: `${stepsPct}%` }} />
+            </div>
+            <div className="mt-1.5 flex justify-between text-[10px] tabular-nums text-muted-foreground/70">
+              <span>0</span><span>{stepsHit ? 'goal reached ✓' : `${Math.round(stepsPct)}%`}</span><span>{(stepsTarget / 1000)}k</span>
+            </div>
+
+            <div className="mt-3 flex items-center gap-2">
+              <input type="number" inputMode="numeric" value={steps} onChange={(e) => setSteps(e.target.value)}
+                placeholder="0" min="0"
+                className="log-input flex-1 py-2.5 text-center text-lg font-semibold" />
+              {[500, 1000, 2500].map((n) => (
+                <button key={n} onClick={() => addSteps(n)}
+                  className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-xs font-semibold
+                             text-muted-foreground hover:text-emerald-300 hover:border-emerald-400/30 transition-all active:scale-95 tabular-nums">
+                  +{n >= 1000 ? `${n / 1000}k` : n}
+                </button>
+              ))}
             </div>
           </div>
         )
