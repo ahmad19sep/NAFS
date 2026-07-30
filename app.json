@@ -1,0 +1,70 @@
+{
+  "expo": {
+    "name": "NAFS",
+    "slug": "nafs",
+    "version": "1.0.0",
+    "scheme": "nafs",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B1A2B"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.nafs.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Used for challenge photo evidence.",
+        "NSPhotoLibraryUsageDescription": "Used for challenge photo evidence."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B1A2B"
+      },
+      "package": "com.nafs.app",
+      "permissions": ["NOTIFICATIONS", "CAMERA", "READ_EXTERNAL_STORAGE"]
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0F4C5C"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Used for challenge photo evidence."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "YOUR_EAS_PROJECT_ID"
+      }
+    }
+  }
+}
