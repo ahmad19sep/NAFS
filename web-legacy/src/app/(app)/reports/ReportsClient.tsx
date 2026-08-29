@@ -4,59 +4,110 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { ChevronLeft, ChevronRight, Printer, ExternalLink, FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { prettyDate, type ReportData, type ReportPeriod } from '@/lib/report'
+import {
+  prettyDate,
+  type ReportData, type ReportPeriod, type AreaComparison, type Severity,
+} from '@/lib/report'
 import { reportToHtml, reportFileName } from '@/lib/report-html'
 
-function scoreClass(score: number): string {
-  if (score >= 80) return 'text-emerald-400'
-  if (score >= 60) return 'text-gold'
-  if (score >= 40) return 'text-orange-400'
-  return 'text-red-400'
+// Roles validated against the navy card surface (#132B41):
+//   now  #6EC5D8  7.34:1   teal, this period
+//   prev #2C6E7F  2.51:1   same hue, dark step (ordinal floor 2:1)
+//   accent #C9A227 5.99:1  emphasis, always directly labelled
+//   up   #3fca3f  6.71:1   down #f08a8a  6.01:1   (delta text)
+const NOW = '#6EC5D8'
+const PREV = '#2C6E7F'
+const ACCENT = '#C9A227'
+const TRACK = 'rgba(255,255,255,0.10)'
+
+const SEVERITY_ICON: Record<Severity, string> = { critical: '●', serious: '▲', warning: '■' }
+const SEVERITY_CHIP: Record<Severity, string> = {
+  critical: 'bg-[#d03b3b]/20 text-red-100',
+  serious: 'bg-[#ec835a]/20 text-orange-100',
+  warning: 'bg-[#fab219]/20 text-amber-100',
+}
+const SEVERITY_EDGE: Record<Severity, string> = {
+  critical: 'border-l-[#d03b3b]',
+  serious: 'border-l-[#ec835a]',
+  warning: 'border-l-[#fab219]',
 }
 
-function scoreHex(score: number): string {
-  if (score >= 80) return '#34d399'
-  if (score >= 60) return '#C9A227'
-  if (score >= 40) return '#fb923c'
-  return '#f87171'
-}
+function clamp(n: number) { return Math.max(0, Math.min(100, n)) }
+
+// ─── Pieces ───────────────────────────────────────────────────────────────────
 
 function Card({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (
     <div className="nafs-card p-4">
-      <div className="mb-3 flex items-baseline justify-between">
+      <div className="mb-3 flex items-baseline justify-between gap-2">
         <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-        {note && <span className="text-[10px] text-muted-foreground">{note}</span>}
+        {note && <span className="flex-shrink-0 text-[10px] text-muted-foreground">{note}</span>}
       </div>
       {children}
     </div>
   )
 }
 
-function Tile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
+/** Signed change — arrow plus sign, so direction never rests on colour alone. */
+function Delta({ value, unit = 'pts' }: { value: number | null; unit?: string }) {
+  if (value == null) return <span className="text-muted-foreground">—</span>
+  if (value === 0) return <span className="text-muted-foreground tabular-nums">▬ 0</span>
+  const up = value > 0
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-2.5 text-center">
-      <p className={cn('text-lg font-bold tabular-nums leading-tight', tone ?? 'text-foreground')}>{value}</p>
-      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
-      {sub && <p className="text-[9px] text-muted-foreground/70 mt-0.5">{sub}</p>}
-    </div>
+    <span
+      className="whitespace-nowrap font-semibold tabular-nums"
+      style={{ color: up ? '#3fca3f' : '#f08a8a' }}
+    >
+      {up ? '▲' : '▼'} {up ? '+' : ''}{value}{unit ? ` ${unit}` : ''}
+    </span>
   )
 }
 
-function Meter({ label, right, pct, color }: { label: string; right: string; pct: number; color: string }) {
+/** One ratio against a limit. One hue — never a value ramp. */
+function Meter({ label, right, pct }: { label: string; right: string; pct: number }) {
   return (
     <div className="mb-2.5">
       <div className="mb-1 flex items-center justify-between gap-2">
         <span className="truncate text-xs text-foreground">{label}</span>
         <span className="flex-shrink-0 text-[10px] tabular-nums text-muted-foreground">{right}</span>
       </div>
-      <div className="h-1.5 rounded-full bg-white/10">
-        <div className="h-full rounded-full transition-all"
-          style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: color }} />
+      <div className="h-1.5 rounded-full" style={{ background: TRACK }}>
+        <div className="h-full rounded-full" style={{ width: `${clamp(pct)}%`, background: NOW }} />
       </div>
     </div>
   )
 }
+
+/** Before → after for one area. Two shades of one hue, 2px surface ring on the dots. */
+function Dumbbell({ row }: { row: AreaComparison }) {
+  const now = row.current ?? 0
+  const prev = row.previous
+  const lo = prev == null ? now : Math.min(now, prev)
+  const hi = prev == null ? now : Math.max(now, prev)
+  return (
+    <div className="relative h-3 w-full">
+      <div className="absolute left-0 right-0 top-[5px] h-0.5 rounded" style={{ background: TRACK }} />
+      {prev != null && (
+        <div
+          className="absolute top-[5px] h-0.5 rounded"
+          style={{ left: `${clamp(lo)}%`, width: `${clamp(hi - lo)}%`, background: PREV }}
+        />
+      )}
+      {prev != null && (
+        <span
+          className="absolute top-0.5 -ml-1 h-2 w-2 rounded-full ring-2 ring-[#0B1A2B]"
+          style={{ left: `${clamp(prev)}%`, background: PREV }}
+        />
+      )}
+      <span
+        className="absolute top-0.5 -ml-1 h-2 w-2 rounded-full ring-2 ring-[#0B1A2B]"
+        style={{ left: `${clamp(now)}%`, background: NOW }}
+      />
+    </div>
+  )
+}
+
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function ReportsClient({ report: d }: { report: ReportData }) {
   const [printing, setPrinting] = useState(false)
@@ -69,7 +120,6 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
   /** Render the printable document into a hidden iframe and open the print dialog. */
   function print() {
     setPrinting(true)
-    const html = reportToHtml(d)
     const frame = document.createElement('iframe')
     frame.setAttribute('aria-hidden', 'true')
     frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden'
@@ -83,26 +133,25 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
         openPrintable()
       } finally {
         setPrinting(false)
-        // keep the frame alive long enough for the print dialog to read from it
         setTimeout(() => frame.remove(), 60_000)
       }
     }
-    frame.srcdoc = html
+    frame.srcdoc = reportToHtml(d)
     document.body.appendChild(frame)
     // never leave the button stuck on "Preparing…" if load never fires
     setTimeout(() => setPrinting(false), 8_000)
   }
 
   /**
-   * Fallback for webviews where window.print() is a no-op (the Android shell):
-   * open the report as a standalone page the system browser can print or share.
+   * Fallback for webviews where window.print() is a no-op, and for iOS
+   * standalone PWAs where printing an iframe is unreliable: open the report as
+   * its own page, where the system Share → Print always works.
    */
   function openPrintable() {
     const blob = new Blob([reportToHtml(d, { autoPrint: true })], { type: 'text/html' })
     const url = URL.createObjectURL(blob)
     const w = window.open(url, '_blank')
     if (!w) {
-      // popup blocked — fall back to a download of the same document
       const a = document.createElement('a')
       a.href = url
       a.download = `${reportFileName(d)}.html`
@@ -111,8 +160,11 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
+  const pctRows = d.comparison.filter((c) => c.unit === '%')
+  const countRows = d.comparison.filter((c) => c.unit !== '%')
+
   return (
-    <div className="mx-auto max-w-md space-y-5 px-4 pb-32">
+    <div className="mx-auto max-w-md space-y-4 px-4 pb-32">
       {/* Header */}
       <div className="flex items-center gap-3 pt-3">
         <Link href="/dashboard"
@@ -164,46 +216,170 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
         )}
       </div>
 
-      {/* KPI tiles */}
-      <div className="grid grid-cols-3 gap-2">
-        <Tile label="Avg score" value={`${d.avg_score}%`} tone={scoreClass(d.avg_score)}
-          sub={d.score_delta == null ? undefined
-            : d.score_delta === 0 ? 'same as last'
-            : `${d.score_delta > 0 ? '▲' : '▼'} ${Math.abs(d.score_delta)} pts`} />
-        <Tile label="Days logged" value={`${d.days_logged}/${d.days_elapsed}`}
-          sub={`${Math.round((d.days_logged / Math.max(d.days_elapsed, 1)) * 100)}% consistent`} />
-        {d.deenEnabled
-          ? <Tile label="Salah" value={`${d.prayers_prayed}/${d.prayers_possible}`} tone="text-emerald-400" sub={`${d.prayers_jamat} jamaat`} />
-          : <Tile label="Perfect days" value={`${d.perfect_days}`} tone="text-emerald-400" />}
-        <Tile label="Habits" value={`${d.habit_completion_pct}%`} tone="text-gold" sub={`${d.habits.length} tracked`} />
-        <Tile label="Tasks" value={`${d.tasks_completed}/${d.tasks_total}`} tone="text-emerald-400" sub={`${d.tasks_pct}% done`} />
-        <Tile label="Best streak" value={`${d.best_streak}d`} tone="text-orange-400" sub="at 60%+" />
+      {/* Hero — the one number the report leads with */}
+      <div className="nafs-card border-l-2 p-4" style={{ borderLeftColor: NOW }}>
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Average daily score
+        </p>
+        <div className="flex items-end gap-3">
+          <span className="text-[52px] font-extrabold leading-none tracking-tight" style={{ color: NOW }}>
+            {d.avg_score}<span className="text-2xl font-bold">%</span>
+          </span>
+          <div className="pb-1.5 text-xs">
+            {d.score_delta == null ? (
+              <span className="text-muted-foreground">No previous {unit} yet</span>
+            ) : (
+              <>
+                <Delta value={d.score_delta} />
+                <span className="ml-1 text-muted-foreground">
+                  vs {d.prev_avg_score}% last {unit}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2 border-t border-white/10 pt-3 text-center">
+          {[
+            [`${d.days_logged}/${d.days_elapsed}`, 'Days logged'],
+            [`${d.strong_days}`, 'Strong days'],
+            [`${d.best_streak}d`, 'Best streak'],
+          ].map(([v, l]) => (
+            <div key={l}>
+              <p className="text-lg font-bold leading-tight text-foreground">{v}</p>
+              <p className="text-[9px] uppercase tracking-wider text-muted-foreground">{l}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Daily score chart */}
+      {/* Progress vs last period */}
+      {d.comparison.length > 0 && (
+        <Card title={`Progress vs last ${unit}`} note={d.previousLabel}>
+          <div className="mb-3 flex items-center gap-3 text-[10px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full" style={{ background: PREV }} /> Last {unit}
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full" style={{ background: NOW }} /> This {unit}
+            </span>
+            <span className="ml-auto">0–100%</span>
+          </div>
+
+          {pctRows.map((c) => (
+            <div key={c.key} className="mb-3">
+              <div className="mb-1 flex items-baseline justify-between gap-2">
+                <span className="truncate text-xs text-foreground">
+                  {c.emoji} {c.label}
+                </span>
+                <span className="flex-shrink-0 text-[11px] tabular-nums">
+                  <span className="font-semibold text-foreground">{c.current == null ? '—' : `${c.current}%`}</span>
+                  <span className="ml-2"><Delta value={c.delta} /></span>
+                </span>
+              </div>
+              <Dumbbell row={c} />
+              <p className="mt-0.5 text-[10px] text-muted-foreground">{c.detail}</p>
+            </div>
+          ))}
+
+          {countRows.map((c) => (
+            <div key={c.key} className="mb-1 flex items-baseline justify-between gap-2 border-t border-white/10 pt-2">
+              <span className="truncate text-xs text-foreground">{c.emoji} {c.label}</span>
+              <span className="flex-shrink-0 text-[11px] tabular-nums">
+                <span className="font-semibold text-foreground">{c.current ?? 0}</span>
+                <span className="ml-2"><Delta value={c.delta} unit="pages" /></span>
+              </span>
+            </div>
+          ))}
+
+          <p className="mt-2 border-t border-white/10 pt-2 text-[10px] leading-relaxed text-muted-foreground">
+            Every area is measured against all {d.days_elapsed} elapsed days, so a day you
+            did not log counts against it.
+          </p>
+        </Card>
+      )}
+
+      {/* Where to improve */}
+      {d.focus.length > 0 && (
+        <Card title="Where to improve next" note={`${d.focus.length} ranked`}>
+          <ol className="space-y-2.5">
+            {d.focus.map((f, i) => (
+              <li key={f.key}
+                className={cn('rounded-xl border border-white/10 border-l-2 bg-white/[0.03] p-3', SEVERITY_EDGE[f.severity])}>
+                <div className="flex items-center gap-2">
+                  <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-[10px] font-bold text-foreground">
+                    {i + 1}
+                  </span>
+                  <span className="flex-1 truncate text-sm font-semibold text-foreground">
+                    {f.emoji} {f.title}
+                  </span>
+                  <span className={cn('flex-shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide', SEVERITY_CHIP[f.severity])}>
+                    {SEVERITY_ICON[f.severity]} {f.severityLabel}
+                  </span>
+                </div>
+                <p className="mt-1.5 text-[10px] text-muted-foreground">
+                  {f.area} · <span className="font-semibold text-foreground/80">{f.stat}</span>
+                  {f.delta != null && f.delta !== 0 && <> · <Delta value={f.delta} /></>}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-foreground/80">{f.why}</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  <span className="font-semibold text-foreground/70">Do this:</span> {f.action}
+                </p>
+              </li>
+            ))}
+          </ol>
+        </Card>
+      )}
+
+      {/* Wins */}
+      {d.wins.length > 0 && (
+        <Card title="What went well">
+          {d.wins.map((w) => (
+            <div key={w.key} className="flex items-baseline gap-2 border-b border-white/5 py-1.5 last:border-b-0">
+              <span style={{ color: '#3fca3f' }} className="font-bold">▲</span>
+              <span className="flex-1 text-xs text-foreground">{w.emoji} {w.label}</span>
+              <span className="text-[11px] font-semibold tabular-nums" style={{ color: '#3fca3f' }}>
+                +{w.delta}{w.unit === 'pages' ? ' pages' : ' pts'}
+              </span>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {/* Daily score — one series, emphasis on the extremes */}
       {d.days.length > 0 && (
         <Card title="Daily score" note={`${d.strong_days} strong · ${d.weak_days} weak`}>
-          <div className="flex h-24 items-end gap-[3px]">
-            {d.days.map((day) => (
-              <div key={day.date} className="flex h-full flex-1 flex-col justify-end" title={`${day.weekday} ${prettyDate(day.date)} — ${day.logged ? day.score + '%' : 'not logged'}`}>
-                <div className="rounded-t"
-                  style={{
-                    height: `${Math.max(2, day.score)}%`,
-                    background: day.logged ? scoreHex(day.score) : 'rgba(255,255,255,0.10)',
-                  }} />
+          <div className="relative flex h-24 items-end gap-[3px] border-b border-white/15">
+            {d.avg_score > 0 && (
+              <div className="pointer-events-none absolute inset-x-0 border-t border-white/20"
+                style={{ bottom: `${clamp(d.avg_score)}%` }}>
+                <span className="absolute right-0 -top-3.5 bg-[#0B1A2B] px-1 text-[9px] text-muted-foreground">
+                  avg {d.avg_score}%
+                </span>
               </div>
-            ))}
+            )}
+            {d.days.map((day) => {
+              const emph = day.logged && (day.date === d.best_day?.date || day.date === d.worst_day?.date)
+              return (
+                <div key={day.date} className="flex h-full flex-1 flex-col justify-end"
+                  title={`${day.weekday} ${prettyDate(day.date)} — ${day.logged ? day.score + '%' : 'not logged'}`}>
+                  <div className="rounded-t"
+                    style={{
+                      height: `${Math.max(2, clamp(day.score))}%`,
+                      background: day.logged ? (emph ? ACCENT : NOW) : TRACK,
+                    }} />
+                </div>
+              )
+            })}
           </div>
           <div className="mt-1.5 flex justify-between text-[9px] text-muted-foreground">
             <span>{prettyDate(d.days[0].date)}</span>
+            {d.best_day && d.worst_day && (
+              <span style={{ color: ACCENT }}>
+                best {d.best_day.weekday} {d.best_day.score}% · low {d.worst_day.weekday} {d.worst_day.score}%
+              </span>
+            )}
             <span>{prettyDate(d.days[d.days.length - 1].date)}</span>
           </div>
-          {d.best_day && d.worst_day && (
-            <p className="mt-2 text-[10px] text-muted-foreground">
-              Best {d.best_day.weekday} {prettyDate(d.best_day.date)} ({d.best_day.score}%) ·
-              {' '}Toughest {d.worst_day.weekday} {prettyDate(d.worst_day.date)} ({d.worst_day.score}%)
-            </p>
-          )}
         </Card>
       )}
 
@@ -212,8 +388,7 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
         <ul className="space-y-2">
           {d.insights.map((line, i) => (
             <li key={i} className="flex gap-2 text-xs leading-relaxed text-foreground/85">
-              <span className="text-gold">•</span>
-              <span>{line}</span>
+              <span className="text-gold">•</span><span>{line}</span>
             </li>
           ))}
         </ul>
@@ -225,13 +400,13 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
           {d.prayer_breakdown.map((p) => (
             <Meter key={p.key} label={p.label}
               right={`${p.prayed}/${d.days_elapsed}${p.jamat ? ` · ${p.jamat} jamaat` : ''}`}
-              pct={p.pct} color={scoreHex(p.pct)} />
+              pct={p.pct} />
           ))}
           {d.extra_prayers.length > 0 && (
             <div className="mt-3 border-t border-white/10 pt-3">
               <p className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Extra / nafl</p>
               {d.extra_prayers.map((x) => (
-                <Meter key={x.name} label={x.name} right={`${x.done}/${x.days}`} pct={x.pct} color={scoreHex(x.pct)} />
+                <Meter key={x.name} label={x.name} right={`${x.done}/${x.days}`} pct={x.pct} />
               ))}
             </div>
           )}
@@ -249,8 +424,7 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
         <Card title="Habits" note={`${d.habit_completion_pct}% overall`}>
           {d.habits.map((h) => (
             <Meter key={h.id} label={`${h.emoji} ${h.name}`}
-              right={`${h.done_days}/${h.scheduled_days} · best run ${h.best_run}d`}
-              pct={h.pct} color={scoreHex(h.pct)} />
+              right={`${h.done_days}/${h.scheduled_days} · best run ${h.best_run}d`} pct={h.pct} />
           ))}
         </Card>
       )}
@@ -260,7 +434,7 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
         <Card title="Tasks" note={`${d.tasks_pct}% completed`}>
           {d.tasks.map((t) => (
             <Meter key={t.type} label={t.type.charAt(0).toUpperCase() + t.type.slice(1)}
-              right={`${t.completed}/${t.total}`} pct={t.pct} color="#34d399" />
+              right={`${t.completed}/${t.total}`} pct={t.pct} />
           ))}
           {d.missed_tasks.length > 0 && (
             <div className="mt-2 border-t border-white/10 pt-2">
@@ -283,8 +457,7 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
         <Card title="Challenges">
           {d.challenges.map((c) => (
             <Meter key={c.id} label={`${c.emoji} ${c.title}`}
-              right={`${c.checkins}/${c.possible_days} · day ${c.day_of}/${c.duration_days}`}
-              pct={c.pct} color="#34d399" />
+              right={`${c.checkins}/${c.possible_days} · day ${c.day_of}/${c.duration_days}`} pct={c.pct} />
           ))}
         </Card>
       )}
@@ -297,7 +470,7 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
               right={g.milestones_total
                 ? `${g.progress_pct}% · ${g.milestones_done}/${g.milestones_total} milestones`
                 : `${g.progress_pct}%`}
-              pct={g.progress_pct} color="#C9A227" />
+              pct={g.progress_pct} />
           ))}
         </Card>
       )}
@@ -306,20 +479,27 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
       {d.health.days_logged > 0 && (
         <Card title="Health" note={`${d.health.days_logged} days logged`}>
           <div className="grid grid-cols-3 gap-2">
-            <Tile label="Avg sleep" value={d.health.avg_sleep == null ? '—' : `${d.health.avg_sleep}h`} />
-            <Tile label="Avg steps" value={d.health.avg_steps == null ? '—' : Math.round(d.health.avg_steps).toLocaleString()} />
-            <Tile label="Exercise" value={`${d.health.exercise_days}d`} sub={`${d.health.exercise_minutes} min`} />
-            <Tile label="Avg water" value={d.health.avg_water == null ? '—' : `${d.health.avg_water}`} sub="glasses/day" />
-            <Tile label="Avg mood" value={d.health.avg_mood == null ? '—' : `${d.health.avg_mood}/10`} />
-            <Tile label="Weight" value={d.health.weight_end == null ? '—' : `${d.health.weight_end}kg`}
-              sub={d.health.weight_change == null ? undefined
-                : `${d.health.weight_change > 0 ? '+' : ''}${d.health.weight_change} kg`} />
+            {[
+              ['Avg sleep', d.health.avg_sleep == null ? '—' : `${d.health.avg_sleep}h`, ''],
+              ['Avg steps', d.health.avg_steps == null ? '—' : Math.round(d.health.avg_steps).toLocaleString(), ''],
+              ['Exercise', `${d.health.exercise_days}d`, `${d.health.exercise_minutes} min`],
+              ['Avg water', d.health.avg_water == null ? '—' : String(d.health.avg_water), 'glasses/day'],
+              ['Avg mood', d.health.avg_mood == null ? '—' : `${d.health.avg_mood}/10`, ''],
+              ['Weight', d.health.weight_end == null ? '—' : `${d.health.weight_end}kg`,
+                d.health.weight_change == null ? '' : `${d.health.weight_change > 0 ? '+' : ''}${d.health.weight_change} kg`],
+            ].map(([label, value, sub]) => (
+              <div key={label} className="rounded-xl border border-white/10 bg-white/5 p-2.5 text-center">
+                <p className="text-base font-bold leading-tight text-foreground">{value}</p>
+                <p className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</p>
+                {sub && <p className="text-[9px] text-muted-foreground/70">{sub}</p>}
+              </div>
+            ))}
           </div>
           {d.health.metrics.length > 0 && (
             <div className="mt-3 border-t border-white/10 pt-3">
               <p className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Your metrics</p>
               {d.health.metrics.map((m) => (
-                <Meter key={m.id} label={`${m.emoji} ${m.name}`} right={`${m.done}/${m.days}`} pct={m.pct} color={scoreHex(m.pct)} />
+                <Meter key={m.id} label={`${m.emoji} ${m.name}`} right={`${m.done}/${m.days}`} pct={m.pct} />
               ))}
             </div>
           )}
@@ -330,7 +510,7 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
       {d.weekday_avgs.length >= 2 && (
         <Card title="Weekday pattern">
           {d.weekday_avgs.map((w) => (
-            <Meter key={w.weekday} label={w.weekday} right={`${w.avg}%`} pct={w.avg} color={scoreHex(w.avg)} />
+            <Meter key={w.weekday} label={w.weekday} right={`${w.avg}%`} pct={w.avg} />
           ))}
         </Card>
       )}
@@ -340,7 +520,7 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
         <Card title="Your reflections" note={`${d.reflections.length} entries`}>
           {d.reflections.slice(0, 5).map((r) => (
             <div key={r.date} className="mb-3 border-l-2 border-white/15 pl-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-teal-300">
+              <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: NOW }}>
                 {prettyDate(r.date, { weekday: 'short', day: 'numeric', month: 'short' })}
               </p>
               {r.text && <p className="mt-0.5 whitespace-pre-wrap text-xs leading-relaxed text-foreground/80">{r.text}</p>}
@@ -378,7 +558,8 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
             {printing ? 'Preparing…' : 'Print / Save as PDF'}
           </button>
           <button onClick={openPrintable} title="Open the printable page in a new tab"
-            className="flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-semibold text-foreground backdrop-blur transition-colors hover:bg-white/15">
+            aria-label="Open the printable page in a new tab"
+            className="flex items-center justify-center rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-semibold text-foreground backdrop-blur transition-colors hover:bg-white/15">
             <ExternalLink size={16} />
           </button>
         </div>
