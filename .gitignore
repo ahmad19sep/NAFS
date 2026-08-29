@@ -40,3 +40,8 @@ public/sw.js.map
 public/worker-*.js
 
 .vercel
+
+# web-legacy (Next.js app) — built with Vercel root directory = web-legacy
+web-legacy/node_modules/
+web-legacy/.next/
+web-legacy/out/

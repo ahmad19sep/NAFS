@@ -190,7 +190,7 @@ You'll be prompted for your Apple credentials. EAS handles code signing automati
 The AI chat and analysis features call your Vercel-deployed backend.
 
 1. Deploy the `web-legacy/` folder to Vercel as a separate project
-2. Set all backend env vars in Vercel (see `web-legacy/package.json.bak` for the list)
+2. Set all backend env vars in Vercel (see `web-legacy/package.json` for the list)
 3. Set `EXPO_PUBLIC_API_BASE_URL=https://your-project.vercel.app` in your `.env.local`
 
 For local testing, run the Next.js backend locally:
@@ -223,11 +223,11 @@ EXPO_PUBLIC_API_BASE_URL=http://192.168.x.x:3000
 
 ## File structure of web-legacy/
 
-The `web-legacy/` folder is the original Next.js app. It still serves as the **API backend** for AI features. Keep it deployed on Vercel. Do not delete it.
+The `web-legacy/` folder is the original Next.js app. It is still the **live web app** (nafs-one.vercel.app, which the Android shell loads) and the **API backend** for AI features. Keep it deployed on Vercel with the project Root Directory set to `web-legacy`. Do not delete it.
 
 ```
 web-legacy/
 ├── src/app/api/         # 27 API routes (AI, notifications, cron, email)
 ├── src/lib/             # AI providers (Gemini, Groq), email (Resend)
-└── package.json.bak     # Original web dependencies
+└── package.json         # Web app dependencies (Next.js 14)
 ```

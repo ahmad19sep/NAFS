@@ -4,6 +4,8 @@ import {
   ActivityIndicator, RefreshControl, Dimensions,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useRouter } from 'expo-router'
+import { FileText } from 'lucide-react-native'
 import { supabase } from '@/lib/supabase'
 import { todayString, formatDateShort } from '@/lib/utils'
 
@@ -50,6 +52,7 @@ function StatCard({ label, value, sub, color }: { label: string; value: string |
 
 export default function HistoryScreen() {
   const insets = useSafeAreaInsets()
+  const router = useRouter()
   const [period, setPeriod] = useState<Period>('30d')
   const [stats, setStats] = useState<DayStat[]>([])
   const [loading, setLoading] = useState(true)
@@ -134,8 +137,15 @@ export default function HistoryScreen() {
 
   return (
     <View className="flex-1 bg-navy" style={{ paddingTop: insets.top }}>
-      <View className="px-4 pt-4 pb-2">
+      <View className="px-4 pt-4 pb-2 flex-row items-center justify-between">
         <Text className="text-xl font-bold text-white">History</Text>
+        <TouchableOpacity
+          onPress={() => router.push('/(app)/reports')}
+          className="flex-row items-center gap-x-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5"
+        >
+          <FileText size={14} color="#C9A227" />
+          <Text className="text-xs font-semibold text-gold">Reports</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Period tabs */}

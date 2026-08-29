@@ -4,7 +4,7 @@ import {
   Alert, ActivityIndicator, Switch,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { LogOut, User, Bell, Trash2, ChevronRight, Shield, Clock } from 'lucide-react-native'
+import { LogOut, User, Bell, Trash2, ChevronRight, Shield, Clock, FileText } from 'lucide-react-native'
 import { useRouter } from 'expo-router'
 import { supabase } from '@/lib/supabase'
 import type { UserRow } from '@/types/database'
@@ -193,6 +193,18 @@ export default function ProfileScreen() {
                 ]
               )
             }}
+          />
+        </View>
+
+        <View className="mx-4 rounded-2xl border border-white/10 bg-white/5 overflow-hidden mb-4">
+          <View className="px-4 py-3 border-b border-white/10">
+            <Text className="text-xs font-semibold text-muted-fg uppercase tracking-wider">Progress</Text>
+          </View>
+          <Row
+            icon={<FileText size={16} color="#C9A227" />}
+            label="Weekly & monthly reports"
+            value="Print / PDF"
+            onPress={() => router.push('/(app)/reports')}
           />
         </View>
 

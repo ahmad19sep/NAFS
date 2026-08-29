@@ -161,6 +161,7 @@ export default function AppLayout() {
       >
         <Tabs.Screen name="dashboard" />
         <Tabs.Screen name="history" />
+        <Tabs.Screen name="reports" />
         <Tabs.Screen name="coach" />
         <Tabs.Screen name="profile" />
         <Tabs.Screen name="tasks" />

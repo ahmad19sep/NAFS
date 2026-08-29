@@ -8,7 +8,7 @@ import { cn, scoreColor } from '@/lib/utils'
 import {
   Pencil, KeyRound, Share2, BarChart3, Download, Bell, Globe, Moon,
   Info, LogOut, ChevronRight, Check, X, Loader2, Mail, Camera, Trash2,
-  UserCircle2, Briefcase, MapPin, Cake, Heart, Send, Award, Lock, AlertTriangle,
+  UserCircle2, Briefcase, MapPin, Cake, Heart, Send, Award, Lock, AlertTriangle, Printer,
 } from 'lucide-react'
 import { BADGES, TIER_COLORS, type BadgeDef } from '@/lib/badges'
 import { enablePush, pushSupported } from '@/lib/push'
@@ -581,6 +581,9 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
         <Row icon={<Share2 size={15} />} label="Share my progress"
           subLabel="Avg, best, and streak summary"
           onClick={shareProgress} loading={sharing} />
+        <RowLink icon={<Printer size={15} />} label="Weekly & monthly report"
+          subLabel="Full detailed breakdown — print or save as PDF"
+          href="/reports" />
         <RowLink icon={<BarChart3 size={15} />} label="View full history"
           subLabel="30-day breakdown by feature"
           href="/history" />

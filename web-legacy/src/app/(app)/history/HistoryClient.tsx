@@ -3,7 +3,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { ChevronLeft } from 'lucide-react'
+import { ChevronLeft, Printer } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import HistoryGraph from '@/components/HistoryGraph'
 import DayDetailPanel from '@/components/DayDetailPanel'
@@ -148,6 +148,10 @@ export default function HistoryPageClient({
           <p className="text-xs text-muted-foreground">Trends</p>
           <h1 className="text-2xl font-bold text-foreground">History</h1>
         </div>
+        <Link href="/reports"
+          className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-gold transition-colors hover:bg-white/10">
+          <Printer size={14} /> Report
+        </Link>
       </div>
 
       {/* Feature tabs */}

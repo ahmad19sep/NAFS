@@ -358,11 +358,12 @@ export default function DashboardScreen() {
         )}
 
         {/* Quick nav shortcuts */}
-        <View className="flex-row gap-x-3 mb-4">
+        <View className="flex-row gap-x-2 mb-4">
           {[
             { label: 'Check-in', emoji: '☀️', route: '/(app)/checkin' },
             { label: 'Coach', emoji: '✨', route: '/(app)/coach' },
             { label: 'History', emoji: '📈', route: '/(app)/history' },
+            { label: 'Reports', emoji: '📄', route: '/(app)/reports' },
             { label: 'Dreams', emoji: '🌟', route: '/(app)/dreams' },
           ].map(s => (
             <TouchableOpacity
