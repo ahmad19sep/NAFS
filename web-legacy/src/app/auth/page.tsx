@@ -27,6 +27,7 @@ function AuthInner() {
   // Signup fields
   const [name, setName] = useState('')
   const [gender, setGender] = useState<Gender | ''>('')
+  const [deenEnabled, setDeenEnabled] = useState(false)
 
   // Shared
   const [email, setEmail] = useState('')
@@ -72,20 +73,25 @@ function AuthInner() {
           password,
           options: {
             emailRedirectTo: `${window.location.origin}/auth/callback`,
-            data: { name: name.trim(), gender },
+            data: { name: name.trim(), gender, deen_enabled: deenEnabled },
           },
         })
 
         if (error) { setError(error.message); return }
 
         if (data.user && data.session) {
-          await supabase.from('users').upsert({
+          const row = {
             id: data.user.id,
             email: data.user.email!,
             name: name.trim(),
             gender,
             onboarding_complete: true,
-          })
+          }
+          const { error: upErr } = await supabase.from('users')
+            .upsert({ ...row, deen_enabled: deenEnabled })
+          // deen_enabled column may not exist yet (migration not run) —
+          // never let that block account creation
+          if (upErr) await supabase.from('users').upsert(row)
           router.push('/dashboard')
         } else {
           setMessage(
@@ -149,35 +155,53 @@ function AuthInner() {
   } as const)[mode]
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-6 py-10">
+    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background px-6 py-10">
 
-      {/* Logo */}
-      <div className="mb-8 flex flex-col items-center gap-3 animate-slide-up">
-        <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-primary/80 shadow-lg glow-teal">
-          <span className="arabic text-4xl text-gold">ن</span>
+      {/* Ambient brand backdrop */}
+      <div className="pointer-events-none absolute -top-32 left-1/2 h-80 w-80 -translate-x-1/2 rounded-full bg-gold/[0.07] blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-40 -left-24 h-80 w-80 rounded-full bg-primary/25 blur-3xl" />
+
+      {/* Brand moment */}
+      <div className="relative mb-9 flex flex-col items-center">
+        <div className="anim-up h-[88px] w-[88px] overflow-hidden rounded-[26px]
+                        shadow-[0_16px_40px_rgba(201,162,39,0.18)] ring-1 ring-gold/25">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icons/icon.svg" alt="Ascend" className="h-full w-full" />
         </div>
-        <div className="text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-gold-gradient">NAFS</h1>
-          <p className="arabic mt-1 text-lg text-muted-foreground">نَفْس</p>
-          <p className="mt-2 text-sm text-muted-foreground">The mirror that doesn&apos;t lie.</p>
+        <h1 className="anim-up anim-d1 mt-5 text-[34px] font-semibold tracking-tight text-foreground">
+          Ascend
+        </h1>
+        <p className="anim-up anim-d2 mt-1.5 text-sm text-muted-foreground">
+          The mirror that doesn&apos;t lie.
+        </p>
+        <div className="anim-up anim-d2 mt-4 flex items-center gap-1.5">
+          {['Habits', 'Goals', 'Health', 'AI Coach'].map((t) => (
+            <span key={t} className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-medium text-muted-foreground">
+              {t}
+            </span>
+          ))}
         </div>
       </div>
 
       {/* Card */}
-      <div className="nafs-card w-full max-w-sm p-6 animate-slide-up">
+      <div className="anim-up anim-d3 nafs-card relative w-full max-w-sm p-6">
 
         {/* Tabs (only signin/signup) */}
         {(mode === 'signin' || mode === 'signup') && (
-          <div className="flex rounded-xl border border-white/10 bg-white/5 p-1 mb-6">
+          <div className="flex rounded-full border border-white/10 bg-black/20 p-1 mb-6">
             <button onClick={() => switchMode('signin')}
-              className={cn('flex-1 rounded-lg py-2 text-sm font-semibold transition-all',
-                mode === 'signin' ? 'bg-primary text-white' : 'text-muted-foreground'
+              className={cn('flex-1 rounded-full py-2 text-sm font-semibold transition-all duration-200',
+                mode === 'signin'
+                  ? 'bg-white/10 text-gold shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]'
+                  : 'text-muted-foreground hover:text-foreground'
               )}>
               Sign in
             </button>
             <button onClick={() => switchMode('signup')}
-              className={cn('flex-1 rounded-lg py-2 text-sm font-semibold transition-all',
-                mode === 'signup' ? 'bg-primary text-white' : 'text-muted-foreground'
+              className={cn('flex-1 rounded-full py-2 text-sm font-semibold transition-all duration-200',
+                mode === 'signup'
+                  ? 'bg-white/10 text-gold shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]'
+                  : 'text-muted-foreground hover:text-foreground'
               )}>
               Sign up
             </button>
@@ -273,6 +297,35 @@ function AuthInner() {
                   </button>
                 </div>
               </div>
+
+              <button
+                type="button"
+                onClick={() => setDeenEnabled(!deenEnabled)}
+                className={cn(
+                  'flex w-full items-center justify-between rounded-xl border px-4 py-3 text-left transition-all',
+                  deenEnabled
+                    ? 'border-gold/50 bg-gold/10'
+                    : 'border-white/10 bg-white/5 hover:border-white/20'
+                )}
+              >
+                <div>
+                  <p className={cn('text-sm font-semibold', deenEnabled ? 'text-gold' : 'text-foreground')}>
+                    🕌 Faith features
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Daily prayers, Qur&apos;an &amp; deen tracking (for Muslim users)
+                  </p>
+                </div>
+                <div className={cn(
+                  'relative h-6 w-11 shrink-0 rounded-full transition-colors',
+                  deenEnabled ? 'bg-gold' : 'bg-white/15'
+                )}>
+                  <div className={cn(
+                    'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all',
+                    deenEnabled ? 'left-[22px]' : 'left-0.5'
+                  )} />
+                </div>
+              </button>
             </>
           )}
 
@@ -324,8 +377,7 @@ function AuthInner() {
           )}
 
           <button type="submit" disabled={loading}
-            className="w-full rounded-xl bg-primary py-3.5 font-semibold text-white
-                       transition-all hover:bg-teal-light disabled:opacity-50 active:scale-95">
+            className="btn-gold w-full py-3.5 text-[15px]">
             {loading
               ? 'Please wait…'
               : mode === 'signup' ? 'Create account'
@@ -344,10 +396,10 @@ function AuthInner() {
         </form>
       </div>
 
-      {/* Islamic footer */}
-      <p className="mt-8 max-w-xs text-center text-xs text-muted-foreground/60 leading-relaxed">
-        &ldquo;And whoever fears Allah — He will make for him a way out.&rdquo;
-        <br />— Quran 65:2
+      {/* Footer */}
+      <p className="anim-up anim-d4 relative mt-8 max-w-xs text-center text-xs text-muted-foreground/50 leading-relaxed">
+        Discipline is choosing what you want most
+        <br />over what you want now.
       </p>
     </div>
   )

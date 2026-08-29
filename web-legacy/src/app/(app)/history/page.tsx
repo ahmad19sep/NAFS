@@ -18,6 +18,7 @@ export default async function HistoryPage() {
   const tasksStart = sixMonthsAgo.toISOString().split('T')[0]
 
   const results = await Promise.allSettled([
+    supabase.from('users').select('deen_enabled').eq('id', user.id).single(),
     supabase.from('habits').select('*').eq('user_id', user.id).eq('is_active', true),
     supabase.from('habit_logs').select('*').eq('user_id', user.id).gte('date', start),
     supabase.from('prayer_logs').select('*').eq('user_id', user.id).gte('date', start),
@@ -28,17 +29,19 @@ export default async function HistoryPage() {
   ])
   const data = (i: number): any =>
     results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
-  const habits              = data(0)
-  const habitLogs30         = data(1)
-  const prayerLogs30        = data(2)
-  const challenges          = data(3)
-  const challengeCheckins30 = data(4)
-  const allTasks            = data(5)
-  const healthLogs30        = data(6)
+  const profile             = data(0)
+  const habits              = data(1)
+  const habitLogs30         = data(2)
+  const prayerLogs30        = data(3)
+  const challenges          = data(4)
+  const challengeCheckins30 = data(5)
+  const allTasks            = data(6)
+  const healthLogs30        = data(7)
 
   return (
     <HistoryPageClient
       today={today}
+      deenEnabled={(profile?.deen_enabled ?? true) as boolean}
       habits={habits ?? []}
       habitLogs30={habitLogs30 ?? []}
       prayerLogs30={prayerLogs30 ?? []}

@@ -35,7 +35,7 @@ next-env.d.ts
 
 # PWA generated files
 public/workbox-*.js
-public/sw.js
+# (sw.js is hand-written and MUST be deployed — no longer ignored)
 public/sw.js.map
 public/worker-*.js
 

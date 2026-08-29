@@ -201,20 +201,23 @@ export function computeMonthlyTasksHistory(tasks: Task[], today: string, n = 6):
 // ---------- Combined total ----------
 // Averages provided per-feature day scores. Skips features with max=0 for that day.
 export function combineDayScores(perFeature: DayScore[][]): DayScore[] {
-  if (perFeature.length === 0) return []
-  const numDays = perFeature[0].length
+  // Disabled features pass an empty array (e.g. Deen with faith mode off) —
+  // drop them so the per-day indexing below never reads undefined.
+  const lists = perFeature.filter((a) => a.length > 0)
+  if (lists.length === 0) return []
+  const numDays = lists[0].length
   const out: DayScore[] = []
   for (let i = 0; i < numDays; i++) {
-    const slice = perFeature.map((arr) => arr[i]).filter((d) => d.max > 0)
+    const slice = lists.map((arr) => arr[i]).filter((d) => d && d.max > 0)
     if (slice.length === 0) {
-      out.push({ date: perFeature[0][i].date, pct: 0, earned: 0, max: 0 })
+      out.push({ date: lists[0][i].date, pct: 0, earned: 0, max: 0 })
     } else {
       const avg = slice.reduce((s, d) => s + d.pct, 0) / slice.length
       out.push({
-        date: perFeature[0][i].date,
+        date: lists[0][i].date,
         pct: Math.round(avg),
         earned: slice.length,
-        max: perFeature.length,
+        max: lists.length,
       })
     }
   }

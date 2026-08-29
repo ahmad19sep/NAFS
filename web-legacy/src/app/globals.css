@@ -35,6 +35,28 @@
 
     --radius: 0.75rem;
   }
+
+  /* ---- Theme presets (Settings → Preferences → Theme) ---- */
+  /* Obsidian — near-black, moodier */
+  [data-theme='obsidian'] {
+    --background: 222 28% 5%;
+    --card: 222 24% 8%;
+    --popover: 222 24% 8%;
+    --secondary: 222 20% 11%;
+    --muted: 222 18% 13%;
+    --border: 222 18% 15%;
+    --input: 222 18% 15%;
+  }
+  /* Ocean — deep teal-tinted */
+  [data-theme='ocean'] {
+    --background: 196 55% 8%;
+    --card: 196 48% 11%;
+    --popover: 196 48% 11%;
+    --secondary: 196 40% 14%;
+    --muted: 196 35% 16%;
+    --border: 196 35% 18%;
+    --input: 196 35% 18%;
+  }
 }
 
 @layer base {
@@ -54,6 +76,12 @@
     min-height: 100vh;
     min-height: -webkit-fill-available;
     overscroll-behavior: none;
+    /* Ambient depth — soft gold halo top, teal wash bottom. Fixed so it
+       doesn't repaint on scroll; gives every screen a premium feel. */
+    background-image:
+      radial-gradient(60% 40% at 85% -10%, rgba(201, 162, 39, 0.10), transparent 70%),
+      radial-gradient(50% 35% at -10% 100%, rgba(15, 76, 92, 0.35), transparent 70%);
+    background-attachment: fixed;
   }
 
   /* iOS-safe scrolling */
@@ -67,12 +95,32 @@
     font-family: var(--font-arabic), 'Arial Unicode MS', serif;
     direction: rtl;
   }
+
+  /* Display typeface for all headings — instant typographic hierarchy */
+  h1, h2, h3 {
+    font-family: var(--font-display), var(--font-inter), system-ui, sans-serif;
+    letter-spacing: -0.02em;
+  }
+
+  /* iOS: fire taps immediately on interactive elements instead of waiting
+     to disambiguate scroll/zoom gestures — fixes "tap scrolls, doesn't click" */
+  button, a, [role='button'], input, label, select, textarea {
+    touch-action: manipulation;
+  }
+  button, a, [role='button'] {
+    -webkit-user-select: none;
+    user-select: none;
+  }
 }
 
 @layer components {
-  /* Glassmorphism card — the main NAFS card style */
+  /* Glassmorphism card — the main app card style */
   .nafs-card {
-    @apply rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm;
+    @apply rounded-2xl border border-white/10 backdrop-blur-sm;
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.06) inset,
+      0 8px 24px rgba(0, 0, 0, 0.25);
   }
 
   /* Gold gradient text */
@@ -104,11 +152,7 @@
     @apply bg-white/20 border border-white/30;
   }
 
-  /* Bottom nav bar */
-  .bottom-nav {
-    @apply fixed bottom-0 left-0 right-0 z-50 border-t border-white/10 bg-navy/95 backdrop-blur-md;
-    padding-bottom: env(safe-area-inset-bottom);
-  }
+  /* (Bottom nav is a floating dock styled inline in BottomNav.tsx) */
 
   /* Modal/sheet overlay — covers full screen, but reserves space at the
      bottom on mobile so the modal content sits above the BottomNav.
@@ -140,9 +184,9 @@
     overscroll-behavior: contain;
   }
 
-  /* Page container — accounts for bottom nav + iOS notch */
+  /* Page container — accounts for the floating dock + iOS notch */
   .page-container {
-    @apply pb-24 pt-4;
+    @apply pb-32 pt-4;
     padding-top: env(safe-area-inset-top, 1rem);
   }
 
@@ -164,13 +208,14 @@
   .log-input {
     @apply w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3
            text-foreground placeholder:text-muted-foreground
-           focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/30
+           focus:border-gold/50 focus:outline-none focus:ring-2 focus:ring-gold/20
            transition-all duration-200;
   }
 
-  /* Section header */
+  /* Section header — quiet, refined */
   .section-header {
-    @apply text-xs font-semibold uppercase tracking-widest text-muted-foreground;
+    @apply text-[11px] font-medium uppercase text-muted-foreground/80;
+    letter-spacing: 0.14em;
   }
 }
 
@@ -179,6 +224,24 @@
   .tabular-nums {
     font-variant-numeric: tabular-nums;
   }
+
+  /* Staggered entrance — apply .anim-up with .anim-d1..d5 for cascade */
+  .anim-up {
+    animation: slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .anim-d1 { animation-delay: 0.05s; }
+  .anim-d2 { animation-delay: 0.12s; }
+  .anim-d3 { animation-delay: 0.19s; }
+  .anim-d4 { animation-delay: 0.26s; }
+  .anim-d5 { animation-delay: 0.33s; }
+
+  /* Gold CTA — the brand action button */
+  .btn-gold {
+    @apply rounded-xl font-semibold text-[#0b1a2b] transition-all active:scale-[0.98] disabled:opacity-50;
+    background: linear-gradient(180deg, #E0BC45, #C9A227);
+    box-shadow: 0 6px 18px rgba(201, 162, 39, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  }
+  .btn-gold:hover { filter: brightness(1.06); }
 
   /* Glow effects */
   .glow-teal {

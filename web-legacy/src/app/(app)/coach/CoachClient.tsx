@@ -1,8 +1,35 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Zap, Mail, FileText } from 'lucide-react'
+import { Send, Zap, Mail, FileText, Trash2 } from 'lucide-react'
 import { timeAgo } from '@/lib/utils'
+
+// Minimal markdown for AI replies: **bold**, bullet lines, paragraphs.
+function RichText({ text }: { text: string }) {
+  const renderInline = (s: string) =>
+    s.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+      part.startsWith('**') && part.endsWith('**')
+        ? <strong key={i} className="font-semibold text-gold">{part.slice(2, -2)}</strong>
+        : <span key={i}>{part}</span>
+    )
+  return (
+    <div className="space-y-1.5">
+      {text.split('\n').map((line, i) => {
+        const t = line.trim()
+        if (!t) return null
+        if (/^[-•*]\s+/.test(t)) {
+          return (
+            <div key={i} className="flex gap-2">
+              <span className="text-gold mt-0.5">•</span>
+              <span className="flex-1">{renderInline(t.replace(/^[-•*]\s+/, ''))}</span>
+            </div>
+          )
+        }
+        return <p key={i}>{renderInline(t)}</p>
+      })}
+    </div>
+  )
+}
 
 interface Report {
   id: string
@@ -94,7 +121,7 @@ export default function CoachClient({ userId, reports, letters, lastConversation
   const TABS = [
     { key: 'pull', label: "Today's Pull", icon: Zap },
     { key: 'tribunal', label: 'Tribunal', icon: FileText },
-    { key: 'chat', label: 'Ask NAFS', icon: Send },
+    { key: 'chat', label: 'Ask Ascend', icon: Send },
     { key: 'letters', label: 'Letters', icon: Mail },
   ] as const
 
@@ -205,33 +232,46 @@ export default function CoachClient({ userId, reports, letters, lastConversation
         </div>
       )}
 
-      {/* Ask NAFS Chat */}
+      {/* Ask Ascend Chat */}
       {activeTab === 'chat' && (
         <div className="flex flex-col" style={{ height: 'calc(100vh - 280px)' }}>
           <div className="flex-1 overflow-y-auto space-y-4 pb-4 scrollbar-hide">
             {messages.length === 0 && (
               <div className="text-center py-8">
-                <p className="text-3xl">🤖</p>
-                <p className="mt-3 font-semibold text-foreground">Ask NAFS anything</p>
+                <div className="mx-auto h-14 w-14 rounded-2xl bg-gradient-to-br from-primary/60 to-navy
+                                border border-gold/25 flex items-center justify-center text-2xl">🧠</div>
+                <p className="mt-3 font-semibold text-foreground">Ask your coach anything</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  I have access to your last 90 days of data.
+                  It answers from your real habits, tasks, health and goals — not generic advice.
                 </p>
                 <div className="mt-4 space-y-2">
                   {[
-                    'Why am I not improving?',
-                    'What is my best day pattern?',
-                    'How far am I from my dream?',
+                    '📉 What am I neglecting the most?',
+                    '🔥 Which streak am I closest to breaking?',
+                    '🛏️ Is my sleep hurting my score?',
+                    '🗺️ Give me a plan for tomorrow based on my data',
                   ].map((q) => (
                     <button
                       key={q}
-                      onClick={() => setInput(q)}
+                      onClick={() => setInput(q.replace(/^\S+\s/, ''))}
                       className="block w-full rounded-xl border border-white/10 bg-white/5
-                                 px-4 py-2.5 text-sm text-left text-foreground hover:bg-white/10 transition-all"
+                                 px-4 py-2.5 text-sm text-left text-foreground hover:bg-white/10
+                                 hover:border-gold/30 transition-all active:scale-[0.99]"
                     >
                       {q}
                     </button>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {messages.length > 0 && (
+              <div className="flex justify-end">
+                <button onClick={() => setMessages([])}
+                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-muted-foreground/70
+                             hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                  <Trash2 size={11} /> Clear chat
+                </button>
               </div>
             )}
 
@@ -241,7 +281,7 @@ export default function CoachClient({ userId, reports, letters, lastConversation
                   ${m.role === 'user'
                     ? 'bg-primary text-white rounded-br-sm'
                     : 'bg-white/10 border border-white/10 text-foreground rounded-bl-sm'}`}>
-                  {m.content}
+                  {m.role === 'assistant' ? <RichText text={m.content} /> : m.content}
                 </div>
               </div>
             ))}
@@ -305,7 +345,7 @@ export default function CoachClient({ userId, reports, letters, lastConversation
                 </p>
                 {letter.ai_reply_text && (
                   <div className="border-t border-white/10 pt-4">
-                    <p className="text-xs text-gold font-semibold mb-2">🤖 NAFS reply — based on your current data</p>
+                    <p className="text-xs text-gold font-semibold mb-2">🤖 Ascend reply — based on your current data</p>
                     <p className="text-sm text-muted-foreground leading-relaxed">
                       {letter.ai_reply_text}
                     </p>

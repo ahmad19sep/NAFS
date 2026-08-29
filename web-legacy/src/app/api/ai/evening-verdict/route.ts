@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     const missedHabits = (habitLogs ?? []).filter((l: any) => !l.completed)
     const doneTasks = tasks.filter((t: any) => t.done)
 
-    const system = `You are NAFS — a strict but caring AI accountability coach for a Muslim.
+    const system = `You are Ascend — a strict but caring AI accountability coach for a Muslim.
 The user just told you about their day. Write a verdict in 3 parts:
 1. ONE honest sentence on whether today was good or not — cite specific numbers.
 2. What they did vs what they planned (tasks + habits).

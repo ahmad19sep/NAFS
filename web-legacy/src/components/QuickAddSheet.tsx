@@ -1,27 +1,32 @@
 'use client'
 
 import Link from 'next/link'
-import { X } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import {
+  X, ListChecks, Repeat, Flame, Trophy, MoonStar, HeartPulse, type LucideIcon,
+} from 'lucide-react'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
+import { useDeenEnabled } from '@/hooks/useDeenEnabled'
 
 interface Props {
   open: boolean
   onClose: () => void
 }
 
-const ACTIONS: { href: string; emoji: string; label: string; tone: string; ring: string }[] = [
-  { href: '/tasks',      emoji: '✅', label: 'New task',      tone: 'from-emerald-500/25 to-emerald-700/10', ring: 'ring-emerald-400/30' },
-  { href: '/habits',     emoji: '🔄', label: 'New habit',     tone: 'from-cyan-500/25 to-blue-700/10',       ring: 'ring-cyan-400/30' },
-  { href: '/challenges', emoji: '🎯', label: 'New challenge', tone: 'from-pink-500/25 to-rose-700/10',       ring: 'ring-pink-400/30' },
-  { href: '/goals',      emoji: '🏆', label: 'New goal',      tone: 'from-yellow-500/20 to-orange-700/10',   ring: 'ring-yellow-400/30' },
-  { href: '/deen',       emoji: '🕌', label: 'Log prayer',    tone: 'from-yellow-500/25 to-amber-700/10',    ring: 'ring-amber-400/30' },
-  { href: '/health',     emoji: '❤️', label: 'Log health',    tone: 'from-red-500/25 to-pink-700/10',        ring: 'ring-red-400/30' },
+const ACTIONS: { href: string; icon: LucideIcon; label: string }[] = [
+  { href: '/tasks',      icon: ListChecks, label: 'New task' },
+  { href: '/habits',     icon: Repeat,     label: 'New habit' },
+  { href: '/challenges', icon: Flame,      label: 'New challenge' },
+  { href: '/goals',      icon: Trophy,     label: 'New goal' },
+  { href: '/deen',       icon: MoonStar,   label: 'Log prayer' },
+  { href: '/health',     icon: HeartPulse, label: 'Log health' },
 ]
 
 export default function QuickAddSheet({ open, onClose }: Props) {
   useBodyScrollLock(open)
+  const deenEnabled = useDeenEnabled()
   if (!open) return null
+
+  const actions = ACTIONS.filter((a) => deenEnabled || a.href !== '/deen')
 
   return (
     <div
@@ -50,17 +55,16 @@ export default function QuickAddSheet({ open, onClose }: Props) {
         </div>
 
         {/* Action grid */}
-        <div className="px-5 grid grid-cols-3 gap-3">
-          {ACTIONS.map((a) => (
+        <div className="px-5 grid grid-cols-3 gap-2.5">
+          {actions.map((a) => (
             <Link key={a.href} href={a.href} onClick={onClose}
-              className={cn(
-                'rounded-2xl border border-white/10 bg-gradient-to-br p-4 text-center transition-all active:scale-95 hover:border-white/30',
-                a.tone
-              )}>
-              <div className={cn('mx-auto h-10 w-10 rounded-xl bg-white/8 ring-1 flex items-center justify-center text-xl mb-2', a.ring)}>
-                {a.emoji}
+              className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-center
+                         transition-all active:scale-95 hover:border-gold/30 hover:bg-white/[0.07]">
+              <div className="mx-auto h-10 w-10 rounded-xl border border-gold/20 bg-gold/[0.07]
+                              flex items-center justify-center mb-2">
+                <a.icon size={17} strokeWidth={2} className="text-gold" />
               </div>
-              <p className="text-[11px] font-semibold text-foreground leading-tight">{a.label}</p>
+              <p className="text-[11px] font-medium text-foreground leading-tight">{a.label}</p>
             </Link>
           ))}
         </div>

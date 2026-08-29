@@ -97,6 +97,7 @@ const config: Config = {
       },
       fontFamily: {
         sans: ['var(--font-inter)'],
+        display: ['var(--font-display)'],
         arabic: ['var(--font-arabic)'],
       },
     },

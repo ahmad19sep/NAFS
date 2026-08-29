@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next'
-import { Inter } from 'next/font/google'
+import { Inter, Space_Grotesk } from 'next/font/google'
 import './globals.css'
 import PwaBootstrap from '@/components/PwaBootstrap'
 
@@ -9,14 +9,21 @@ const inter = Inter({
   display: 'swap',
 })
 
+const spaceGrotesk = Space_Grotesk({
+  subsets: ['latin'],
+  variable: '--font-display',
+  weight: ['500', '600', '700'],
+  display: 'swap',
+})
+
 export const metadata: Metadata = {
-  title: 'NAFS — نَفْس',
-  description: 'Self-Accountability App for Muslim Dreamers. Master your Nafs. Master your life.',
+  title: 'Ascend',
+  description: 'The accountability app that holds you to your goals, habits and values — with an AI coach that never sugarcoats.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'NAFS',
+    title: 'Ascend',
   },
   icons: {
     icon: [
@@ -26,7 +33,7 @@ export const metadata: Metadata = {
     ],
     apple: '/icons/icon-192x192.svg',
   },
-  keywords: ['Muslim', 'accountability', 'self-improvement', 'Islam', 'productivity', 'dream'],
+  keywords: ['accountability', 'self-improvement', 'habits', 'goals', 'productivity', 'AI coach'],
   authors: [{ name: 'Ahmad', url: 'https://github.com/ahmad19sep' }],
 }
 
@@ -47,12 +54,16 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <head>
+        {/* Apply saved theme before paint to avoid a flash of the default */}
+        <script dangerouslySetInnerHTML={{ __html:
+          `try{var t=localStorage.getItem('ascend-theme');if(t&&t!=='midnight')document.documentElement.dataset.theme=t}catch(e){}`
+        }} />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <link rel="apple-touch-icon" href="/icons/icon-192x192.svg" />
       </head>
-      <body className={`${inter.variable} font-sans antialiased`}>
+      <body className={`${inter.variable} ${spaceGrotesk.variable} font-sans antialiased`}>
         {children}
         <PwaBootstrap />
       </body>

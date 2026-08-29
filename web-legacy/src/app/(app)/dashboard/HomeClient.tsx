@@ -2,7 +2,11 @@
 
 import { useMemo } from 'react'
 import Link from 'next/link'
-import { Settings, ChevronRight, Sparkles, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import {
+  Settings, ChevronRight, TrendingUp, TrendingDown, Minus, Check,
+  ListChecks, Repeat, Flame, MoonStar, HeartPulse, Trophy, Sparkles,
+  type LucideIcon,
+} from 'lucide-react'
 import { cn, scoreColor } from '@/lib/utils'
 import { PRAYERS } from '@/lib/scoring'
 import type { Habit, HabitLog, Weekday } from '@/types'
@@ -51,16 +55,16 @@ interface Props {
 
 function getGreeting(name: string) {
   const h = new Date().getHours()
-  if (h < 5)  return { text: `Up late, ${name}`,        emoji: '🌙' }
-  if (h < 12) return { text: `Good morning, ${name}`,   emoji: '☀️' }
-  if (h < 17) return { text: `Good afternoon, ${name}`, emoji: '🌤️' }
-  if (h < 21) return { text: `Good evening, ${name}`,   emoji: '🌅' }
-  return            { text: `Good night, ${name}`,      emoji: '🌙' }
+  if (h < 5)  return { text: `Up late, ${name}` }
+  if (h < 12) return { text: `Good morning, ${name}` }
+  if (h < 17) return { text: `Good afternoon, ${name}` }
+  if (h < 21) return { text: `Good evening, ${name}` }
+  return            { text: `Good night, ${name}` }
 }
 
 function getVerdict(score: number): { text: string; tone: 'great' | 'good' | 'okay' | 'low' } {
   const h = new Date().getHours()
-  if (score >= 85) return { text: 'You\'re on fire today — keep this rhythm 🔥', tone: 'great' }
+  if (score >= 85) return { text: 'On fire today — keep this rhythm', tone: 'great' }
   if (score >= 70) return { text: 'Strong day — finish what you started', tone: 'great' }
   if (score >= 50) return { text: h < 18 ? 'Solid start — push for more' : 'Decent day — close it well', tone: 'good' }
   if (score >= 25) return { text: h < 18 ? 'Still time to climb. Start with one win.' : 'Quiet day. Take a small win before sleep.', tone: 'okay' }
@@ -107,9 +111,13 @@ export default function HomeClient({
   const healthDone = healthTargets.filter(Boolean).length
   const healthTotal = 4
 
+  // ---- Faith mode: Deen module is opt-in (signup question / Profile toggle).
+  // Default true when the column is missing so pre-migration DBs keep working.
+  const deenOn = (profile?.deen_enabled ?? true) as boolean
+
   // ---- Engagement signals: only count a feature in scoring after user
   // has interacted with it at least once. New users start at 0/0, not 0/N.
-  const deenEngaged       = (prayerLogs30 ?? []).length > 0 || !!prayerLog
+  const deenEngaged       = deenOn && ((prayerLogs30 ?? []).length > 0 || !!prayerLog)
   const healthEngaged     = !!profile?.height_cm || (healthLogs30 ?? []).length > 0
   const tasksEngaged      = tasksTotal > 0
   const habitsEngaged     = habitsTotal > 0
@@ -130,7 +138,7 @@ export default function HomeClient({
 
   // ---- 30-day history (for sparkline + delta vs yesterday) ----
   const habitsHistory     = useMemo(() => computeHabitsHistory(habits as Habit[], habitLogs30 as HabitLog[], today), [habits, habitLogs30, today])
-  const deenHistory       = useMemo(() => computeDeenHistory(prayerLogs30, today), [prayerLogs30, today])
+  const deenHistory       = useMemo(() => deenOn ? computeDeenHistory(prayerLogs30, today) : [], [deenOn, prayerLogs30, today])
   const challengesHistory = useMemo(() => computeChallengesHistory(allChallenges, challengeCheckins30, today), [allChallenges, challengeCheckins30, today])
   const healthHistory     = useMemo(() => computeHealthHistory(healthLogs30, today), [healthLogs30, today])
   const tasksHistory      = useMemo(() => computeDailyTasksHistory(tasks30, today), [tasks30, today])
@@ -175,13 +183,13 @@ export default function HomeClient({
     <div className="mx-auto max-w-md space-y-5 px-4 pb-8">
 
       {/* ───────────── Header ───────────── */}
-      <div className="flex items-start justify-between pt-4">
+      <div className="anim-up flex items-start justify-between pt-4">
         <div className="min-w-0 flex-1">
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground/70">
             {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
           </p>
-          <h1 className="text-[22px] font-bold text-foreground leading-tight mt-0.5 truncate">
-            {greeting.text} <span className="ml-0.5">{greeting.emoji}</span>
+          <h1 className="text-[22px] font-semibold text-foreground leading-tight mt-1 truncate">
+            {greeting.text}
           </h1>
         </div>
         <Link href="/profile">
@@ -192,33 +200,38 @@ export default function HomeClient({
       </div>
 
       {/* ───────────── Hero score card ───────────── */}
-      <div className="relative overflow-hidden rounded-3xl border border-white/10
+      <div className="anim-up relative overflow-hidden rounded-3xl border border-white/10
                       bg-gradient-to-br from-[#16314a] via-[#0f2235] to-[#0b1a2b]
-                      p-5 animate-slide-up">
+                      p-5">
         {/* Background glow */}
-        <div className="pointer-events-none absolute -top-10 -right-10 h-44 w-44 rounded-full
-                        bg-gold/10 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-10 -left-10 h-32 w-32 rounded-full
-                        bg-primary/20 blur-3xl" />
+        <div className="pointer-events-none absolute -top-12 -right-12 h-48 w-48 rounded-full
+                        bg-gold/[0.08] blur-3xl" />
 
         <div className="relative flex items-center gap-5">
           {/* Big ring */}
           <div className="relative flex-shrink-0">
             <svg width="108" height="108" style={{ transform: 'rotate(-90deg)' }}>
-              <circle cx="54" cy="54" r="46" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="10" />
+              <defs>
+                <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#E8C547" />
+                  <stop offset="100%" stopColor="#9A7B1E" />
+                </linearGradient>
+              </defs>
+              <circle cx="54" cy="54" r="46" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="9" />
               <circle cx="54" cy="54" r="46" fill="none"
-                stroke={overallScore >= 80 ? '#34d399' : overallScore >= 60 ? '#fbbf24' : overallScore >= 40 ? '#fb923c' : '#f87171'}
-                strokeWidth="10" strokeLinecap="round"
+                stroke="url(#ringGrad)"
+                strokeWidth="9" strokeLinecap="round"
                 strokeDasharray={289}
                 strokeDashoffset={289 * (1 - overallScore / 100)}
-                style={{ transition: 'stroke-dashoffset 1s ease', filter: 'drop-shadow(0 0 10px currentColor)' }}
+                style={{ transition: 'stroke-dashoffset 1s cubic-bezier(0.16,1,0.3,1)',
+                         filter: 'drop-shadow(0 0 6px rgba(201,162,39,0.35))' }}
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className={cn('text-3xl font-bold tabular-nums leading-none', scoreColor(overallScore))}>
+              <span className={cn('font-display text-[34px] font-semibold tabular-nums leading-none tracking-tight', scoreColor(overallScore))}>
                 {overallScore}
               </span>
-              <span className="text-[9px] uppercase tracking-widest text-muted-foreground mt-0.5">today</span>
+              <span className="text-[9px] uppercase tracking-[0.18em] text-muted-foreground mt-1">today</span>
             </div>
           </div>
 
@@ -227,7 +240,7 @@ export default function HomeClient({
             {noEngagement ? (
               <>
                 <p className="text-sm font-semibold text-foreground leading-snug">
-                  Welcome to NAFS 👋
+                  Welcome to Ascend 👋
                 </p>
                 <p className="text-xs text-muted-foreground mt-1.5 leading-snug">
                   Tap any feature below to start. Your score will grow as you engage.
@@ -242,12 +255,12 @@ export default function HomeClient({
                   {verdict.text}
                 </p>
                 {/* Mini stats — only show engaged features */}
-                <div className="flex flex-wrap gap-x-3 gap-y-1 mt-2.5 text-[11px]">
-                  {deenEngaged       && <MiniStat emoji="🕌" v={prayerDone} m={prayerTotal} />}
-                  {tasksEngaged      && <MiniStat emoji="✅" v={tasksDone} m={tasksTotal} />}
-                  {habitsEngaged     && <MiniStat emoji="🔄" v={habitsDone} m={habitsTotal} />}
-                  {challengesEngaged && <MiniStat emoji="🎯" v={challengesDone} m={challengesTotal} />}
-                  {healthEngaged     && <MiniStat emoji="❤️" v={healthDone} m={healthTotal} />}
+                <div className="flex flex-wrap gap-x-3 gap-y-1.5 mt-2.5 text-[11px]">
+                  {deenEngaged       && <MiniStat icon={MoonStar}   v={prayerDone} m={prayerTotal} />}
+                  {tasksEngaged      && <MiniStat icon={ListChecks} v={tasksDone} m={tasksTotal} />}
+                  {habitsEngaged     && <MiniStat icon={Repeat}     v={habitsDone} m={habitsTotal} />}
+                  {challengesEngaged && <MiniStat icon={Flame}      v={challengesDone} m={challengesTotal} />}
+                  {healthEngaged     && <MiniStat icon={HeartPulse} v={healthDone} m={healthTotal} />}
                 </div>
               </>
             )}
@@ -256,35 +269,42 @@ export default function HomeClient({
       </div>
 
       {/* ───────────── Features grid ───────────── */}
-      <div>
+      <div className="anim-up anim-d2">
         <div className="flex items-center justify-between mb-3">
           <p className="section-header">Features</p>
           <span className="text-[10px] text-muted-foreground tabular-nums">{new Date().getHours() < 21 ? 'tap to log' : 'review today'}</span>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <FeatureCard href="/tasks"      emoji="✅" gradient="from-emerald-500/25 via-emerald-700/10 to-transparent" iconBg="bg-emerald-500/30" iconRing="ring-emerald-400/30"
-            title="Tasks"          sub={`${tasksDone} / ${tasksTotal} done`}              pct={tasksTotal      ? (tasksDone / tasksTotal) * 100 : 0}     barColor="bg-emerald-400" notStarted={!tasksEngaged} />
+          <FeatureCard href="/tasks" icon={ListChecks} title="Tasks"
+            sub={`${tasksDone} of ${tasksTotal} done`}
+            pct={tasksTotal ? (tasksDone / tasksTotal) * 100 : 0} notStarted={!tasksEngaged} />
 
-          <FeatureCard href="/habits"     emoji="🔄" gradient="from-cyan-500/25 via-blue-700/10 to-transparent"       iconBg="bg-cyan-500/30"    iconRing="ring-cyan-400/30"
-            title="Habits"         sub={`${habitsDone} / ${habitsTotal} done`}            pct={habitsTotal     ? (habitsDone / habitsTotal) * 100 : 0}   barColor="bg-cyan-400" notStarted={!habitsEngaged} />
+          <FeatureCard href="/habits" icon={Repeat} title="Habits"
+            sub={`${habitsDone} of ${habitsTotal} done`}
+            pct={habitsTotal ? (habitsDone / habitsTotal) * 100 : 0} notStarted={!habitsEngaged} />
 
-          <FeatureCard href="/challenges" emoji="🎯" gradient="from-pink-500/25 via-rose-700/10 to-transparent"        iconBg="bg-pink-500/30"    iconRing="ring-pink-400/30"
-            title="Challenges"     sub={`${challengesDone} / ${challengesTotal} today`}    pct={challengesTotal ? (challengesDone / challengesTotal) * 100 : 0} barColor="bg-pink-400" notStarted={!challengesEngaged} />
+          <FeatureCard href="/challenges" icon={Flame} title="Challenges"
+            sub={`${challengesDone} of ${challengesTotal} today`}
+            pct={challengesTotal ? (challengesDone / challengesTotal) * 100 : 0} notStarted={!challengesEngaged} />
 
-          <FeatureCard href="/deen"       emoji="🕌" gradient="from-yellow-500/25 via-amber-700/10 to-transparent"     iconBg="bg-amber-500/30"   iconRing="ring-amber-400/30"
-            title="Deen"           sub={deenEngaged ? `${prayerDone} / ${prayerTotal} pts` : 'Track prayers'}
-            pct={deenEngaged && prayerTotal ? (prayerDone / prayerTotal) * 100 : 0}        barColor="bg-amber-400" notStarted={!deenEngaged} />
+          {deenOn && (
+          <FeatureCard href="/deen" icon={MoonStar} title="Deen"
+            sub={deenEngaged ? `${prayerDone} of ${prayerTotal} pts` : 'Track prayers'}
+            pct={deenEngaged && prayerTotal ? (prayerDone / prayerTotal) * 100 : 0} notStarted={!deenEngaged} />
+          )}
 
-          <FeatureCard href="/health"     emoji="❤️" gradient="from-red-500/25 via-pink-700/10 to-transparent"          iconBg="bg-red-500/30"     iconRing="ring-red-400/30"
-            title="Health"         sub={healthEngaged ? `${healthDone} / ${healthTotal} logged` : 'Set up profile'}
-            pct={healthEngaged ? (healthDone / healthTotal) * 100 : 0}                     barColor="bg-red-400" notStarted={!healthEngaged} />
+          <FeatureCard href="/health" icon={HeartPulse} title="Health"
+            sub={healthEngaged ? `${healthDone} of ${healthTotal} logged` : 'Set up profile'}
+            pct={healthEngaged ? (healthDone / healthTotal) * 100 : 0} notStarted={!healthEngaged} />
 
-          <FeatureCard href="/goals"      emoji="🏆" gradient="from-yellow-500/20 via-orange-700/10 to-transparent"    iconBg="bg-yellow-500/30"  iconRing="ring-yellow-400/30"
-            title="Goals"          sub={`${milestonesDone} / ${milestonesTotal} milestones`} pct={milestonesTotal ? (milestonesDone / milestonesTotal) * 100 : 0} barColor="bg-yellow-400" notStarted={milestonesTotal === 0} />
+          <FeatureCard href="/goals" icon={Trophy} title="Goals"
+            sub={`${milestonesDone} of ${milestonesTotal} milestones`}
+            pct={milestonesTotal ? (milestonesDone / milestonesTotal) * 100 : 0} notStarted={milestonesTotal === 0} />
         </div>
       </div>
 
       {/* ───────────── History teaser ───────────── */}
+      <div className="anim-up anim-d3">
       <HistoryTeaserCard
         days={liveTotalHistory}
         title="Your last 30 days"
@@ -293,23 +313,21 @@ export default function HomeClient({
         emoji="📊"
         accent="gold"
       />
+      </div>
 
-      {/* ───────────── AI insights ───────────── */}
-      <Link href="/coach">
-        <div className="relative overflow-hidden rounded-2xl border border-white/10
-                        bg-gradient-to-br from-fuchsia-500/15 via-purple-700/10 to-transparent
-                        p-4 flex items-center gap-3 hover:border-fuchsia-400/30 transition-all active:scale-[0.99]">
-          <div className="pointer-events-none absolute -right-6 -bottom-6 h-24 w-24 rounded-full bg-fuchsia-500/15 blur-2xl" />
-          <div className="relative h-11 w-11 rounded-2xl bg-gradient-to-br from-fuchsia-500/40 to-purple-700/30 flex items-center justify-center text-xl flex-shrink-0">
-            🧠
+      {/* ───────────── AI coach ───────────── */}
+      <Link href="/coach" className="anim-up anim-d4 block">
+        <div className="nafs-card p-4 flex items-center gap-3 hover:border-gold/25 transition-all active:scale-[0.99]">
+          <div className="h-10 w-10 rounded-xl border border-gold/20 bg-gold/[0.07] flex items-center justify-center flex-shrink-0">
+            <Sparkles size={16} className="text-gold" />
           </div>
-          <div className="relative flex-1 min-w-0">
-            <p className="font-semibold text-foreground text-sm">AI analysis &amp; reminders</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-foreground text-sm">Your coach</p>
+            <p className="text-xs text-muted-foreground mt-0.5 tabular-nums">
               {insights} new insight{insights !== 1 ? 's' : ''} · {reminders} reminder{reminders !== 1 ? 's' : ''}
             </p>
           </div>
-          <ChevronRight size={16} className="relative text-muted-foreground flex-shrink-0" />
+          <ChevronRight size={15} className="text-muted-foreground/40 flex-shrink-0" />
         </div>
       </Link>
     </div>
@@ -336,61 +354,57 @@ function DeltaChip({ delta }: { delta: number }) {
   )
 }
 
-function MiniStat({ emoji, v, m }: { emoji: string; v: number; m: number }) {
+function MiniStat({ icon: Icon, v, m }: { icon: LucideIcon; v: number; m: number }) {
   const pct = m > 0 ? v / m : 0
   return (
     <span className={cn('inline-flex items-center gap-1 tabular-nums',
       pct >= 1 ? 'text-emerald-400' : pct >= 0.5 ? 'text-foreground' : 'text-muted-foreground'
     )}>
-      <span className="opacity-90">{emoji}</span>
+      <Icon size={11} strokeWidth={2.2} className="opacity-80" />
       <span className="font-semibold">{v}/{m}</span>
     </span>
   )
 }
 
 function FeatureCard({
-  href, emoji, gradient, iconBg, iconRing, title, sub, pct, barColor, notStarted,
+  href, icon: Icon, title, sub, pct, notStarted,
 }: {
   href: string
-  emoji: string
-  gradient: string
-  iconBg: string
-  iconRing: string
+  icon: LucideIcon
   title: string
   sub: string
   pct: number
-  barColor: string
   notStarted?: boolean
 }) {
   const done = !notStarted && pct >= 100
   return (
     <Link href={href}>
-      <div className={cn(
-        'relative overflow-hidden rounded-2xl border bg-gradient-to-br p-4 transition-all active:scale-95',
-        notStarted ? 'border-white/8 hover:border-white/20 opacity-90' : 'border-white/8 hover:border-white/20',
-        gradient
-      )}>
-        <div className="flex items-center justify-between mb-3">
-          <div className={cn('h-10 w-10 rounded-xl flex items-center justify-center text-xl ring-1', iconBg, iconRing)}>
-            {emoji}
+      <div className="nafs-card p-4 transition-all duration-200 active:scale-[0.97] hover:border-white/20">
+        <div className="flex items-start justify-between">
+          <div className={cn(
+            'h-9 w-9 rounded-xl border flex items-center justify-center transition-colors',
+            done
+              ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300'
+              : 'border-gold/20 bg-gold/[0.07] text-gold'
+          )}>
+            <Icon size={16} strokeWidth={2} />
           </div>
           {done ? (
-            <span className="text-[10px] font-bold text-emerald-400">✓</span>
+            <Check size={14} strokeWidth={3} className="text-emerald-400 mt-1" />
           ) : notStarted ? (
-            <span className="text-[9px] font-semibold uppercase tracking-wider text-gold flex items-center gap-0.5">
-              Start <ChevronRight size={11} />
+            <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-gold/90 flex items-center gap-0.5 mt-1.5">
+              Start <ChevronRight size={10} />
             </span>
           ) : (
-            <ChevronRight size={14} className="text-muted-foreground/60" />
+            <ChevronRight size={14} className="text-muted-foreground/40 mt-1" />
           )}
         </div>
-        <p className="font-bold text-foreground text-[15px] leading-tight">{title}</p>
-        <p className={cn('text-xs mt-0.5',
-          notStarted ? 'text-muted-foreground/70 italic' : 'text-muted-foreground'
-        )}>{notStarted ? sub : sub}</p>
-        <div className="mt-3 h-1.5 w-full rounded-full bg-white/10">
+        <p className="mt-3.5 font-semibold text-foreground text-[15px] leading-tight">{title}</p>
+        <p className="text-xs text-muted-foreground mt-0.5 tabular-nums">{sub}</p>
+        <div className="mt-3 h-1 w-full rounded-full bg-white/[0.07]">
           {!notStarted && (
-            <div className={cn('h-full rounded-full transition-all', barColor)}
+            <div className={cn('h-full rounded-full transition-all duration-500',
+              done ? 'bg-emerald-400' : 'bg-gradient-to-r from-gold-dark to-gold')}
               style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
           )}
         </div>

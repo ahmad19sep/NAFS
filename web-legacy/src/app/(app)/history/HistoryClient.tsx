@@ -19,6 +19,7 @@ import type { Task, TaskType } from '@/lib/tasks'
 
 interface Props {
   today: string
+  deenEnabled: boolean
   habits: any[]
   habitLogs30: any[]
   prayerLogs30: any[]
@@ -43,15 +44,16 @@ const VALID_TABS: FeatureKey[] = ['overall', 'habits', 'deen', 'challenges', 'he
 const VALID_PERIODS: TaskType[] = ['daily', 'weekly', 'monthly']
 
 export default function HistoryPageClient({
-  today, habits, habitLogs30, prayerLogs30,
+  today, deenEnabled, habits, habitLogs30, prayerLogs30,
   challenges, challengeCheckins30, tasks, healthLogs30,
 }: Props) {
+  const features = FEATURES.filter((f) => deenEnabled || f.key !== 'deen')
   const searchParams = useSearchParams()
   const initialTab = (searchParams.get('tab') as FeatureKey) ?? 'overall'
   const initialPeriod = (searchParams.get('period') as TaskType) ?? 'daily'
 
   const [tab, setTab] = useState<FeatureKey>(
-    VALID_TABS.includes(initialTab) ? initialTab : 'overall'
+    VALID_TABS.includes(initialTab) && (deenEnabled || initialTab !== 'deen') ? initialTab : 'overall'
   )
   const [taskPeriod, setTaskPeriod] = useState<TaskType>(
     VALID_PERIODS.includes(initialPeriod) ? initialPeriod : 'daily'
@@ -61,7 +63,7 @@ export default function HistoryPageClient({
   // Tabs in URL → re-sync if user navigates back/forward
   useEffect(() => {
     const t = (searchParams.get('tab') as FeatureKey) ?? 'overall'
-    if (VALID_TABS.includes(t)) setTab(t)
+    if (VALID_TABS.includes(t) && (deenEnabled || t !== 'deen')) setTab(t)
     const p = (searchParams.get('period') as TaskType) ?? 'daily'
     if (VALID_PERIODS.includes(p)) setTaskPeriod(p)
     setSelectedDate(null)
@@ -69,7 +71,7 @@ export default function HistoryPageClient({
 
   // Per-feature 30-day arrays
   const habitsHistory     = useMemo(() => computeHabitsHistory(habits as Habit[], habitLogs30 as HabitLog[], today), [habits, habitLogs30, today])
-  const deenHistory       = useMemo(() => computeDeenHistory(prayerLogs30, today), [prayerLogs30, today])
+  const deenHistory       = useMemo(() => deenEnabled ? computeDeenHistory(prayerLogs30, today) : [], [deenEnabled, prayerLogs30, today])
   const challengesHistory = useMemo(() => computeChallengesHistory(challenges, challengeCheckins30, today), [challenges, challengeCheckins30, today])
   const healthHistory     = useMemo(() => computeHealthHistory(healthLogs30, today), [healthLogs30, today])
 
@@ -151,7 +153,7 @@ export default function HistoryPageClient({
       {/* Feature tabs */}
       <div className="-mx-4 px-4 overflow-x-auto scrollbar-hide">
         <div className="flex gap-1.5 min-w-max">
-          {FEATURES.map((f) => (
+          {features.map((f) => (
             <button key={f.key} onClick={() => selectTab(f.key)}
               className={cn('rounded-xl border px-3.5 py-2 text-sm font-semibold transition-all whitespace-nowrap flex items-center gap-1.5',
                 tab === f.key
@@ -207,7 +209,7 @@ export default function HistoryPageClient({
         >
           {tab === 'overall' ? (
             <div className="space-y-1.5 text-xs">
-              <BreakdownRow emoji="🕌" label="Deen"       data={deenHistory.find((d) => d.date === selected.date)} />
+              {deenEnabled && <BreakdownRow emoji="🕌" label="Deen" data={deenHistory.find((d) => d.date === selected.date)} />}
               <BreakdownRow emoji="✅" label="Tasks"      data={dailyTasksHist.find((d) => d.date === selected.date)} />
               <BreakdownRow emoji="🔄" label="Habits"     data={habitsHistory.find((d) => d.date === selected.date)} />
               <BreakdownRow emoji="🎯" label="Challenges" data={challengesHistory.find((d) => d.date === selected.date)} />
@@ -228,7 +230,7 @@ export default function HistoryPageClient({
         <div>
           <p className="section-header mb-3">By feature</p>
           <div className="space-y-2">
-            {FEATURES.filter((f) => f.key !== 'overall').map((f) => {
+            {features.filter((f) => f.key !== 'overall').map((f) => {
               const d = ({
                 habits: habitsHistory, deen: deenHistory, challenges: challengesHistory,
                 health: healthHistory, tasks: dailyTasksHist,

@@ -78,15 +78,15 @@ export default function InstallPrompt() {
             <Download size={18} className="text-primary" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-foreground">Install NAFS</p>
+            <p className="text-sm font-semibold text-foreground">Install Ascend</p>
             {bip && !showIOS && (
               <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                Add NAFS to your home screen for one-tap access and a full-screen experience.
+                Add Ascend to your home screen for one-tap access and a full-screen experience.
               </p>
             )}
             {showIOS && (
               <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                Tap <Share size={11} className="inline mx-0.5" /> Share, then <span className="font-semibold">Add to Home Screen</span> <Plus size={11} className="inline mx-0.5" /> to install NAFS.
+                Tap <Share size={11} className="inline mx-0.5" /> Share, then <span className="font-semibold">Add to Home Screen</span> <Plus size={11} className="inline mx-0.5" /> to install Ascend.
               </p>
             )}
           </div>

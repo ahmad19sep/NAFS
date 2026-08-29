@@ -14,7 +14,7 @@ interface ChallengeStarterPack {
   generated_at: string
 }
 
-const SYSTEM = `You are NAFS — an honest, sharp accountability coach for a Muslim
+const SYSTEM = `You are Ascend — an honest, sharp accountability coach for a Muslim
 user who just committed to a new challenge. Look at their past challenges and
 habits, then prepare them.
 

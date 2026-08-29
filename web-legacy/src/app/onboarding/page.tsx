@@ -135,7 +135,7 @@ export default function OnboardingPage() {
                 Bismillah, {firstName} 👋
               </h2>
               <p className="mt-2 text-muted-foreground leading-relaxed">
-                NAFS tracks your prayers, habits, challenges and goals — all in one place.
+                Ascend tracks your prayers, habits, challenges and goals — all in one place.
                 AI analyzes your day every evening and shows where you&apos;re falling behind.
               </p>
             </div>
@@ -222,7 +222,7 @@ export default function OnboardingPage() {
                 className="w-full rounded-xl bg-gradient-to-r from-primary to-teal-light py-4
                            font-bold text-white shadow-lg transition-all hover:opacity-90
                            disabled:opacity-50 active:scale-95">
-                {saving ? 'Setting up NAFS…' : "Let's go — بسم الله"}
+                {saving ? 'Setting up Ascend…' : "Let's go — بسم الله"}
               </button>
             </div>
           </div>

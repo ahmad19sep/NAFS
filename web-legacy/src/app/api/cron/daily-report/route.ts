@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { aiText } from '@/lib/ai'
 import { sendEmail, dailyReportHTML, hasEmail } from '@/lib/email'
+import { sendWhatsApp, hasWhatsApp } from '@/lib/whatsapp'
+import webpush from 'web-push'
 
-// Vercel Cron: `{ "path": "/api/cron/daily-report", "schedule": "0 21 * * *" }` (9 PM daily)
+// Vercel Cron: `{ "path": "/api/cron/daily-report", "schedule": "0 16 * * *" }`
+// 16:00 UTC = 21:00 Pakistan (Asia/Karachi). Delivers email + push + WhatsApp.
 
 interface User {
   id: string
@@ -34,7 +37,7 @@ export async function GET(req: NextRequest) {
   const yest = yesterdayString()
 
   // In test mode, only send to the currently signed-in user
-  const COLUMNS = 'id, name, email, timezone, notify_email_daily, height_cm, weight_kg'
+  const COLUMNS = 'id, name, email, timezone, notify_email_daily, height_cm, weight_kg, push_subscription, notifications_enabled'
   let users: User[] | null = null
   if (isTest) {
     const { data: { user } } = await supabase.auth.getUser()
@@ -168,7 +171,7 @@ async function buildAndSend(u: User, today: string, yest: string, supabase: any,
   const delta = yTotalWeight > 0 ? score - yScore : null
 
   // ----- AI verdict + tomorrow tip -----
-  const system = `You are NAFS — an honest, caring Muslim accountability coach.
+  const system = `You are Ascend — an honest, caring Muslim accountability coach.
 Write a 2–3 sentence verdict on today, citing real numbers. Then in a new line write
 a single concrete focus for tomorrow. Format:
 
@@ -219,8 +222,45 @@ Health metrics logged: ${healthDone}/${healthTotal}`
 
   await sendEmail({
     to: recipient,
-    subject: `${isTest ? '[TEST] ' : ''}Your NAFS daily verdict — ${score}%`,
+    subject: `${isTest ? '[TEST] ' : ''}Your Ascend daily verdict — ${score}%`,
     html,
   })
+
+  // ----- Push copy (free, instant) -----
+  const sub = (u as any).push_subscription
+  if (sub && (u as any).notifications_enabled !== false &&
+      process.env.VAPID_PRIVATE_KEY && process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) {
+    try {
+      webpush.setVapidDetails(
+        process.env.VAPID_EMAIL || 'mailto:noreply@ascend.app',
+        process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+        process.env.VAPID_PRIVATE_KEY,
+      )
+      await webpush.sendNotification(sub, JSON.stringify({
+        title: `📊 Today: ${score}%${delta !== null ? ` (${delta >= 0 ? '+' : ''}${delta} vs yesterday)` : ''}`,
+        body: verdictText.slice(0, 160),
+        icon: '/icons/icon-192x192.png',
+        badge: '/icons/icon-72x72.png',
+        url: '/dashboard',
+        tag: `daily-report-${today}`,
+      }))
+    } catch (err: any) {
+      console.warn('[daily-report] push failed:', err?.message)
+    }
+  }
+
+  // ----- WhatsApp copy (free via CallMeBot, env-configured) -----
+  if (hasWhatsApp()) {
+    const lines = [
+      `*Ascend — daily verdict* (${today})`,
+      `Score: *${score}%*${delta !== null ? ` (${delta >= 0 ? '+' : ''}${delta} vs yesterday)` : ''}`,
+      ...stats.map((s) => `${s.emoji} ${s.label}: ${s.earned}/${s.max}`),
+      ``,
+      verdictText,
+      ``,
+      `▶️ Tomorrow: ${tomorrowText}`,
+    ]
+    await sendWhatsApp(lines.join('\n'))
+  }
   return true
 }

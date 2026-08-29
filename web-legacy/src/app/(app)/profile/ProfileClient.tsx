@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
@@ -10,7 +10,8 @@ import {
   Info, LogOut, ChevronRight, Check, X, Loader2, Mail, Camera, Trash2,
   UserCircle2, Briefcase, MapPin, Cake, Heart, Send, Award, Lock, AlertTriangle,
 } from 'lucide-react'
-import { BADGES, TIER_COLORS, badgesByFeature, type BadgeDef, type BadgeFeature } from '@/lib/badges'
+import { BADGES, TIER_COLORS, type BadgeDef } from '@/lib/badges'
+import { enablePush, pushSupported } from '@/lib/push'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 
 interface DayScore { date: string; pct: number; earned: number; max: number }
@@ -62,6 +63,10 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
   // Email reports prefs
   const [emailDaily, setEmailDaily]   = useState<boolean>(!!profile?.notify_email_daily)
   const [emailWeekly, setEmailWeekly] = useState<boolean>(!!profile?.notify_email_weekly)
+  const [deenOn, setDeenOn]           = useState<boolean>((profile?.deen_enabled ?? true) as boolean)
+  const [pushOn, setPushOn]           = useState<boolean>(
+    !!profile?.push_subscription && profile?.notifications_enabled !== false
+  )
   const [savingPref, setSavingPref]   = useState<string | null>(null)
   const [sendingTest, setSendingTest] = useState<'daily' | 'weekly' | null>(null)
 
@@ -69,6 +74,29 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteText, setDeleteText] = useState('')
   const [deleting, setDeleting] = useState(false)
+
+  // Theme (persisted in localStorage; applied on <html data-theme>)
+  const [theme, setTheme] = useState<string>('midnight')
+  useEffect(() => {
+    try { setTheme(localStorage.getItem('ascend-theme') || 'midnight') } catch {}
+  }, [])
+  function applyTheme(t: string) {
+    setTheme(t)
+    try { localStorage.setItem('ascend-theme', t) } catch {}
+    if (t === 'midnight') delete document.documentElement.dataset.theme
+    else document.documentElement.dataset.theme = t
+  }
+
+  // Timezone — auto-detect from the device and keep the DB in sync
+  const detectedTz = typeof Intl !== 'undefined'
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC'
+  useEffect(() => {
+    if (!detectedTz || detectedTz === profile?.timezone) return
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) supabase.from('users').update({ timezone: detectedTz }).eq('id', user.id).then(() => {})
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Badges
   const [badgeOpen, setBadgeOpen] = useState<BadgeDef | null>(null)
@@ -78,12 +106,12 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
 
   async function shareBadge(b: BadgeDef) {
     const text =
-      `${b.emoji} I just earned the "${b.name}" badge on NAFS!\n` +
+      `${b.emoji} I just earned the "${b.name}" badge on Ascend!\n` +
       `${b.description}\n\n` +
       `Tracking my self-accountability journey, one day at a time.`
     try {
       if (typeof navigator !== 'undefined' && (navigator as any).share) {
-        await (navigator as any).share({ title: `NAFS — ${b.name}`, text })
+        await (navigator as any).share({ title: `Ascend — ${b.name}`, text })
       } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(text)
         flash('ok', 'Copied to clipboard')
@@ -213,7 +241,7 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
   async function shareProgress() {
     setSharing(true)
     const text =
-      `🌙 NAFS — my self-accountability journey\n\n` +
+      `🌙 Ascend — my self-accountability journey\n\n` +
       `Avg score · ${avgScore}%\n` +
       `Best day · ${bestScore}%\n` +
       `Days logged · ${daysLogged}\n\n` +
@@ -221,7 +249,7 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
 
     try {
       if (typeof navigator !== 'undefined' && (navigator as any).share) {
-        await (navigator as any).share({ title: 'My NAFS progress', text })
+        await (navigator as any).share({ title: 'My Ascend progress', text })
         flash('ok', 'Shared')
       } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(text)
@@ -289,6 +317,63 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
     if (key === 'notify_email_daily')  setEmailDaily(value)
     if (key === 'notify_email_weekly') setEmailWeekly(value)
     flash('ok', value ? 'Email reports enabled' : 'Email reports disabled')
+  }
+
+  async function toggleDeen(value: boolean) {
+    setSavingPref('deen_enabled')
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setSavingPref(null); flash('err', 'Not signed in'); return }
+    const { error } = await supabase.from('users').update({ deen_enabled: value }).eq('id', user.id)
+    setSavingPref(null)
+    if (error) { flash('err', error.message); return }
+    setDeenOn(value)
+    flash('ok', value ? 'Faith features enabled' : 'Faith features hidden')
+    router.refresh()
+  }
+
+  async function togglePush(value: boolean) {
+    setSavingPref('push')
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { flash('err', 'Not signed in'); return }
+
+      if (value) {
+        const r = await enablePush()
+        if (!r.ok) {
+          const msg =
+            r.reason === 'unsupported'
+              ? 'Not supported here. On iPhone: install Ascend to your home screen first (Share → Add to Home Screen), then enable from inside the app.'
+              : r.reason === 'denied'
+                ? 'Permission denied. Allow notifications for Ascend in your phone settings, then try again.'
+                : 'Could not subscribe. Try again.'
+          flash('err', msg)
+          return
+        }
+        await supabase.from('users').update({ notifications_enabled: true }).eq('id', user.id)
+        setPushOn(true)
+        flash('ok', 'Notifications on — sending a test…')
+        fetch('/api/notifications/test', { method: 'POST' }).catch(() => {})
+      } else {
+        await supabase.from('users').update({ notifications_enabled: false }).eq('id', user.id)
+        setPushOn(false)
+        flash('ok', 'Notifications off')
+      }
+    } finally {
+      setSavingPref(null)
+    }
+  }
+
+  async function sendTestPush() {
+    setSendingTest('push' as any)
+    try {
+      const res = await fetch('/api/notifications/test', { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) flash('err', data?.error || 'Test failed')
+      else flash('ok', 'Sent! Check your notifications.')
+    } catch (e: any) {
+      flash('err', e?.message || 'Network error')
+    }
+    setSendingTest(null)
   }
 
   async function sendTestReport(which: 'daily' | 'weekly') {
@@ -434,14 +519,17 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
         </div>
       </div>
 
-      {/* Toast */}
+      {/* Toast — fixed overlay so it never shifts the page layout */}
       {toast && (
-        <div className={cn(
-          'rounded-xl border px-4 py-2.5 text-sm font-medium animate-slide-up',
-          toast.type === 'ok' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                              : 'border-red-500/30 bg-red-500/10 text-red-300'
-        )}>
-          {toast.text}
+        <div className="pointer-events-none fixed inset-x-0 z-[80] flex justify-center px-4"
+          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 12px)' }}>
+          <div className={cn(
+            'rounded-xl border px-4 py-2.5 text-sm font-medium shadow-lg backdrop-blur-md animate-slide-up max-w-sm text-center',
+            toast.type === 'ok' ? 'border-emerald-500/30 bg-emerald-950/90 text-emerald-300'
+                                : 'border-red-500/30 bg-red-950/90 text-red-300'
+          )}>
+            {toast.text}
+          </div>
         </div>
       )}
 
@@ -525,14 +613,55 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
             onClick={() => sendTestReport('weekly')}
             loading={sendingTest === 'weekly'} />
         )}
-        <Row icon={<Bell size={15} />} label="Push notifications"
-          value="Coming soon" rightDim />
+        <ToggleRow icon={<Bell size={15} />} label="Push notifications"
+          subLabel={pushSupported()
+            ? 'Task deadline alerts on this device'
+            : 'On iPhone: install to home screen first'}
+          value={pushOn}
+          saving={savingPref === 'push'}
+          onToggle={togglePush} />
+        {pushOn && (
+          <Row icon={<Send size={15} />} label="Send a test notification"
+            subLabel="Arrives on this device in seconds"
+            onClick={sendTestPush}
+            loading={sendingTest === ('push' as any)} />
+        )}
       </Section>
 
       {/* PREFERENCES */}
       <Section title="Preferences">
-        <Row icon={<Moon size={15} />} label="Theme"     value="Dark"            rightDim />
-        <Row icon={<Globe size={15} />} label="Timezone" value={profile?.timezone ?? 'Auto'} rightDim />
+        <ToggleRow icon={<span className="text-sm leading-none">🕌</span>} label="Faith features (Deen)"
+          subLabel="Daily prayers, Qur'an & dhikr tracking and prayer scoring"
+          value={deenOn}
+          saving={savingPref === 'deen_enabled'}
+          onToggle={toggleDeen} />
+        <div className="px-4 py-3.5">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-8 w-8 rounded-xl bg-white/5 border border-white/8 flex items-center justify-center text-muted-foreground">
+              <Moon size={15} />
+            </div>
+            <p className="text-sm font-medium text-foreground">Theme</p>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {([
+              { id: 'midnight', label: 'Midnight', swatch: 'linear-gradient(135deg,#0B1A2B,#16314a)' },
+              { id: 'obsidian', label: 'Obsidian', swatch: 'linear-gradient(135deg,#090b10,#161a23)' },
+              { id: 'ocean',    label: 'Ocean',    swatch: 'linear-gradient(135deg,#0a1d24,#11313c)' },
+            ]).map((t) => (
+              <button key={t.id} onClick={() => applyTheme(t.id)}
+                className={cn('rounded-xl border p-2 transition-all active:scale-95',
+                  theme === t.id ? 'border-gold/60 bg-gold/10' : 'border-white/10 hover:border-white/25'
+                )}>
+                <div className="h-9 w-full rounded-lg border border-white/10" style={{ background: t.swatch }} />
+                <p className={cn('mt-1.5 text-[10px] font-semibold',
+                  theme === t.id ? 'text-gold' : 'text-muted-foreground')}>{t.label}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+        <Row icon={<Globe size={15} />} label="Timezone"
+          subLabel="Detected from your device automatically"
+          value={detectedTz} rightDim />
       </Section>
 
       {/* ABOUT */}
@@ -560,7 +689,7 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
       </div>
 
       <p className="text-center text-[10px] text-muted-foreground/60 pt-2">
-        NAFS · v0.1.0 · built for self-accountability
+        Ascend · v0.1.0 · built for self-accountability
       </p>
 
       {/* Delete account confirmation */}
@@ -840,58 +969,70 @@ function BadgesGrid({ earned, onSelect }: {
   earned: Record<string, string>
   onSelect: (b: BadgeDef) => void
 }) {
-  const groups = badgesByFeature()
-  const FEATURE_LABEL: Record<BadgeFeature, { emoji: string; label: string }> = {
-    overall:    { emoji: '✨', label: 'Overall' },
-    deen:       { emoji: '🕌', label: 'Deen' },
-    habits:     { emoji: '🔄', label: 'Habits' },
-    tasks:      { emoji: '✅', label: 'Tasks' },
-    challenges: { emoji: '🎯', label: 'Challenges' },
-    health:     { emoji: '❤️', label: 'Health' },
-    goals:      { emoji: '🏆', label: 'Goals' },
-  }
-  const order: BadgeFeature[] = ['overall', 'deen', 'habits', 'tasks', 'challenges', 'health', 'goals']
+  const [showLocked, setShowLocked] = useState(false)
+  const earnedList = BADGES.filter((b) => earned[b.id])
+  const lockedList = BADGES.filter((b) => !earned[b.id])
 
   return (
-    <div className="space-y-3">
-      {order.map((f) => {
-        const list = groups[f]
-        if (list.length === 0) return null
-        const earnedInGroup = list.filter((b) => earned[b.id]).length
-        return (
-          <div key={f} className="nafs-card p-3">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-foreground">
-                {FEATURE_LABEL[f].emoji} {FEATURE_LABEL[f].label}
-              </p>
-              <span className="text-[10px] tabular-nums text-muted-foreground">
-                {earnedInGroup} / {list.length}
-              </span>
-            </div>
-            <div className="grid grid-cols-4 gap-2">
-              {list.map((b) => {
-                const isEarned = !!earned[b.id]
-                const tone = TIER_COLORS[b.tier]
-                return (
-                  <button key={b.id} onClick={() => onSelect(b)}
-                    className={cn(
-                      'aspect-square rounded-xl border flex flex-col items-center justify-center gap-0.5 transition-all active:scale-90',
-                      isEarned
-                        ? `${tone.bg} ${tone.ring} ring-2 hover:brightness-125`
-                        : 'border-white/10 bg-white/3 opacity-30 grayscale hover:opacity-50'
-                    )}
-                    title={`${b.name}${isEarned ? '' : ' (locked)'}`}>
-                    <span className="text-2xl leading-none">{b.emoji}</span>
-                    <span className={cn('text-[8px] uppercase tracking-wider font-bold leading-none',
-                      isEarned ? tone.text : 'text-muted-foreground'
-                    )}>{tone.label}</span>
-                  </button>
-                )
-              })}
-            </div>
+    <div className="nafs-card overflow-hidden">
+      {/* Earned shelf */}
+      {earnedList.length === 0 ? (
+        <div className="px-4 py-6 text-center">
+          <p className="text-3xl">🏅</p>
+          <p className="mt-2 text-sm font-semibold text-foreground">No badges yet</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Your first one is a single log away — they unlock as you show up.
+          </p>
+        </div>
+      ) : (
+        <div className="-mx-0 overflow-x-auto scrollbar-hide">
+          <div className="flex gap-2.5 px-4 py-4 min-w-max">
+            {earnedList.map((b) => {
+              const tone = TIER_COLORS[b.tier]
+              return (
+                <button key={b.id} onClick={() => onSelect(b)}
+                  className={cn(
+                    'w-[76px] shrink-0 rounded-2xl border px-2 py-3 text-center transition-all active:scale-90',
+                    tone.bg, 'border-white/10 hover:brightness-125'
+                  )}>
+                  <span className="block text-[26px] leading-none drop-shadow">{b.emoji}</span>
+                  <span className="mt-1.5 block text-[9px] font-semibold text-foreground leading-tight line-clamp-2">
+                    {b.name}
+                  </span>
+                  <span className={cn('mt-1 inline-block rounded-full px-1.5 py-px text-[7px] font-bold uppercase tracking-wider', tone.text, 'bg-black/25')}>
+                    {tone.label}
+                  </span>
+                </button>
+              )
+            })}
           </div>
-        )
-      })}
+        </div>
+      )}
+
+      {/* Locked — collapsed by default */}
+      {lockedList.length > 0 && (
+        <div className="border-t border-white/5">
+          <button onClick={() => setShowLocked(!showLocked)}
+            className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <Lock size={11} /> {lockedList.length} locked
+            </span>
+            <ChevronRight size={13}
+              className={cn('text-muted-foreground/60 transition-transform', showLocked && 'rotate-90')} />
+          </button>
+          {showLocked && (
+            <div className="px-4 pb-4 flex flex-wrap gap-2">
+              {lockedList.map((b) => (
+                <button key={b.id} onClick={() => onSelect(b)} title={b.name}
+                  className="h-11 w-11 rounded-xl border border-white/8 bg-white/[0.03] flex items-center justify-center
+                             text-lg opacity-40 grayscale hover:opacity-80 hover:grayscale-0 transition-all active:scale-90">
+                  {b.emoji}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

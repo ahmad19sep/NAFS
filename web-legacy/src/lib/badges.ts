@@ -85,7 +85,7 @@ export const BADGES: BadgeDef[] = [
   { id: 'health-10k',      name: 'Step Master',       description: 'Hit 10K steps in a single day',           emoji: '🚶', feature: 'health',     tier: 'silver'   },
 
   // ---------- Overall ----------
-  { id: 'overall-day-1',   name: 'Welcome',           description: 'Joined NAFS',                             emoji: '🌅', feature: 'overall',    tier: 'bronze'   },
+  { id: 'overall-day-1',   name: 'Welcome',           description: 'Joined Ascend',                             emoji: '🌅', feature: 'overall',    tier: 'bronze'   },
   { id: 'overall-week-1',  name: '1-Week Warrior',    description: 'Active for 7+ days since signup',         emoji: '📅', feature: 'overall',    tier: 'silver'   },
   { id: 'overall-month-1', name: 'Monthly Member',    description: '30+ days since you joined',               emoji: '🗓️', feature: 'overall',    tier: 'gold'     },
   { id: 'overall-king',    name: 'Consistency King',  description: '7 straight days at 80%+ score',           emoji: '✨', feature: 'overall',    tier: 'platinum' },
