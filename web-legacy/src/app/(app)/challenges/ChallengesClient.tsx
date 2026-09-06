@@ -3,7 +3,7 @@
 import { useState, useRef, useMemo, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Plus, Camera, Trash2, Sparkles, Quote, RefreshCw, X } from 'lucide-react'
+import { Plus, Camera, Trash2, Pencil, Sparkles, Quote, RefreshCw, X } from 'lucide-react'
 import { cn, todayString } from '@/lib/utils'
 import HistoryTeaserCard from '@/components/HistoryTeaserCard'
 import { computeChallengesHistory } from '@/lib/history'
@@ -74,6 +74,7 @@ export default function ChallengesClient({ challenges, userId }: Props) {
 
   // Create form state
   const [showCreate, setShowCreate] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [emoji, setEmoji] = useState('🎯')
   const [reason, setReason] = useState('')
@@ -127,6 +128,61 @@ export default function ChallengesClient({ challenges, userId }: Props) {
     if (f === 'yearly')  setDuration(365)  // 1 year
   }
 
+  function resetForm() {
+    setEditingId(null)
+    setTitle(''); setReason(''); setEmoji('🎯'); setRequiresPhoto(false)
+    setFrequency('daily'); setDuration(30)
+    setCreateError(null)
+  }
+  function closeForm() {
+    setShowCreate(false)
+    resetForm()
+  }
+  function openCreate() {
+    resetForm()
+    setShowCreate(true)
+  }
+  function openEdit(c: Challenge) {
+    setEditingId(c.id)
+    setTitle(c.title)
+    setEmoji(c.emoji)
+    setReason(c.description ?? '')
+    setFrequency(c.frequency)
+    setDuration(c.duration_days)
+    setRequiresPhoto(c.requires_photo)
+    setCreateError(null)
+    setShowCreate(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // Edits change the challenge definition only — streak and check-ins are kept.
+  async function saveEdit() {
+    if (!title.trim()) { setCreateError('Title required'); return }
+    if (!reason.trim()) { setCreateError('Please write your reason'); return }
+    setCreating(true); setCreateError(null)
+
+    const res = await fetch(`/api/challenges/${editingId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: title.trim(),
+        emoji,
+        description: reason.trim(),
+        frequency,
+        duration_days: duration,
+        requires_photo: requiresPhoto,
+      }),
+    })
+    setCreating(false)
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}))
+      setCreateError(b?.error || `Save failed (${res.status})`)
+      return
+    }
+    closeForm()
+    router.refresh()
+  }
+
   async function createChallenge() {
     if (!title.trim()) { setCreateError('Title required'); return }
     if (!reason.trim()) { setCreateError('Please write your reason'); return }
@@ -160,9 +216,7 @@ export default function ChallengesClient({ challenges, userId }: Props) {
       }).then(() => router.refresh()).catch(() => {})
     }
 
-    setShowCreate(false)
-    setTitle(''); setReason(''); setEmoji('🎯'); setRequiresPhoto(false)
-    setFrequency('daily'); setDuration(30)
+    closeForm()
     router.refresh()
   }
 
@@ -285,7 +339,7 @@ export default function ChallengesClient({ challenges, userId }: Props) {
         </p>
         <div className="flex items-baseline justify-between mt-0.5">
           <h1 className="text-2xl font-bold text-foreground">Challenges</h1>
-          <button onClick={() => setShowCreate(!showCreate)}
+          <button onClick={() => (showCreate ? closeForm() : openCreate())}
             className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2 text-sm font-semibold
                        text-foreground hover:bg-white/10 hover:border-gold/40 transition-all active:scale-95">
             <Plus size={14} className="text-gold" /> New
@@ -329,7 +383,12 @@ export default function ChallengesClient({ challenges, userId }: Props) {
       {/* Create form */}
       {showCreate && (
         <div className="nafs-card p-5 space-y-4 animate-slide-up">
-          <p className="font-semibold text-foreground">New challenge</p>
+          <p className="font-semibold text-foreground">{editingId ? 'Edit challenge' : 'New challenge'}</p>
+          {editingId && (
+            <p className="-mt-2 text-[11px] text-muted-foreground">
+              Your streak and past check-ins are kept.
+            </p>
+          )}
 
           {/* Emoji + Title */}
           <div className="flex gap-3">
@@ -406,14 +465,17 @@ export default function ChallengesClient({ challenges, userId }: Props) {
           )}
 
           <div className="flex gap-2">
-            <button onClick={() => { setShowCreate(false); setCreateError(null) }}
+            <button onClick={closeForm}
               className="flex-1 rounded-xl border border-white/10 py-3 text-sm text-muted-foreground hover:bg-white/5">
               Cancel
             </button>
-            <button onClick={createChallenge} disabled={!title.trim() || !reason.trim() || creating}
+            <button onClick={editingId ? saveEdit : createChallenge}
+              disabled={!title.trim() || !reason.trim() || creating}
               className="flex-[2] rounded-xl bg-primary py-3 text-sm font-semibold text-white
                          hover:bg-teal-light transition-all disabled:opacity-40 active:scale-95">
-              {creating ? 'Starting…' : 'Start challenge'}
+              {creating
+                ? (editingId ? 'Saving…' : 'Starting…')
+                : (editingId ? 'Save changes' : 'Start challenge')}
             </button>
           </div>
         </div>
@@ -436,6 +498,7 @@ export default function ChallengesClient({ challenges, userId }: Props) {
             photoForChallenge={photoForChallenge}
             uploadingPhoto={uploadingPhoto}
             onCheckIn={(done) => checkIn(c, done)}
+            onEdit={() => openEdit(c)}
             onDelete={() => deleteChallenge(c.id)}
             onCapturePhoto={() => { setCheckingIn(c.id); fileRef.current?.click() }}
             onDismissAi={() => dismissChallengeStarter(c.id)}
@@ -478,7 +541,7 @@ export default function ChallengesClient({ challenges, userId }: Props) {
 // ============================================================
 function ChallengeCard({
   challenge: c, today, checkingIn, photoForChallenge, uploadingPhoto,
-  onCheckIn, onDelete, onCapturePhoto, onDismissAi, onGenerateAi, generatingAi, onAddSupportingHabit,
+  onCheckIn, onEdit, onDelete, onCapturePhoto, onDismissAi, onGenerateAi, generatingAi, onAddSupportingHabit,
 }: {
   challenge: Challenge
   today: string
@@ -486,6 +549,7 @@ function ChallengeCard({
   photoForChallenge: string | null
   uploadingPhoto: boolean
   onCheckIn: (done: boolean) => void
+  onEdit: () => void
   onDelete: () => void
   onCapturePhoto: () => void
   onDismissAi: () => void
@@ -526,10 +590,16 @@ function ChallengeCard({
           {c.current_streak > 0 ? (
             <p className="text-base font-bold text-orange-400">🔥 {c.current_streak}</p>
           ) : null}
-          <button onClick={onDelete}
-            className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors">
-            <Trash2 size={11} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button onClick={onEdit} aria-label={`Edit ${c.title}`}
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-gold hover:bg-gold/10 transition-colors">
+              <Pencil size={11} />
+            </button>
+            <button onClick={onDelete} aria-label={`Delete ${c.title}`}
+              className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+              <Trash2 size={11} />
+            </button>
+          </div>
         </div>
       </div>
 

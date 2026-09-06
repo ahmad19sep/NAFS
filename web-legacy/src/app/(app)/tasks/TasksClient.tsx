@@ -36,7 +36,8 @@ export default function TasksClient({ tasks, today }: Props) {
   const [tab, setTab] = useState<TaskType>('daily')
   const [showCreate, setShowCreate] = useState(false)
 
-  // Create form state
+  // Create / edit form state — the same form serves both; editingId decides which.
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [note, setNote] = useState('')
   const [priority, setPriority] = useState<TaskPriority>('medium')
@@ -86,15 +87,46 @@ export default function TasksClient({ tasks, today }: Props) {
     setTab(t)
   }
 
+  // ---- form helpers ----
+  function resetForm() {
+    setEditingId(null)
+    setTitle(''); setNote(''); setPriority('medium'); setDueTime('')
+    setFormError(null)
+  }
+  function closeForm() {
+    setShowCreate(false)
+    resetForm()
+  }
+  function openCreate() {
+    resetForm()
+    setShowCreate(true)
+  }
+  function openEdit(t: Task) {
+    setEditingId(t.id)
+    setTitle(t.title)
+    setNote(t.note ?? '')
+    setPriority(t.priority)
+    setDueTime(t.due_time ? t.due_time.slice(0, 5) : '')
+    setFormError(null)
+    setShowCreate(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   // ---- API actions ----
-  async function createTask() {
+  // A task's type sets its period anchor, so editing changes content only.
+  async function saveTask() {
     if (!title.trim()) return
     setSaving(true); setFormError(null)
-    const res = await fetch('/api/tasks', {
-      method: 'POST',
+
+    const isEdit = !!editingId
+    const res = await fetch(isEdit ? `/api/tasks/${editingId}` : '/api/tasks', {
+      method: isEdit ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title, note, priority, type: tab,
+        title: title.trim(),
+        note: note.trim() || null,
+        priority,
+        ...(isEdit ? {} : { type: tab }),
         due_time: tab === 'daily' && dueTime ? dueTime : null,
       }),
     })
@@ -104,8 +136,7 @@ export default function TasksClient({ tasks, today }: Props) {
       setFormError(b?.error || `Save failed (${res.status})`)
       return
     }
-    setTitle(''); setNote(''); setPriority('medium'); setDueTime('')
-    setShowCreate(false)
+    closeForm()
     router.refresh()
   }
 
@@ -143,7 +174,7 @@ export default function TasksClient({ tasks, today }: Props) {
         </p>
         <div className="flex items-baseline justify-between mt-0.5">
           <h1 className="text-2xl font-bold text-foreground">Tasks</h1>
-          <button onClick={() => setShowCreate(!showCreate)}
+          <button onClick={() => (showCreate ? closeForm() : openCreate())}
             className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2 text-sm font-semibold
                        text-foreground hover:bg-white/10 hover:border-gold/40 transition-all active:scale-95">
             <Plus size={14} className="text-gold" /> New
@@ -191,11 +222,13 @@ export default function TasksClient({ tasks, today }: Props) {
       {showCreate && (
         <div className="nafs-card p-4 space-y-3 animate-slide-up">
           <p className="text-sm font-semibold text-foreground">
-            New {TABS.find((t) => t.key === tab)!.label.toLowerCase()} task
+            {editingId
+              ? 'Edit task'
+              : `New ${TABS.find((t) => t.key === tab)!.label.toLowerCase()} task`}
           </p>
           <input value={title} onChange={(e) => setTitle(e.target.value)}
             placeholder="What needs doing?" className="log-input" autoFocus
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && title.trim()) createTask() }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && title.trim()) saveTask() }}
           />
           <input value={note} onChange={(e) => setNote(e.target.value)}
             placeholder="Note (optional)" className="log-input text-sm" />
@@ -235,14 +268,14 @@ export default function TasksClient({ tasks, today }: Props) {
             <p className="text-xs text-red-400">{formError}</p>
           )}
           <div className="flex gap-2">
-            <button onClick={() => { setShowCreate(false); setTitle(''); setNote(''); setFormError(null) }}
+            <button onClick={closeForm}
               className="flex-1 rounded-xl border border-white/10 py-2.5 text-sm text-muted-foreground hover:bg-white/5">
               Cancel
             </button>
-            <button onClick={createTask} disabled={!title.trim() || saving}
+            <button onClick={saveTask} disabled={!title.trim() || saving}
               className="flex-[2] rounded-xl bg-primary py-2.5 text-sm font-semibold text-white
                          hover:bg-teal-light transition-all disabled:opacity-40 active:scale-95">
-              {saving ? 'Saving…' : 'Create task'}
+              {saving ? 'Saving…' : editingId ? 'Save changes' : 'Create task'}
             </button>
           </div>
         </div>
@@ -262,7 +295,8 @@ export default function TasksClient({ tasks, today }: Props) {
         <div className="space-y-2">
           <p className="section-header">{periodLabel(tab, currentAnchor, today)}</p>
           {currentTasks.map((t) => (
-            <TaskRow key={t.id} task={t} today={today} onToggle={() => toggleTask(t.id)} onDelete={() => deleteTask(t.id)} />
+            <TaskRow key={t.id} task={t} today={today} onToggle={() => toggleTask(t.id)}
+              onEdit={() => openEdit(t)} onDelete={() => deleteTask(t.id)} />
           ))}
         </div>
       )}
@@ -274,7 +308,8 @@ export default function TasksClient({ tasks, today }: Props) {
             {periodLabel(tab, prevAnchor, today)} · grace window
           </p>
           {graceTasks.map((t) => (
-            <TaskRow key={t.id} task={t} today={today} onToggle={() => toggleTask(t.id)} onDelete={() => deleteTask(t.id)} />
+            <TaskRow key={t.id} task={t} today={today} onToggle={() => toggleTask(t.id)}
+              onEdit={() => openEdit(t)} onDelete={() => deleteTask(t.id)} />
           ))}
         </div>
       )}
@@ -299,9 +334,9 @@ export default function TasksClient({ tasks, today }: Props) {
 // ============================================================
 // Row
 // ============================================================
-function TaskRow({ task, today, onToggle, onDelete }: {
+function TaskRow({ task, today, onToggle, onEdit, onDelete }: {
   task: Task; today: string
-  onToggle: () => void; onDelete: () => void
+  onToggle: () => void; onEdit: () => void; onDelete: () => void
 }) {
   const missed = isMissed(task, today)
   const done = task.status === 'completed'
@@ -383,11 +418,17 @@ function TaskRow({ task, today, onToggle, onDelete }: {
         </div>
       </div>
 
-      {/* Delete */}
-      <button onClick={onDelete}
-        className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors">
-        <Trash2 size={12} />
-      </button>
+      {/* Edit / delete */}
+      <div className="flex flex-col gap-1 flex-shrink-0">
+        <button onClick={onEdit} aria-label={`Edit ${task.title}`}
+          className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-gold hover:bg-gold/10 transition-colors">
+          <Pencil size={12} />
+        </button>
+        <button onClick={onDelete} aria-label={`Delete ${task.title}`}
+          className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+          <Trash2 size={12} />
+        </button>
+      </div>
     </div>
   )
 }

@@ -9,10 +9,11 @@ import { cn, todayString } from '@/lib/utils'
 import { Droplet, Footprints, Moon, Sun, Dumbbell, Scale, Ruler, Plus, Minus, X, Trash2, Sparkles, RefreshCw } from 'lucide-react'
 import HistoryTeaserCard from '@/components/HistoryTeaserCard'
 import { computeHealthHistory } from '@/lib/history'
-import { computeBMI, sleepHoursBetween } from '@/lib/bmi'
+import { computeBMI } from '@/lib/bmi'
 import {
-  type CustomMetric, type CustomMetricType, type ExtrasValues,
+  type CustomMetric, type CustomMetricType, type ExtrasValues, type SleepSession,
   makeMetricId, isMetricDone,
+  makeSleepSessionId, sleepSessionMinutes, totalSleepMinutes, formatDuration,
 } from '@/lib/health'
 
 // ============================================================
@@ -30,8 +31,6 @@ export default function HealthPage() {
   // Profile (one-time)
   const [heightCm, setHeightCm] = useState<number | null>(null)
   const [profileWeight, setProfileWeight] = useState<number | null>(null)
-  const [usualSleep, setUsualSleep] = useState<string>('')
-  const [usualWake, setUsualWake] = useState<string>('')
   const [extrasConfig, setExtrasConfig] = useState<CustomMetric[]>([])
   const [hiddenDefaults, setHiddenDefaults] = useState<string[]>([])
 
@@ -43,13 +42,12 @@ export default function HealthPage() {
   const [weight, setWeight] = useState('')
   const [notes, setNotes] = useState('')
   const [extrasValues, setExtrasValues] = useState<ExtrasValues>({})
+  const [sleepSessions, setSleepSessions] = useState<SleepSession[]>([])
 
   // Setup modal
   const [showSetup, setShowSetup] = useState(false)
   const [setupHeight, setSetupHeight] = useState('')
   const [setupWeight, setSetupWeight] = useState('')
-  const [setupSleep, setSetupSleep] = useState('22:30')
-  const [setupWake, setSetupWake] = useState('06:30')
   const [setupSaving, setSetupSaving] = useState(false)
   const [setupError, setSetupError] = useState<string | null>(null)
 
@@ -99,8 +97,6 @@ export default function HealthPage() {
 
       setHeightCm(profile?.height_cm ?? null)
       setProfileWeight(profile?.weight_kg ?? null)
-      setUsualSleep(profile?.usual_sleep_time?.slice(0, 5) ?? '')
-      setUsualWake(profile?.usual_wake_time?.slice(0, 5) ?? '')
       setExtrasConfig((profile?.health_extras_config ?? []) as CustomMetric[])
       setHiddenDefaults((profile?.health_defaults_hidden ?? []) as string[])
       setAiRec((profile?.ai_health_recommendation ?? null) as AiHealthRec | null)
@@ -112,8 +108,6 @@ export default function HealthPage() {
         setShowSetup(true)
         setSetupHeight(String(profile?.height_cm ?? ''))
         setSetupWeight(String(profile?.weight_kg ?? ''))
-        setSetupSleep(profile?.usual_sleep_time?.slice(0, 5) ?? '22:30')
-        setSetupWake(profile?.usual_wake_time?.slice(0, 5) ?? '06:30')
       }
 
       if (todayLog) {
@@ -124,6 +118,23 @@ export default function HealthPage() {
         setWeight(String(todayLog.weight_kg ?? ''))
         setNotes(todayLog.notes ?? '')
         setExtrasValues((todayLog.extras ?? {}) as ExtrasValues)
+
+        // Sessions win; fall back to the old single bedtime/wake pair on rows
+        // saved before the migration.
+        const stored = (todayLog.sleep_sessions ?? []) as SleepSession[]
+        if (Array.isArray(stored) && stored.length) {
+          setSleepSessions(stored.map((s) => ({
+            id: s.id ?? makeSleepSessionId(),
+            start: (s.start ?? '').slice(0, 5),
+            end: (s.end ?? '').slice(0, 5),
+          })))
+        } else if (todayLog.sleep_time && todayLog.wake_time) {
+          setSleepSessions([{
+            id: makeSleepSessionId(),
+            start: todayLog.sleep_time.slice(0, 5),
+            end: todayLog.wake_time.slice(0, 5),
+          }])
+        }
       }
       setHistory30(rangeLogs ?? [])
       setLoading(false)
@@ -136,8 +147,18 @@ export default function HealthPage() {
     () => (heightCm && profileWeight ? computeBMI(profileWeight, heightCm) : null),
     [heightCm, profileWeight]
   )
-  const usualSleepHrs = useMemo(() => sleepHoursBetween(usualSleep, usualWake), [usualSleep, usualWake])
+  const sleptMins = useMemo(() => totalSleepMinutes(sleepSessions), [sleepSessions])
   const history = useMemo(() => computeHealthHistory(history30, today), [history30, today])
+
+  function addSleepSession() {
+    setSleepSessions((prev) => [...prev, { id: makeSleepSessionId(), start: '', end: '' }])
+  }
+  function updateSleepSession(id: string, patch: Partial<SleepSession>) {
+    setSleepSessions((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)))
+  }
+  function removeSleepSession(id: string) {
+    setSleepSessions((prev) => prev.filter((s) => s.id !== id))
+  }
 
   // ---- actions ----
   async function saveSetup() {
@@ -151,24 +172,9 @@ export default function HealthPage() {
     const { data: { user }, error: authErr } = await supabase.auth.getUser()
     if (authErr || !user) { setSetupSaving(false); setSetupError('Not signed in'); return }
 
-    // Try the full update first (height + weight + sleep). If sleep columns
-    // don't exist yet (migration not run), retry with just height + weight.
-    const fullPayload: Record<string, any> = { height_cm: h, weight_kg: w }
-    if (setupSleep) fullPayload.usual_sleep_time = setupSleep
-    if (setupWake)  fullPayload.usual_wake_time  = setupWake
-
     let { data: updated, error } = await supabase
-      .from('users').update(fullPayload).eq('id', user.id)
+      .from('users').update({ height_cm: h, weight_kg: w }).eq('id', user.id)
       .select('height_cm, weight_kg').maybeSingle()
-
-    // Fallback: missing column → retry without sleep fields
-    if (error && /column .* does not exist/i.test(error.message)) {
-      const retry = await supabase
-        .from('users').update({ height_cm: h, weight_kg: w }).eq('id', user.id)
-        .select('height_cm, weight_kg').maybeSingle()
-      updated = retry.data
-      error   = retry.error
-    }
 
     // No row matched → the users profile row is missing (e.g. signup ran
     // before migrations). Create it now instead of failing.
@@ -196,8 +202,6 @@ export default function HealthPage() {
 
     setHeightCm(updated.height_cm)
     setProfileWeight(updated.weight_kg)
-    if (setupSleep) setUsualSleep(setupSleep)
-    if (setupWake)  setUsualWake(setupWake)
     setShowSetup(false)
 
     // Fire-and-forget AI recommendation if one doesn't exist yet
@@ -321,6 +325,7 @@ export default function HealthPage() {
 
   // Built-in metrics available in the "+ Add metric" picker when not active
   const BUILTIN_METRICS = [
+    { id: 'sleep',    name: 'Sleep',    icon: Moon,       tint: 'text-indigo-400' },
     { id: 'water',    name: 'Water',    icon: Droplet,    tint: 'text-blue-400' },
     { id: 'steps',    name: 'Steps',    icon: Footprints, tint: 'text-emerald-400' },
     { id: 'exercise', name: 'Exercise', icon: Dumbbell,   tint: 'text-pink-400' },
@@ -334,6 +339,11 @@ export default function HealthPage() {
     setSaving(true)
     const dailyWeightNum = weight ? Number(weight) : null
 
+    // Only complete periods count; sleep_hours carries the summed total so the
+    // dashboard, reports and AI prompts need no changes.
+    const sessions = sleepSessions.filter((s) => sleepSessionMinutes(s.start, s.end) != null)
+    const totalMins = totalSleepMinutes(sessions)
+
     const { error: logErr } = await supabase.from('health_logs').upsert({
       user_id: userId, date: today,
       water_glasses: water,
@@ -343,10 +353,20 @@ export default function HealthPage() {
       weight_kg: dailyWeightNum,
       notes: notes || null,
       extras: extrasValues,
+      sleep_sessions: sessions,
+      sleep_hours: sessions.length ? Math.round(totalMins / 6) / 10 : null,
+      sleep_time: sessions[0]?.start ?? null,
+      wake_time: sessions[sessions.length - 1]?.end ?? null,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id,date' })
 
-    if (!logErr && dailyWeightNum) {
+    if (logErr) {
+      setSaving(false)
+      alert(`Could not save: ${logErr.message}`)
+      return
+    }
+
+    if (dailyWeightNum) {
       await supabase.from('users').update({ weight_kg: dailyWeightNum }).eq('id', userId)
       setProfileWeight(dailyWeightNum)
     }
@@ -369,8 +389,6 @@ export default function HealthPage() {
       const h = Number(setupHeight), w = Number(setupWeight)
       return h && w ? computeBMI(w, h) : null
     })()
-    const previewSleep = sleepHoursBetween(setupSleep, setupWake)
-
     return (
       <div className="mx-auto max-w-md px-4 pb-8 pt-5">
         <div className="text-center mb-6">
@@ -379,7 +397,7 @@ export default function HealthPage() {
           </div>
           <h1 className="text-xl font-bold text-foreground">Set up your health profile</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            We'll ask once — these power your BMI banner and sleep insights.
+            We&apos;ll ask once — these power your BMI banner and health insights.
           </p>
         </div>
 
@@ -425,36 +443,6 @@ export default function HealthPage() {
             </div>
           )}
 
-          {/* Sleep schedule (optional) */}
-          <div>
-            <label className="section-header mb-2 block flex items-center gap-1.5">
-              <Moon size={11} /> Usual sleep schedule <span className="text-[10px] text-muted-foreground/70 normal-case tracking-normal font-normal">— optional</span>
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1 block flex items-center gap-1">
-                  <Moon size={10} /> Slept at
-                </label>
-                <input type="time" value={setupSleep} onChange={(e) => setSetupSleep(e.target.value)}
-                  className="log-input text-center text-base font-semibold" />
-              </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1 block flex items-center gap-1">
-                  <Sun size={10} /> Woke at
-                </label>
-                <input type="time" value={setupWake} onChange={(e) => setSetupWake(e.target.value)}
-                  className="log-input text-center text-base font-semibold" />
-              </div>
-            </div>
-            {previewSleep !== null && (
-              <p className={cn('text-[11px] mt-1.5 text-center',
-                previewSleep >= 7 && previewSleep <= 9 ? 'text-emerald-400' : 'text-orange-400'
-              )}>
-                ≈ {previewSleep} hours · {previewSleep >= 7 && previewSleep <= 9 ? 'healthy range' : 'consider 7–9 hrs'}
-              </p>
-            )}
-          </div>
-
           {setupError && (
             <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
               <p className="font-semibold mb-1">Couldn't save</p>
@@ -479,9 +467,9 @@ export default function HealthPage() {
   // ============================================================
   // Daily entry view
   // ============================================================
-  const visibleDefaultIds = ['water', 'steps', 'exercise'].filter((id) => !isHidden(id))
+  const visibleDefaultIds = ['sleep', 'water', 'steps', 'exercise'].filter((id) => !isHidden(id))
   const defaultDone: Record<string, boolean> = {
-    water: water > 0, steps: !!steps, exercise,
+    sleep: sleptMins > 0, water: water > 0, steps: !!steps, exercise,
   }
   const tracked = [
     ...visibleDefaultIds.map((id) => defaultDone[id]),
@@ -519,7 +507,7 @@ export default function HealthPage() {
           <div className="flex-1 min-w-0">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
               BMI · {profileWeight}kg / {heightCm}cm
-              {usualSleepHrs !== null && ` · sleeps ~${usualSleepHrs}h`}
+              {sleptMins > 0 && ` · slept ${formatDuration(sleptMins)}`}
             </p>
             <div className="flex items-baseline gap-2">
               <p className={cn('text-3xl font-bold tabular-nums',
@@ -536,8 +524,6 @@ export default function HealthPage() {
             onClick={() => {
               setSetupHeight(String(heightCm ?? ''))
               setSetupWeight(String(profileWeight ?? ''))
-              setSetupSleep(usualSleep || '22:30')
-              setSetupWake(usualWake || '06:30')
               setShowSetup(true)
             }}
             className="h-8 w-8 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-muted-foreground hover:bg-white/10 transition-colors flex-shrink-0">
@@ -570,6 +556,102 @@ export default function HealthPage() {
       />
 
       {/* ---------- Default daily metrics ---------- */}
+
+      {/* Sleep — one card per period, so a night plus naps all count */}
+      {!isHidden('sleep') && (() => {
+        const hrs = sleptMins / 60
+        const inRange = hrs >= 7 && hrs <= 9
+        return (
+          <div className="nafs-card p-5">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-9 w-9 rounded-xl border border-indigo-400/20 bg-indigo-500/10 flex items-center justify-center">
+                <Moon size={16} className={inRange ? 'text-emerald-400' : 'text-indigo-400'} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[15px] font-semibold text-foreground leading-tight">Sleep</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {sleepSessions.length > 1
+                    ? `${sleepSessions.length} periods · goal 7–9 hrs`
+                    : 'night sleep + naps · goal 7–9 hrs'}
+                </p>
+              </div>
+              <p className="tabular-nums">
+                <span className={cn('text-2xl font-semibold', inRange ? 'text-emerald-400' : 'text-foreground')}>
+                  {sleptMins > 0 ? formatDuration(sleptMins) : '—'}
+                </span>
+              </p>
+              <button onClick={() => hideDefault('sleep', 'Sleep')}
+                className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                aria-label="Hide sleep">
+                <Trash2 size={11} />
+              </button>
+            </div>
+
+            <div className="space-y-2.5">
+              {sleepSessions.map((s, i) => {
+                const mins = sleepSessionMinutes(s.start, s.end)
+                return (
+                  <div key={s.id} className="rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                        {i === 0 ? 'Sleep' : `Nap ${i}`}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <span className={cn('text-xs font-bold tabular-nums',
+                          mins == null ? 'text-muted-foreground/60' : 'text-indigo-300'
+                        )}>
+                          {mins == null ? 'set both times' : formatDuration(mins)}
+                        </span>
+                        <button onClick={() => removeSleepSession(s.id)}
+                          className="h-6 w-6 rounded-md flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                          aria-label={`Remove sleep period ${i + 1}`}>
+                          <X size={11} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1">
+                          <Moon size={10} /> Slept at
+                        </label>
+                        <input type="time" value={s.start}
+                          onChange={(e) => updateSleepSession(s.id, { start: e.target.value })}
+                          className="log-input text-center text-base font-semibold" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1">
+                          <Sun size={10} /> Woke at
+                        </label>
+                        <input type="time" value={s.end}
+                          onChange={(e) => updateSleepSession(s.id, { end: e.target.value })}
+                          className="log-input text-center text-base font-semibold" />
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <button onClick={addSleepSession}
+              className="mt-2.5 w-full rounded-xl border border-dashed border-white/15 py-3 text-xs font-semibold
+                         text-muted-foreground hover:text-indigo-300 hover:border-indigo-400/40 transition-all active:scale-95
+                         flex items-center justify-center gap-1.5">
+              <Plus size={13} />
+              {sleepSessions.length === 0 ? 'Add sleep' : 'Add another sleep or nap'}
+            </button>
+
+            {sleptMins > 0 && (
+              <p className={cn('mt-2.5 text-center text-[11px] font-medium',
+                inRange ? 'text-emerald-400' : 'text-orange-400'
+              )}>
+                {formatDuration(sleptMins)} total
+                {sleepSessions.length > 1 && ` across ${sleepSessions.length} periods`}
+                {inRange ? ' — healthy range ✓' : ' · aim for 7–9 hrs'}
+              </p>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Water */}
       {!isHidden('water') && (
