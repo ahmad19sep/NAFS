@@ -15,6 +15,8 @@ import {
   makeMetricId, isMetricDone,
   makeSleepSessionId, sleepSessionMinutes, totalSleepMinutes, formatDuration,
 } from '@/lib/health'
+import MealsCard from '@/components/MealsCard'
+import { type Meal, ensureCoreMeals, mealsEaten } from '@/lib/food'
 
 // ============================================================
 // Page
@@ -43,6 +45,7 @@ export default function HealthPage() {
   const [notes, setNotes] = useState('')
   const [extrasValues, setExtrasValues] = useState<ExtrasValues>({})
   const [sleepSessions, setSleepSessions] = useState<SleepSession[]>([])
+  const [meals, setMeals] = useState<Meal[]>(() => ensureCoreMeals([]))
 
   // Setup modal
   const [showSetup, setShowSetup] = useState(false)
@@ -135,6 +138,8 @@ export default function HealthPage() {
             end: todayLog.wake_time.slice(0, 5),
           }])
         }
+
+        setMeals(ensureCoreMeals(todayLog.meals as Meal[] | null))
       }
       setHistory30(rangeLogs ?? [])
       setLoading(false)
@@ -323,9 +328,9 @@ export default function HealthPage() {
   }
   const isHidden = (id: string) => hiddenDefaults.includes(id)
 
-  // Built-in metrics available in the "+ Add metric" picker when not active
+  // Optional built-ins — offered in "+ Add metric" once removed.
+  // Sleep and meals aren't here: they're permanent parts of the page.
   const BUILTIN_METRICS = [
-    { id: 'sleep',    name: 'Sleep',    icon: Moon,       tint: 'text-indigo-400' },
     { id: 'water',    name: 'Water',    icon: Droplet,    tint: 'text-blue-400' },
     { id: 'steps',    name: 'Steps',    icon: Footprints, tint: 'text-emerald-400' },
     { id: 'exercise', name: 'Exercise', icon: Dumbbell,   tint: 'text-pink-400' },
@@ -353,6 +358,7 @@ export default function HealthPage() {
       weight_kg: dailyWeightNum,
       notes: notes || null,
       extras: extrasValues,
+      meals,
       sleep_sessions: sessions,
       sleep_hours: sessions.length ? Math.round(totalMins / 6) / 10 : null,
       sleep_time: sessions[0]?.start ?? null,
@@ -467,15 +473,19 @@ export default function HealthPage() {
   // ============================================================
   // Daily entry view
   // ============================================================
-  const visibleDefaultIds = ['sleep', 'water', 'steps', 'exercise'].filter((id) => !isHidden(id))
-  const defaultDone: Record<string, boolean> = {
-    sleep: sleptMins > 0, water: water > 0, steps: !!steps, exercise,
+  // Sleep and meals always count; the rest only while the user keeps them.
+  const optionalIds = ['water', 'steps', 'exercise'].filter((id) => !isHidden(id))
+  const optionalDone: Record<string, boolean> = {
+    water: water > 0, steps: !!steps, exercise,
   }
+  const ateCount = mealsEaten(meals)
   const tracked = [
-    ...visibleDefaultIds.map((id) => defaultDone[id]),
+    sleptMins > 0,
+    ateCount > 0,
+    ...optionalIds.map((id) => optionalDone[id]),
     ...(extrasConfig.map((m) => isMetricDone(m, extrasValues[m.id]))),
   ].filter(Boolean).length
-  const total = visibleDefaultIds.length + extrasConfig.length
+  const total = 2 + optionalIds.length + extrasConfig.length
 
   return (
     <div className="mx-auto max-w-md px-4 space-y-5 pb-8">
@@ -555,10 +565,10 @@ export default function HealthPage() {
         accent="red"
       />
 
-      {/* ---------- Default daily metrics ---------- */}
+      {/* ---------- The two permanent metrics: sleep and meals ---------- */}
 
       {/* Sleep — one card per period, so a night plus naps all count */}
-      {!isHidden('sleep') && (() => {
+      {(() => {
         const hrs = sleptMins / 60
         const inRange = hrs >= 7 && hrs <= 9
         return (
@@ -580,11 +590,6 @@ export default function HealthPage() {
                   {sleptMins > 0 ? formatDuration(sleptMins) : '—'}
                 </span>
               </p>
-              <button onClick={() => hideDefault('sleep', 'Sleep')}
-                className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                aria-label="Hide sleep">
-                <Trash2 size={11} />
-              </button>
             </div>
 
             <div className="space-y-2.5">
@@ -652,6 +657,11 @@ export default function HealthPage() {
           </div>
         )
       })()}
+
+      {/* Meals — breakfast, lunch and dinner are permanent; extras optional */}
+      <MealsCard meals={meals} onChange={setMeals} />
+
+      {/* ---------- Optional metrics ---------- */}
 
       {/* Water */}
       {!isHidden('water') && (
