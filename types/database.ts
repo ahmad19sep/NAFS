@@ -128,6 +128,13 @@ export interface PrayerLogRow {
   created_at: string
 }
 
+// One sleep period. Times are "HH:MM"; an end at or before start crossed midnight.
+export interface SleepSession {
+  id: string
+  start: string
+  end: string
+}
+
 // health.sql columns
 export interface HealthLogRow {
   id: string
@@ -135,9 +142,10 @@ export interface HealthLogRow {
   date: string
   water_glasses: number
   steps: number | null
-  sleep_hours: number | null
-  sleep_time: string | null    // TIME e.g. "22:30:00"
-  wake_time: string | null
+  sleep_hours: number | null   // total across sleep_sessions
+  sleep_time: string | null    // TIME e.g. "22:30:00" — first session's start
+  wake_time: string | null     // last session's end
+  sleep_sessions: SleepSession[]
   exercise_done: boolean
   exercise_minutes: number | null
   weight_kg: number | null

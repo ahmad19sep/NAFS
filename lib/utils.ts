@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import type { SleepSession } from '@/types/database'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -78,6 +79,38 @@ export function getStreakEmoji(streak: number): string {
 export function getMoodEmoji(mood: number): string {
   const emojis = ['😞', '😟', '😐', '🙂', '😊', '😄', '🤩', '💪', '🔥', '⚡']
   return emojis[Math.min(Math.max(Math.round(mood) - 1, 0), 9)]
+}
+
+// Accepts "HH:MM" or the "HH:MM:SS" that Postgres TIME columns return.
+export function parseTimeToMinutes(time: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})/.exec(time.trim())
+  if (!m) return null
+  const hours = Number(m[1])
+  const mins = Number(m[2])
+  if (hours > 23 || mins > 59) return null
+  return hours * 60 + mins
+}
+
+// Null when either time is unparseable. An end at or before the start is read as
+// crossing midnight, so 23:00 → 06:30 is 7h 30m rather than negative.
+export function sleepSessionMinutes(start: string, end: string): number | null {
+  const from = parseTimeToMinutes(start)
+  const to = parseTimeToMinutes(end)
+  if (from == null || to == null) return null
+  if (to === from) return 0
+  return to > from ? to - from : to + 1440 - from
+}
+
+export function totalSleepMinutes(sessions: SleepSession[]): number {
+  return sessions.reduce((sum, s) => sum + (sleepSessionMinutes(s.start, s.end) ?? 0), 0)
+}
+
+export function formatDuration(mins: number): string {
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  if (!h) return `${m}m`
+  if (!m) return `${h}h`
+  return `${h}h ${m}m`
 }
 
 // Monday of the ISO week containing dateStr (YYYY-MM-DD)
