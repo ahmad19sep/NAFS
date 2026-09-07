@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { requireUser } from '@/lib/supabase/require-user'
 import HomeClient from './HomeClient'
 import { todayString } from '@/lib/utils'
+import { countDaysLogged } from '@/lib/levels'
 
 export default async function DashboardPage() {
   const supabase = createClient()
@@ -24,6 +25,12 @@ export default async function DashboardPage() {
     supabase.from('goals').select('id, title, emoji, deadline, progress_pct, goal_milestones(done)').eq('user_id', user.id),
     supabase.from('ai_reports').select('id, type, generated_at').eq('user_id', user.id).gte('generated_at', new Date(Date.now() - 7 * 86400000).toISOString()),
     supabase.from('health_logs').select('*').eq('user_id', user.id).gte('date', thirtyAgoStr),
+    // All-time, dates only, for the level. Appended so indices above stay put.
+    // Each is one row per day (habit_logs one per habit per day), so the
+    // payload is tiny even across years; dates are deduplicated in countDaysLogged.
+    supabase.from('health_logs').select('date').eq('user_id', user.id).limit(5000),
+    supabase.from('prayer_logs').select('date').eq('user_id', user.id).limit(5000),
+    supabase.from('habit_logs').select('date').eq('user_id', user.id).limit(5000),
   ])
   const data = (i: number): any =>
     results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
@@ -38,6 +45,10 @@ export default async function DashboardPage() {
   const goals               = data(7)
   const aiReports           = data(8)
   const healthLogs30        = data(9)
+
+  // Level: distinct days on which anything at all was recorded. Derived here
+  // on every load rather than stored, so it is always current.
+  const lifetimeDays = countDaysLogged(data(10), data(11), data(12))
 
   const todayPrayerLog = (prayerLogs30 ?? []).find((p: any) => p.date === today) ?? null
   const todayTasks = (tasks30 ?? []).filter((t: any) => t.period_date === today)
@@ -68,6 +79,7 @@ export default async function DashboardPage() {
       healthLog={todayHealth}
       healthLogs30={healthLogs30 ?? []}
       today={today}
+      lifetimeDays={lifetimeDays}
     />
   )
 }

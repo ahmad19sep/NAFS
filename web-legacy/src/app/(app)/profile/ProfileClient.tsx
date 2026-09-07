@@ -11,6 +11,7 @@ import {
   UserCircle2, Briefcase, MapPin, Cake, Heart, Send, Award, Lock, AlertTriangle, Printer,
 } from 'lucide-react'
 import { BADGES, TIER_COLORS, type BadgeDef } from '@/lib/badges'
+import { levelFor } from '@/lib/levels'
 import { enablePush, pushSupported } from '@/lib/push'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 
@@ -19,9 +20,12 @@ interface Props {
   profile: any
   dailyScores: DayScore[]
   earnedBadges: Record<string, string>  // badge_id → earned_at ISO
+  /** Distinct days with anything recorded, all time. Drives the level.
+   *  Named apart from the 30-day `daysLogged` the stats card computes below. */
+  lifetimeDays: number
 }
 
-export default function ProfileClient({ profile, dailyScores, earnedBadges }: Props) {
+export default function ProfileClient({ profile, dailyScores, earnedBadges, lifetimeDays }: Props) {
   const router = useRouter()
   const supabase = createClient()
 
@@ -561,6 +565,46 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
           value={aboutFilled ? 'Edit' : undefined}
           onClick={() => setAboutOpen(true)} />
       </Section>
+
+      {/* LEVEL — counts days recorded, so it only ever goes up. A level driven
+          by score would fall on a bad week, punishing you exactly when you're
+          already struggling. */}
+      {(() => {
+        const lvl = levelFor(lifetimeDays)
+        return (
+          <div className="nafs-card p-4">
+            <div className="flex items-baseline justify-between mb-1">
+              <p className="section-header">Level</p>
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {lvl.daysLogged} day{lvl.daysLogged === 1 ? '' : 's'} recorded
+              </span>
+            </div>
+            {lvl.current ? (
+              <p className="text-lg font-bold text-foreground">
+                <span className="text-gold">Level {lvl.current.number}</span>
+                <span className="text-muted-foreground font-normal"> · </span>
+                {lvl.current.name}
+              </p>
+            ) : (
+              <p className="text-lg font-bold text-foreground">Not started yet</p>
+            )}
+            {lvl.next ? (
+              <>
+                <div className="mt-2 h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+                  <div className="h-full rounded-full bg-gold transition-all"
+                    style={{ width: `${lvl.pctToNext}%` }} />
+                </div>
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  {lvl.daysToNext} more day{lvl.daysToNext === 1 ? '' : 's'} to{' '}
+                  <span className="text-foreground">Level {lvl.next.number} · {lvl.next.name}</span>
+                </p>
+              </>
+            ) : (
+              <p className="mt-1.5 text-[11px] text-muted-foreground">Every level reached.</p>
+            )}
+          </div>
+        )
+      })()}
 
       {/* BADGES */}
       <div>

@@ -9,6 +9,7 @@ import {
 import type { Habit, HabitLog } from '@/types'
 import { todayString } from '@/lib/utils'
 import { earnedBadgeIds, type BadgeContext } from '@/lib/badges'
+import { countDaysLogged } from '@/lib/levels'
 
 export default async function ProfilePage() {
   const supabase = createClient()
@@ -104,6 +105,10 @@ export default async function ProfilePage() {
     supabase.from('health_logs').select('date, water_glasses').eq('user_id', user.id).gte('date', start7),
     supabase.from('health_logs').select('date, steps').eq('user_id', user.id),
     supabase.from('goals').select('id, status, goal_type').eq('user_id', user.id),
+    // Dates only, all time, for the level count — so someone who tracks only
+    // habits still gets credit for showing up. Appended last so the indices
+    // above stay put. Payload is tiny even at thousands of rows.
+    supabase.from('habit_logs').select('date').eq('user_id', user.id).limit(5000),
   ])
   const data = (i: number): any =>
     results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
@@ -120,6 +125,7 @@ export default async function ProfilePage() {
   const healthLogs7         = data(10)
   const healthLogsAll       = data(11)
   const goals               = data(12)
+  const habitDatesAll       = data(13)
 
   // Daily score arrays for the stats card
   const habitsHist     = computeHabitsHistory((habits ?? []) as Habit[], (habitLogs30 ?? []) as HabitLog[], today)
@@ -217,5 +223,9 @@ export default async function ProfilePage() {
     if (profile) profile.badges = newBadges
   }
 
-  return <ProfileClient profile={profile} dailyScores={dailyScores} earnedBadges={newBadges} />
+  // Level: distinct days on which anything at all was recorded. Derived, never
+  // stored, so it cannot drift the way habits.current_streak did.
+  const daysLogged = countDaysLogged(prayerLogsAll, healthLogsAll, habitDatesAll)
+
+  return <ProfileClient profile={profile} dailyScores={dailyScores} earnedBadges={newBadges} lifetimeDays={daysLogged} />
 }

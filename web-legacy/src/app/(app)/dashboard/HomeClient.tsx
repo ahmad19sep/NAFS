@@ -10,6 +10,7 @@ import {
 import { cn, scoreColor } from '@/lib/utils'
 import { healthProgress } from '@/lib/health-progress'
 import { selectNextUp } from '@/lib/next-up'
+import { levelFor } from '@/lib/levels'
 import { type CustomMetric } from '@/lib/health'
 import { PRAYERS } from '@/lib/scoring'
 import type { Habit, HabitLog, Weekday } from '@/types'
@@ -54,6 +55,8 @@ interface Props {
   healthLog: any
   healthLogs30: any[]
   today: string
+  /** Distinct days with anything recorded, all time. Drives the level chip. */
+  lifetimeDays: number
 }
 
 function getGreeting(name: string) {
@@ -78,7 +81,7 @@ export default function HomeClient({
   profile, habits, habitLogs, habitLogs30, prayerLog, prayerLogs30,
   challenges, allChallenges, challengeCheckins30,
   todayTasks, tasks30, goals, aiReports,
-  healthLog, healthLogs30, today,
+  healthLog, healthLogs30, today, lifetimeDays,
 }: Props) {
 
   // ---- Today's per-feature stats ----
@@ -221,6 +224,26 @@ export default function HomeClient({
           <h1 className="text-[22px] font-semibold text-foreground leading-tight mt-1 truncate">
             {greeting.text}
           </h1>
+          {/* Level chip — where you are right now. Counts days recorded, so it
+              only ever goes up. Hidden until the first day, rather than showing
+              a "Level 0". Taps through to the full card on Profile. */}
+          {(() => {
+            const lvl = levelFor(lifetimeDays)
+            if (!lvl.current) return null
+            return (
+              <Link href="/profile"
+                className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-muted-foreground
+                           hover:text-foreground transition-colors">
+                <span className="rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 font-semibold text-gold">
+                  Level {lvl.current.number}
+                </span>
+                <span>{lvl.current.name}</span>
+                {lvl.next && (
+                  <span className="text-muted-foreground/60">· {lvl.daysToNext}d to next</span>
+                )}
+              </Link>
+            )
+          })()}
         </div>
         <Link href="/profile">
           <div className="h-10 w-10 rounded-full bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-all active:scale-95">
