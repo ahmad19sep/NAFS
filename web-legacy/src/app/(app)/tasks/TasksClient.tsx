@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, X, Trash2, Pencil, Clock, AlertTriangle } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -13,6 +13,12 @@ import {
   minutesUntilDue, formatDueTime,
   type Task, type TaskType, type TaskPriority,
 } from '@/lib/tasks'
+
+/** Opaque, unique per creation intent. randomUUID needs a secure context. */
+function newRequestId(): string {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
 
 interface Props {
   tasks: Task[]
@@ -113,31 +119,45 @@ export default function TasksClient({ tasks, today }: Props) {
   }
 
   // ---- API actions ----
+  // One id per creation intent. It survives a failed attempt, so pressing Save
+  // again after a dropped connection is recognised as the same task rather than
+  // creating a second one. Cleared only once the task actually exists.
+  const requestId = useRef<string>('')
+
   // A task's type sets its period anchor, so editing changes content only.
   async function saveTask() {
-    if (!title.trim()) return
+    if (!title.trim() || saving) return
     setSaving(true); setFormError(null)
 
     const isEdit = !!editingId
-    const res = await fetch(isEdit ? `/api/tasks/${editingId}` : '/api/tasks', {
-      method: isEdit ? 'PATCH' : 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: title.trim(),
-        note: note.trim() || null,
-        priority,
-        ...(isEdit ? {} : { type: tab }),
-        due_time: tab === 'daily' && dueTime ? dueTime : null,
-      }),
-    })
-    setSaving(false)
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({}))
-      setFormError(b?.error || `Save failed (${res.status})`)
-      return
+    if (!isEdit && !requestId.current) requestId.current = newRequestId()
+
+    try {
+      const res = await fetch(isEdit ? `/api/tasks/${editingId}` : '/api/tasks', {
+        method: isEdit ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title.trim(),
+          note: note.trim() || null,
+          priority,
+          ...(isEdit ? {} : { type: tab, request_id: requestId.current }),
+          due_time: tab === 'daily' && dueTime ? dueTime : null,
+        }),
+      })
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}))
+        setFormError(b?.error || `Save failed (${res.status})`)
+        return
+      }
+      requestId.current = ''   // saved — the next task is a new intent
+      closeForm()
+      router.refresh()
+    } catch {
+      // Network failure: keep the id so retrying is the same intent.
+      setFormError('Not saved — check your connection and try again.')
+    } finally {
+      setSaving(false)
     }
-    closeForm()
-    router.refresh()
   }
 
   // Sends the state we want rather than asking the server to flip, so a retry

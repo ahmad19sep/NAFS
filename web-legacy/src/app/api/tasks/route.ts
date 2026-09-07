@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { periodAnchorFor, type TaskType, type TaskPriority } from '@/lib/tasks'
+import { withIdempotency } from '@/lib/idempotency'
 
 const TYPES: TaskType[] = ['daily', 'weekly', 'monthly']
 const PRIORITIES: TaskPriority[] = ['low', 'medium', 'high']
@@ -28,15 +29,39 @@ export async function POST(req: NextRequest) {
       : null
 
   const period_date = periodAnchorFor(type, todayISO())
+  const payload = { title, note, type, priority, due_time, period_date }
 
-  const { data, error } = await supabase.from('tasks').insert({
-    user_id: user.id,
-    title, note, type, priority,
-    status: 'active',
-    period_date,
-    due_time,
-  }).select().single()
+  // LOG-01. Creation cannot be made idempotent on its own — "insert a row"
+  // repeated is two rows however carefully it is written — so it is guarded by
+  // the request id the client sends. A retry after a lost response replays the
+  // original task instead of creating a duplicate.
+  const { outcome, result } = await withIdempotency(
+    supabase, user.id, body.request_id, payload,
+    async () => {
+      const { data, error } = await supabase.from('tasks').insert({
+        user_id: user.id,
+        title, note, type, priority,
+        status: 'active',
+        period_date,
+        due_time,
+      }).select().single()
+      if (error) throw new Error(error.message)
+      return data
+    },
+  )
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ task: data })
+  if (outcome === 'conflict') {
+    return NextResponse.json({
+      error: 'That request id was already used for a different task.',
+    }, { status: 409 })
+  }
+  if (outcome === 'in_flight') {
+    // The first attempt is still running. Answering 409 rather than creating a
+    // second task, or inventing a result we do not have yet.
+    return NextResponse.json({
+      error: 'This task is already being created.',
+    }, { status: 409 })
+  }
+
+  return NextResponse.json({ task: result, replayed: outcome === 'replayed' })
 }

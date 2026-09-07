@@ -97,7 +97,7 @@ Reproduced by fixture **D13**.
 
 ## Test harness
 
-`vitest` (one devDependency, native TypeScript) with `npm test`. 91 tests:
+`vitest` (one devDependency, native TypeScript) with `npm test`. 104 tests:
 
 | Fixture | Covers |
 |---|---|
@@ -114,7 +114,7 @@ than inventing one mid-refactor.
 
 ```bash
 cd web-legacy
-npm test           # 91 tests
+npm test           # 104 tests
 npx tsc --noEmit   # clean
 npm run build      # compiles
 ```
@@ -230,13 +230,33 @@ as a fallback for a client that sends no body. Pinned by
 [`task-status.test.ts`](../web-legacy/src/lib/task-status.test.ts), including a
 test asserting the old double-flip behaviour is the bug.
 
+### Fixed: a retried creation no longer makes two tasks
+
+Creation cannot be made idempotent on its own — "insert a row" repeated is
+two rows however carefully it is written — so it is guarded by a request id
+the client sends. The first request carrying that id claims it in
+[`mutations`](../supabase/mutations.sql), does the work and records the
+result; a retry finds the claim and replays the original task.
+
+The client generates one id per creation intent and keeps it across a failed
+attempt, so pressing Save again after a dropped connection is recognised as
+the same task. It is cleared only once the task exists.
+
+Payloads are hashed canonically, with keys sorted at every depth, because
+`JSON.stringify` preserves insertion order — without that an honest retry
+that built its body differently would look like new content and be refused.
+The same id with genuinely different content is a conflict, not a second
+write, and a claim with no result yet answers "in flight" rather than
+inventing a result or doing the work twice.
+
+Pinned by [`idempotency.test.ts`](../web-legacy/src/lib/idempotency.test.ts),
+including that a conflict is never mistaken for a replay — the dangerous
+confusion, since it would return the wrong task.
+
 ### Still open in LOG-01
 
-- **No request identifiers.** The blueprint wants each user intent to carry a
-  stable id, unique per owner in durable storage, so a retry is recognised
-  rather than re-executed. Subject habits and task completion are now
-  idempotent by design, but creation still is not: a double-submitted task
-  creates two rows, guarded only by a disabled button in the client.
+- **Only creation is guarded.** `withIdempotency` is generic, but no other
+  write passes a request id yet.
 - **Absolute writes have no revision check.** The health page upserts water,
   steps and the rest from client state, so two devices silently overwrite each
   other. The blueprint asks for a version check on absolute edits.
