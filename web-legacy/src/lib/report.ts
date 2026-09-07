@@ -15,6 +15,17 @@ import type { Task, TaskType, TaskPriority } from '@/lib/tasks'
 
 export type ReportPeriod = 'weekly' | 'monthly'
 
+/**
+ * How many times a weekday must have been recorded before the report will
+ * describe it as a recurring tendency rather than a dated observation.
+ *
+ * A weekly report contains each weekday exactly once, so one low Sunday says
+ * nothing about Sundays in general. Set to 4 per the Improvement Blueprint's
+ * sample gate, which in practice means only monthly reports can make the
+ * claim. Lowering this re-introduces the over-claiming it exists to prevent.
+ */
+const MIN_WEEKDAY_OBSERVATIONS = 4
+
 const PRAYERS = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] as const
 export type PrayerKey = typeof PRAYERS[number]
 
@@ -952,17 +963,23 @@ function buildFocus(now: PeriodStats, comparison: AreaComparison[], period: Repo
       `Set one concrete target for ${c.label.toLowerCase()} next ${unit} rather than trying to fix everything.`)
   }
 
-  // The weekday that reliably drags.
+  // The weekday that reliably drags. Only claim a recurring tendency when the
+  // two weekdays being compared have each been observed enough times — a
+  // weekly report sees every weekday exactly once, which says nothing about a
+  // pattern. Below the gate the report stays silent here; the dated low day is
+  // already reported by buildInsights.
   if (now.weekdayAvgs.length >= 4) {
     const sorted = [...now.weekdayAvgs].sort((a, b) => a.avg - b.avg)
     const worst = sorted[0]
     const best = sorted[sorted.length - 1]
-    if (worst.avg < 60 && best.avg - worst.avg >= 15) {
+    const comparable =
+      worst.days >= MIN_WEEKDAY_OBSERVATIONS && best.days >= MIN_WEEKDAY_OBSERVATIONS
+    if (comparable && worst.avg < 60 && best.avg - worst.avg >= 15) {
       const worstName = WEEKDAY_FULL[worst.weekday] ?? worst.weekday
       const bestName = WEEKDAY_FULL[best.weekday] ?? best.weekday
       push('weekday', 'Pattern', '📉', `${worstName}s`,
         worst.avg, null,
-        `${worst.avg}% avg vs ${best.avg}% on ${bestName}s`,
+        `${worst.avg}% avg vs ${best.avg}% on ${bestName}s, ${worst.days} ${worstName}s recorded`,
         `${worstName} is reliably your worst day — a ${best.avg - worst.avg} point gap on your best.`,
         `Plan ${worstName} the night before, or lower the bar for that day on purpose.`)
     }
@@ -1040,9 +1057,18 @@ function buildInsights(d: ReportData, hadPrevious: boolean): string[] {
     out.push(`Habits ran at ${d.habit_completion_pct}% overall. Strongest: ${top.name} (${top.done_days}/${top.scheduled_days}). Weakest: ${bottom.name} (${bottom.done_days}/${bottom.scheduled_days}).`)
   }
 
+  // Same gate as the focus list: a weekday ranking is only a tendency once each
+  // compared weekday has been seen several times. Otherwise report the dated
+  // low day, which is a fact about this period rather than a claimed habit.
   if (d.weekday_avgs.length >= 3) {
     const s = [...d.weekday_avgs].sort((a, b) => b.avg - a.avg)
-    out.push(`${s[0].weekday} is your best weekday (${s[0].avg}% avg); ${s[s.length - 1].weekday} is your weakest (${s[s.length - 1].avg}%).`)
+    const best = s[0]
+    const weakest = s[s.length - 1]
+    if (best.days >= MIN_WEEKDAY_OBSERVATIONS && weakest.days >= MIN_WEEKDAY_OBSERVATIONS) {
+      out.push(`${best.weekday} is your best weekday (${best.avg}% avg over ${best.days}); ${weakest.weekday} is your weakest (${weakest.avg}% over ${weakest.days}).`)
+    } else if (d.worst_day && d.best_day && d.worst_day.date !== d.best_day.date) {
+      out.push(`Your lowest recorded day was ${d.worst_day.weekday} ${prettyDate(d.worst_day.date)} at ${d.worst_day.score}%, the highest ${d.best_day.weekday} ${prettyDate(d.best_day.date)} at ${d.best_day.score}%. One of each is not yet a weekly pattern.`)
+    }
   }
 
   if (d.health.avg_sleep != null) {
