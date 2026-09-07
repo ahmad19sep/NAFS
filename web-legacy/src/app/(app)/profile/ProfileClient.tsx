@@ -9,6 +9,7 @@ import {
   Pencil, KeyRound, Share2, BarChart3, Download, Bell, Globe, Moon,
   Info, LogOut, ChevronRight, Check, X, Loader2, Mail, Camera, Trash2,
   UserCircle2, Briefcase, MapPin, Cake, Heart, Send, Award, Lock, AlertTriangle, Printer,
+  Lightbulb,
 } from 'lucide-react'
 import { BADGES, TIER_COLORS, type BadgeDef } from '@/lib/badges'
 import { levelFor } from '@/lib/levels'
@@ -639,6 +640,9 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges, life
         <RowLink icon={<BarChart3 size={15} />} label="View full history"
           subLabel="30-day breakdown by feature"
           href="/history" />
+        <RowLink icon={<Lightbulb size={15} />} label="Bugs &amp; ideas"
+          subLabel="Note anything broken or worth improving"
+          href="/improve" />
         <Row icon={<Download size={15} />} label="Export my data"
           subLabel="Download a JSON copy of your logs"
           onClick={exportData} />

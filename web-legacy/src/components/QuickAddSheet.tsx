@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
   X, ListChecks, Repeat, Flame, Trophy, MoonStar, HeartPulse, Smartphone,
-  Check, Loader2, Sparkles, ChevronRight, type LucideIcon,
+  Check, Loader2, Sparkles, ChevronRight, Lightbulb, type LucideIcon,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { cn, todayString, formatDate } from '@/lib/utils'
@@ -37,6 +37,9 @@ const CREATE_ACTIONS: { href: string; icon: LucideIcon; label: string }[] = [
   { href: '/deen',       icon: MoonStar,   label: 'Log prayer' },
   { href: '/health',     icon: HeartPulse, label: 'Log health' },
   { href: '/screentime', icon: Smartphone, label: 'Screen time' },
+  // Reachable from the + button on every page, because a bug you have to go
+  // looking for a form to report is a bug you forget.
+  { href: '/improve',    icon: Lightbulb,  label: 'Bug / idea' },
 ]
 
 interface QuickHabit {
