@@ -1,18 +1,24 @@
 // Single AI entry point for the whole app.
 //
-// Every AI feature goes through the four functions below, and they all resolve
-// to one provider: the Cloudflare Worker running @cf/openai/gpt-oss-20b.
-// Gemini and Groq were removed — there is no provider routing or fallback left,
-// so a failure here is a real failure and surfaces as an AiError with a
-// user-facing message.
+// Every AI feature goes through the functions below. Chat, verdicts, bulk
+// and structured calls all resolve to one provider: the Cloudflare Worker
+// running @cf/openai/gpt-oss-20b. Gemini and Groq were removed — there is no
+// general provider routing, so a failure here is a real failure and surfaces
+// as an AiError with a user-facing message.
 //
-// Keep this file as the only thing routes import; the transport lives in
-// ./cloudflare-ai.
+// The one deliberate exception is aiDeep: a small number of call sites that
+// do real analysis over a month of records use Claude when ANTHROPIC_API_KEY
+// is set, and the Worker when it is not. Nothing else may route there.
+//
+// Keep this file as the only thing routes import; the transports live in
+// ./cloudflare-ai and ./anthropic-ai.
 
 import {
   cloudflareChat, cloudflareText, AiError,
   type ChatMessage, type AiOptions,
 } from './cloudflare-ai'
+import { anthropicChat, hasAnthropicAi, ANTHROPIC_MODEL } from './anthropic-ai'
+import { CLOUDFLARE_AI_MODEL } from './cloudflare-ai'
 import { parseJson, validate, type Schema } from './schema'
 
 export type { Schema } from './schema'
@@ -24,7 +30,7 @@ export type { ChatMessage, AiOptions } from './cloudflare-ai'
  * Kept so existing call sites read the same. It no longer picks a provider —
  * it only tunes how much output the task needs.
  */
-export type AiTask = 'chat' | 'verdict' | 'bulk' | 'json'
+export type AiTask = 'chat' | 'verdict' | 'bulk' | 'json' | 'deep'
 
 /**
  * gpt-oss-20b is a reasoning model: it spends completion tokens thinking before
@@ -47,6 +53,9 @@ const MAX_TOKENS_FOR: Record<AiTask, number> = {
   verdict: 1500,
   bulk: 1200,
   json: 2000,
+  // A 250–400 word review. On Claude this is spend, not just a ceiling, so
+  // it is sized to the answer rather than to reasoning headroom.
+  deep: 2000,
 }
 
 /** Single-prompt text generation. */
@@ -57,6 +66,42 @@ export async function aiText(task: AiTask, prompt: string, system?: string): Pro
 /** Multi-turn chat. History is trimmed to the recent turns before sending. */
 export async function aiChat(messages: ChatMessage[], opts: AiOptions = {}): Promise<string> {
   return cloudflareChat(messages, { maxTokens: MAX_TOKENS_FOR.chat, ...opts })
+}
+
+export type DeepProvider = 'anthropic' | 'cloudflare'
+
+/** Which model aiDeep will use right now. For the UI to say so honestly. */
+export function deepProvider(): DeepProvider {
+  return hasAnthropicAi() ? 'anthropic' : 'cloudflare'
+}
+
+/**
+ * The deep path: analysis over a month of records, where the model's quality
+ * is the point. Claude when ANTHROPIC_API_KEY is set; the Worker otherwise.
+ *
+ * If Claude is configured but fails on the day — overloaded, rate-limited,
+ * unreachable — the call falls back to the Worker rather than failing, and
+ * says which model actually answered. A rejected key (401) is not hidden
+ * that way: it is a configuration problem the owner needs to see.
+ *
+ * Paid per call. Only routes that do a real month-long analysis may use
+ * this; anything a chat turn can do stays on aiChat.
+ */
+export async function aiDeep(
+  messages: ChatMessage[],
+  opts: AiOptions = {},
+): Promise<{ text: string; provider: DeepProvider; model: string; fellBack: boolean }> {
+  const o = { maxTokens: MAX_TOKENS_FOR.deep, ...opts }
+  if (hasAnthropicAi()) {
+    try {
+      return { text: await anthropicChat(messages, o), provider: 'anthropic', model: ANTHROPIC_MODEL, fellBack: false }
+    } catch (err) {
+      if (err instanceof AiError && err.status === 401) throw err
+      // Fall through to the Worker.
+    }
+    return { text: await cloudflareChat(messages, o), provider: 'cloudflare', model: CLOUDFLARE_AI_MODEL, fellBack: true }
+  }
+  return { text: await cloudflareChat(messages, o), provider: 'cloudflare', model: CLOUDFLARE_AI_MODEL, fellBack: false }
 }
 
 // aiJSON was removed once every route moved to aiStructured. It returned null

@@ -22,6 +22,11 @@ running `@cf/openai/gpt-oss-20b`. The app never calls Workers AI directly.
    `Authorization: Bearer …` header. It is a **server-side secret** — set it in
    `.env.local` locally and in Vercel → Settings → Environment Variables for
    production. Never put it in `NEXT_PUBLIC_*`, source code, or the client.
+
+   Optional: set `ANTHROPIC_API_KEY` the same way (Vercel + `.env.local`, never
+   `NEXT_PUBLIC_*`) to have the growth review written by Claude. Without it the
+   review runs on the free model. Nothing else uses it — it is paid per call, and
+   the review runs on demand, once a day. See [docs/AI.md](docs/AI.md#the-deep-path).
 2. Optionally set `CLOUDFLARE_AI_URL` to override the Worker endpoint. It
    defaults to the deployed Worker and is not a secret.
 

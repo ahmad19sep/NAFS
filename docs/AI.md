@@ -1,7 +1,9 @@
 # AI in NAFS
 
 Everything the app generates — coach replies, verdicts, goal plans, starter packs,
-scheduled reports — goes through one model behind one façade.
+scheduled reports — goes through one model behind one façade, with one deliberate
+exception: the growth review, which uses Claude when a key is set. See
+[The deep path](#the-deep-path).
 
 ```
 Next.js route (Vercel, server-side)
@@ -20,16 +22,32 @@ The app never calls Workers AI directly, and the browser never sees a key.
 ## The façade
 
 Routes import from [`src/lib/ai.ts`](../web-legacy/src/lib/ai.ts) and nothing else.
-[`src/lib/cloudflare-ai.ts`](../web-legacy/src/lib/cloudflare-ai.ts) is the only file
-that touches the network or the key.
+[`src/lib/cloudflare-ai.ts`](../web-legacy/src/lib/cloudflare-ai.ts) and
+[`src/lib/anthropic-ai.ts`](../web-legacy/src/lib/anthropic-ai.ts) are the only files
+that touch the network or a key.
 
 | Function | Use for | Returns |
 |---|---|---|
 | `aiText(task, prompt, system?)` | one-shot generation | `string` |
 | `aiChat(messages, opts?)` | multi-turn conversation | `string` |
 | `aiStructured<T>(prompt, schema, system?)` | structured output | `AiResult<T>` |
+| `aiDeep(messages, opts?)` | month-long analysis only — today, the growth review | `{ text, provider, model, fellBack }` |
 
 There is deliberately **no image input** — see [Why there is no vision](#why-there-is-no-vision).
+
+### The deep path
+
+`aiDeep` is the one place a second model is allowed. It exists for analysis over a
+month of records, where a stronger model is the point of the feature; today that is
+only the growth review. When `ANTHROPIC_API_KEY` is set it calls Claude
+(`ANTHROPIC_MODEL`, default `claude-sonnet-5`); when it is not, the Worker. If Claude
+is configured but fails on the day — 429, 5xx, 529, network — the call falls back to
+the Worker and reports `fellBack: true`, and the card says so. A rejected key (401) is
+not hidden that way: it surfaces as an error the owner needs to see.
+
+It is paid per call, so it runs on demand and once a day per user, never on a cron.
+Nothing a chat turn can do may route here. The key is read only in `anthropic-ai.ts`,
+sent only as `x-api-key`, and never logged.
 
 ### Structured output
 
@@ -131,6 +149,8 @@ docs first, then measure accuracy on real screenshots before trusting any of it.
 | `CLOUDFLARE_APP_KEY` | **yes** | Vercel env vars, `.env.local` | Bearer token the Worker checks |
 | `CLOUDFLARE_AI_URL` | no | optional override | defaults to the deployed Worker `/chat` |
 | `APP_KEY` | **yes** | Cloudflare Worker secret | must equal `CLOUDFLARE_APP_KEY` |
+| `ANTHROPIC_API_KEY` | **yes** | Vercel env vars, `.env.local` | enables the deep path (growth review); absent means the Worker answers |
+| `ANTHROPIC_MODEL` | no | optional override | defaults to `claude-sonnet-5` |
 
 The key is server-side only, and has to be: the daily and weekly report crons run
 with **no browser attached**. A key held in the browser would break them permanently.
@@ -162,11 +182,14 @@ A missing key throws before any request is made.
 
 ## Every AI feature today
 
-One call site in each of 14 routes.
+One call site in each of 15 routes, plus one route that stores what the user tells
+the coach and calls no model.
 
 | Route | Call | What it produces |
 |---|---|---|
-| `ai/chat` | `aiChat` | the coach, answering from 30 days of real data |
+| `ai/chat` | `aiChat` | the coach, answering from 30 days of real data, what keeps not happening and what was different on those days, and what the user told it before — same context for the Coach page and the floating bubble |
+| `ai/growth-review` | `aiDeep` | improving, lacking, the pattern underneath, three rules for the week, one question — on demand, once a day, this week and this month against last |
+| `coach/notes` | — | saves a reason for a miss, a bad-day note, or a life answer, in the user's words |
 | `ai/evening-verdict` | `aiText('verdict')` | end-of-day verdict |
 | `ai/tribunal` | `aiText('verdict')` | weekly tribunal |
 | `ai/pull-narrator` | `aiText('verdict')` | dream-trajectory narration |
@@ -180,6 +203,42 @@ One call site in each of 14 routes.
 | `ai/plan` | `aiStructured` | turns "work 12 hours a day for 30 days" into a proposed task, habit or challenge — **proposes only**; the user confirms, and creation goes through the normal routes |
 | `cron/daily-report` | `aiText('verdict')` | nightly verdict, delivered by push |
 | `screentime/analyze` | `aiText('verdict')` | verdict on the screen-time numbers you entered |
+
+---
+
+## The coach's memory
+
+The coach reads three things nobody types into a prompt:
+
+- **Repeated misses** ([`misses.ts`](../web-legacy/src/lib/misses.ts)) — what keeps
+  not happening over the last seven days, with counts and the dates behind them.
+  Unrecorded is never missed: a prayer counts only when recorded as missed, a habit
+  only on a day something else was logged. Today is excluded as still in progress.
+- **Possible causes** ([`correlates.ts`](../web-legacy/src/lib/correlates.ts)) — for
+  each repeated miss, sleep and phone screen time on the days it was missed against
+  the days it was done. Reported only with two or more days on each side and a gap of
+  at least 45 min (sleep) or 30 min (screen); a day with no value is unknown, not
+  zero. Worded as "recorded that day", not "the night before". Evidence for a
+  question, never a verdict.
+- **Coach notes** ([`coach-notes.ts`](../web-legacy/src/lib/coach-notes.ts), table
+  `coach_notes`) — what the user told the coach, in their own words: a reason for a
+  miss ("Why?" under the pattern on Home, which shows the last answer first the next
+  time it repeats), what was going on on a bad day (asked once under the quote), and
+  answers to four life questions on Profile. The latest per subject is what the
+  coach quotes; every save is kept so a changed answer is visible. Nothing here is
+  generated.
+
+All three are built once in [`coach-context.ts`](../web-legacy/src/lib/coach-context.ts)
+and shared by the chat, the floating bubble and the growth review, so the surfaces
+cannot disagree about the facts. The prompt rules that go with them: quote reasons
+back rather than paraphrase, name a repeated reason as a pattern, offer a measured
+cause as a possibility only, and when there is neither, ask one question and say the
+answer will be remembered. If what the user said they want does not match the
+records, say so with the numbers and ask them to choose.
+
+The app does not punish. The only consequence in it is one the user sets on
+themselves — a sadqa pledge on a challenge. The pattern card names the evidence
+and points at the coach.
 
 ---
 
@@ -243,11 +302,14 @@ forward one, so every call reasons at the default depth — which is why budgets
 14 call sites. Requires a Worker change plus a measurement pass.
 
 ### 6. No fallback provider
-**Medium value · medium effort**
+**Partly addressed — deliberately narrow**
 
-The old code had Gemini→Groq fallback; this has none by design. If the Worker or
-Workers AI is down, every AI feature fails. `lib/ai.ts` is the right seam to add a
-second provider behind — the four functions wouldn't change.
+There is still no general fallback: if the Worker or Workers AI is down, chat,
+verdicts and structured calls fail. What exists is the [deep path](#the-deep-path):
+one call site, Claude when configured, the Worker otherwise, the Worker again if
+Claude fails on the day. Widening that to every call is a cost decision, not a code
+change — `aiDeep` already shows the shape, and the owner's rule is that the paid
+model is for complex analysis only.
 
 ### 7. The `bulk` task is defined but unused
 **Low value · trivial effort**

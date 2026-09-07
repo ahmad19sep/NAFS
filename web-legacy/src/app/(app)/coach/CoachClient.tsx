@@ -3,33 +3,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { Send, Zap, Mail, FileText, Trash2 } from 'lucide-react'
 import { timeAgo } from '@/lib/utils'
-
-// Minimal markdown for AI replies: **bold**, bullet lines, paragraphs.
-function RichText({ text }: { text: string }) {
-  const renderInline = (s: string) =>
-    s.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
-      part.startsWith('**') && part.endsWith('**')
-        ? <strong key={i} className="font-semibold text-gold">{part.slice(2, -2)}</strong>
-        : <span key={i}>{part}</span>
-    )
-  return (
-    <div className="space-y-1.5">
-      {text.split('\n').map((line, i) => {
-        const t = line.trim()
-        if (!t) return null
-        if (/^[-•*]\s+/.test(t)) {
-          return (
-            <div key={i} className="flex gap-2">
-              <span className="text-gold mt-0.5">•</span>
-              <span className="flex-1">{renderInline(t.replace(/^[-•*]\s+/, ''))}</span>
-            </div>
-          )
-        }
-        return <p key={i}>{renderInline(t)}</p>
-      })}
-    </div>
-  )
-}
+import RichText from '@/components/RichText'
+import GrowthReviewCard, { type GrowthReview } from '@/components/GrowthReviewCard'
 
 interface Report {
   id: string
@@ -58,9 +33,13 @@ interface Props {
   reports: Report[]
   letters: Letter[]
   lastConversation: any
+  /** The latest growth review, if one has been written. */
+  growthReview: GrowthReview | null
+  /** Which model the review runs on right now. */
+  deepModel: 'anthropic' | 'cloudflare'
 }
 
-export default function CoachClient({ userId, reports, letters, lastConversation }: Props) {
+export default function CoachClient({ userId, reports, letters, lastConversation, growthReview, deepModel }: Props) {
   const [activeTab, setActiveTab] = useState<'pull' | 'tribunal' | 'chat' | 'letters'>('pull')
   const [messages, setMessages] = useState<Message[]>(
     lastConversation?.messages ?? []
@@ -131,6 +110,9 @@ export default function CoachClient({ userId, reports, letters, lastConversation
         <h1 className="text-2xl font-bold text-foreground">AI Coach</h1>
         <p className="mt-1 text-sm text-muted-foreground">Your data. Your verdict.</p>
       </div>
+
+      {/* Growth review — improving, lacking, the pattern, three rules, one question */}
+      <GrowthReviewCard initial={growthReview} deepModel={deepModel} />
 
       {/* Tabs */}
       <div className="grid grid-cols-4 gap-1 rounded-2xl border border-white/10 bg-white/5 p-1 mb-6">
