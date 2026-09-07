@@ -177,8 +177,8 @@ One call site in each of 14 routes.
 | `ai/habit-starter` | `aiStructured` | suggested habits |
 | `ai/challenge-starter` | `aiStructured` | suggested challenge tactics |
 | `ai/health-recommend` | `aiStructured` | health plan, goals and habits |
-| `cron/daily-report` | `aiText('verdict')` | emailed daily summary |
-| `cron/weekly-report` | `aiText('verdict')` | emailed weekly summary |
+| `ai/plan` | `aiStructured` | turns "work 12 hours a day for 30 days" into a proposed task, habit or challenge — **proposes only**; the user confirms, and creation goes through the normal routes |
+| `cron/daily-report` | `aiText('verdict')` | nightly verdict, delivered by push |
 | `screentime/analyze` | `aiText('verdict')` | verdict on the screen-time numbers you entered |
 
 ---

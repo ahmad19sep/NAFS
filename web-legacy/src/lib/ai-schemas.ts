@@ -125,6 +125,61 @@ export const HEALTH_RECOMMENDATION_SCHEMA: Schema = {
   },
 }
 
+/**
+ * `/api/ai/plan` — a plain-English intention turned into ONE proposed item.
+ *
+ * The model picks the kind and fills only the matching block; the route
+ * checks the block for the chosen kind is actually present, since the
+ * validator has no unions. Nothing here creates anything — a proposal is
+ * shown to the user and only their confirmation goes through the normal,
+ * authorised create routes.
+ */
+export const PLAN_SCHEMA: Schema = {
+  kind: 'object',
+  optional: ['task', 'habit', 'challenge'],
+  fields: {
+    kind: { kind: 'enum', values: ['task', 'habit', 'challenge'] },
+    title: { kind: 'string', minLength: 3, maxLength: 120 },
+    emoji: { kind: 'string', minLength: 1, maxLength: 8 },
+    // Why this kind and not the others — shown to the user, so it has to be
+    // a real reason rather than filler.
+    reason: { kind: 'string', minLength: 10, maxLength: 300 },
+    task: {
+      kind: 'object',
+      optional: ['due_time', 'note'],
+      fields: {
+        priority: { kind: 'enum', values: ['low', 'medium', 'high'] },
+        due_time: { kind: 'string', minLength: 5, maxLength: 5 }, // HH:MM
+        note: { kind: 'string', maxLength: 300 },
+      },
+    },
+    habit: {
+      kind: 'object',
+      optional: ['target_value', 'unit', 'time_target_mins', 'schedule_days'],
+      fields: {
+        type: { kind: 'enum', values: ['simple', 'counter', 'duration'] },
+        target_value: { kind: 'number', min: 1, max: 1000 },
+        unit: { kind: 'string', maxLength: 24 },
+        // 12 hours a day is 720; cap leaves room for that and rejects nonsense.
+        time_target_mins: { kind: 'number', min: 1, max: 1440, int: true },
+        schedule_kind: { kind: 'enum', values: ['daily', 'weekdays'] },
+        schedule_days: {
+          kind: 'array', maxItems: 7,
+          of: { kind: 'enum', values: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] },
+        },
+      },
+    },
+    challenge: {
+      kind: 'object',
+      fields: {
+        frequency: { kind: 'enum', values: ['daily', 'weekly', 'monthly', 'yearly'] },
+        duration_days: { kind: 'number', min: 1, max: 1825, int: true },
+        requires_photo: { kind: 'boolean' },
+      },
+    },
+  },
+}
+
 /** Maps a structured-AI failure to the HTTP status a route should return. */
 export function statusForAiFailure(code: string): number {
   if (code === 'rate_limited') return 429

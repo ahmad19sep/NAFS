@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { aiChat, AiError } from '@/lib/ai'
 import { buildHealthDigest } from '@/lib/health-digest'
+import { ageFromBirthDate } from '@/lib/utils'
 import { ASK_ASCEND_SYSTEM } from '@/lib/ai-prompts'
 
 // Ask Ascend — the coach answers from the user's REAL data across every
@@ -110,6 +111,8 @@ export async function POST(req: NextRequest) {
       user: {
         name: profile?.name || 'the user',
         about: profile?.about_me ?? undefined,
+        // Real, from the profile, or absent — the prompt is told never to guess it.
+        age: ageFromBirthDate((profile?.about_me as any)?.birth_date) ?? undefined,
         faith_mode: deenOn,
         member_since: profile?.created_at?.split('T')[0],
       },

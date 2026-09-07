@@ -1,15 +1,22 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
   X, ListChecks, Repeat, Flame, Trophy, MoonStar, HeartPulse, Smartphone,
-  Check, Loader2, type LucideIcon,
+  Check, Loader2, Sparkles, ChevronRight, type LucideIcon,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { cn, todayString, formatDate } from '@/lib/utils'
 import { isHabitScheduledOn } from '@/lib/history'
+import { describeProposal, proposalToCreateBody, type PlanProposal } from '@/lib/plan'
+
+/** Opaque, unique per confirmation, so a retried confirm cannot create twice. */
+function newRequestId(): string {
+  return globalThis.crypto?.randomUUID?.()
+    ?? `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { useDeenEnabled } from '@/hooks/useDeenEnabled'
 
@@ -51,7 +58,7 @@ export default function QuickAddSheet({ open, onClose }: Props) {
 
   // Log is the default: recording something you already do is the common case,
   // and the old sheet made you enter a creation flow to do it.
-  const [mode, setMode] = useState<'log' | 'create'>('log')
+  const [mode, setMode] = useState<'log' | 'create' | 'plan'>('log')
   const [habits, setHabits] = useState<QuickHabit[] | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [justLogged, setJustLogged] = useState<{ id: string; name: string } | null>(null)
@@ -134,7 +141,7 @@ export default function QuickAddSheet({ open, onClose }: Props) {
         <div className="flex items-start justify-between px-5 pt-1 pb-3">
           <div>
             <p className="text-base font-bold text-foreground">
-              {mode === 'log' ? 'Log something' : 'Create'}
+              {mode === 'log' ? 'Log something' : mode === 'create' ? 'Create' : 'Ask AI to plan it'}
             </p>
             <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(today)}</p>
           </div>
@@ -146,13 +153,14 @@ export default function QuickAddSheet({ open, onClose }: Props) {
 
         {/* Mode switch */}
         <div className="px-5 pb-3">
-          <div className="grid grid-cols-2 gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
-            {(['log', 'create'] as const).map((m) => (
+          <div className="grid grid-cols-3 gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
+            {(['log', 'create', 'plan'] as const).map((m) => (
               <button key={m} onClick={() => setMode(m)}
-                className={cn('rounded-lg py-2 text-xs font-semibold transition-all',
+                className={cn('rounded-lg py-2 text-xs font-semibold transition-all flex items-center justify-center gap-1',
                   mode === m ? 'bg-gold/15 text-gold' : 'text-muted-foreground hover:text-foreground',
                 )}>
-                {m === 'log' ? 'Log' : 'Create'}
+                {m === 'plan' && <Sparkles size={11} />}
+                {m === 'log' ? 'Log' : m === 'create' ? 'Create' : 'Ask AI'}
               </button>
             ))}
           </div>
@@ -234,7 +242,7 @@ export default function QuickAddSheet({ open, onClose }: Props) {
               </div>
             )}
           </div>
-        ) : (
+        ) : mode === 'create' ? (
           <>
             <div className="px-5 grid grid-cols-3 gap-2.5">
               {createActions.map((a) => (
@@ -253,8 +261,158 @@ export default function QuickAddSheet({ open, onClose }: Props) {
               <p className="text-[10px] text-muted-foreground">Tap a card to open its create flow</p>
             </div>
           </>
+        ) : (
+          <PlanPanel onClose={onClose} />
         )}
       </div>
+    </div>
+  )
+}
+
+// ============================================================
+// Ask AI — say what you want to do, see where it belongs, confirm
+// ============================================================
+//
+// The model only ever PROPOSES. Nothing is created until the user taps "Add",
+// and that goes through the same /api/tasks, /api/habits or /api/challenges
+// route a manual entry uses. The proposal card shows the kind, the exact
+// numbers, and the model's reason, so what gets added is never a surprise.
+function PlanPanel({ onClose }: { onClose: () => void }) {
+  const router = useRouter()
+  const [intent, setIntent] = useState('')
+  const [busy, setBusy] = useState<'plan' | 'add' | null>(null)
+  const [proposal, setProposal] = useState<PlanProposal | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [added, setAdded] = useState<{ label: string; href: string; title: string } | null>(null)
+  // One id per proposal, so retrying "Add" after a dropped connection cannot
+  // create the item twice. Replaced whenever a new proposal arrives.
+  const requestId = useRef('')
+
+  const KIND_STYLE: Record<PlanProposal['kind'], string> = {
+    task: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
+    habit: 'border-blue-400/40 bg-blue-500/10 text-blue-300',
+    challenge: 'border-orange-400/40 bg-orange-500/10 text-orange-300',
+  }
+
+  async function plan() {
+    if (intent.trim().length < 3 || busy) return
+    setBusy('plan'); setError(null); setProposal(null); setAdded(null)
+    try {
+      const res = await fetch('/api/ai/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ intent: intent.trim() }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(data?.error || 'Could not plan that.'); return }
+      setProposal(data.proposal)
+      requestId.current = newRequestId()
+    } catch {
+      setError('Not sent — check your connection.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function add() {
+    if (!proposal || busy) return
+    setBusy('add'); setError(null)
+    const req = proposalToCreateBody(proposal, requestId.current)
+    try {
+      const res = await fetch(req.path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.body),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(data?.error || 'Could not add it.'); return }
+      setAdded({ label: req.label, href: req.href, title: proposal.title })
+      setProposal(null)
+      router.refresh()
+    } catch {
+      // Keep the request id: retrying is the same intent, not a second one.
+      setError('Not added — check your connection and try again.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  function reset() {
+    setProposal(null); setAdded(null); setError(null)
+  }
+
+  return (
+    <div className="px-5 pb-4 space-y-3">
+      {added ? (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+          <p className="text-sm font-semibold text-emerald-300 flex items-center gap-1.5">
+            <Check size={14} /> Added as a {added.label}
+          </p>
+          <p className="mt-1 text-sm text-foreground">{added.title}</p>
+          <div className="mt-3 flex gap-2">
+            <Link href={added.href} onClick={onClose}
+              className="flex-1 rounded-lg bg-primary py-2 text-center text-xs font-semibold text-white
+                         hover:bg-teal-light transition-all active:scale-95">
+              Open {added.label}s
+            </Link>
+            <button onClick={() => { reset(); setIntent('') }}
+              className="flex-1 rounded-lg border border-white/10 py-2 text-xs font-semibold text-muted-foreground
+                         hover:text-foreground transition-all active:scale-95">
+              Plan another
+            </button>
+          </div>
+        </div>
+      ) : proposal ? (
+        <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
+              KIND_STYLE[proposal.kind])}>
+              {proposal.kind}
+            </span>
+            <span className="text-[11px] text-muted-foreground">{describeProposal(proposal)}</span>
+          </div>
+          <p className="text-base font-semibold text-foreground">
+            <span className="mr-1.5">{proposal.emoji}</span>{proposal.title}
+          </p>
+          <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">{proposal.reason}</p>
+          {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+          <div className="mt-3 flex gap-2">
+            <button onClick={add} disabled={!!busy}
+              className="flex-[2] rounded-lg bg-primary py-2.5 text-sm font-semibold text-white
+                         hover:bg-teal-light transition-all active:scale-95 disabled:opacity-50
+                         flex items-center justify-center gap-1.5">
+              {busy === 'add' ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+              Add as {proposal.kind}
+            </button>
+            <button onClick={reset} disabled={!!busy}
+              className="flex-1 rounded-lg border border-white/10 py-2.5 text-sm text-muted-foreground
+                         hover:text-foreground transition-all active:scale-95 disabled:opacity-50">
+              Not this
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <textarea value={intent} onChange={(e) => setIntent(e.target.value)}
+            rows={3} autoFocus
+            placeholder="e.g. work 12 hours a day for the next 30 days"
+            className="log-input w-full resize-none text-sm"
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); plan() } }} />
+          <p className="text-[10px] text-muted-foreground -mt-1">
+            Say it however you like. The AI works out whether it&apos;s a one-off task, a daily habit,
+            or a fixed challenge — and you confirm before anything is added.
+          </p>
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <button onClick={plan} disabled={intent.trim().length < 3 || !!busy}
+            className="w-full rounded-xl bg-primary py-3 text-sm font-semibold text-white
+                       hover:bg-teal-light transition-all active:scale-95 disabled:opacity-40
+                       flex items-center justify-center gap-1.5">
+            {busy === 'plan'
+              ? <><Loader2 size={14} className="animate-spin" /> Thinking…</>
+              : <><Sparkles size={14} /> Plan it <ChevronRight size={14} /></>}
+          </button>
+        </>
+      )}
     </div>
   )
 }
