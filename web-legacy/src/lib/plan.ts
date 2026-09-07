@@ -64,13 +64,70 @@ export function stripLeadingEmoji(title: string): string {
   return stripped.length >= 2 ? stripped : title.trim()
 }
 
-export function normalizeProposal(p: PlanProposal): NormalizeResult {
-  const block = p?.[p?.kind]
-  if (!p?.kind || !block) {
+/** The fields that belong inside each kind's block. */
+const BLOCK_FIELDS: Record<PlanProposal['kind'], string[]> = {
+  task: ['priority', 'due_time', 'note'],
+  habit: ['type', 'target_value', 'unit', 'time_target_mins', 'schedule_kind', 'schedule_days'],
+  challenge: ['frequency', 'duration_days', 'requires_photo'],
+}
+
+/**
+ * Re-nest a step whose fields were written flat.
+ *
+ * Models flatten nested objects. Measured live on claude-sonnet-5: every step
+ * came back as `{kind:"task", title, emoji, reason, priority, due_time, note}`
+ * with no `task: {...}` wrapper. The runtime schema tolerates unknown keys, so
+ * this passed validation and then lost every step here — a whole plan thrown
+ * away over punctuation.
+ *
+ * Which fields belong to which kind is fixed and unambiguous, so lifting them
+ * is deterministic, not a guess. A step that already has its block is left
+ * exactly as it is.
+ */
+export function liftFlattenedBlock(p: PlanProposal): PlanProposal {
+  if (!p?.kind || !BLOCK_FIELDS[p.kind] || p[p.kind]) return p
+
+  const flat = p as unknown as Record<string, unknown>
+  const block: Record<string, unknown> = {}
+  for (const field of BLOCK_FIELDS[p.kind]) {
+    if (flat[field] !== undefined) block[field] = flat[field]
+  }
+  if (Object.keys(block).length === 0) return p
+
+  return { ...p, [p.kind]: block } as PlanProposal
+}
+
+/**
+ * "22:45," and "9:05" both mean a time; "later" does not. Returns HH:MM or
+ * undefined, so a stray character cannot fail the whole proposal.
+ */
+export function cleanTime(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const m = value.match(/(\d{1,2}):(\d{2})/)
+  if (!m) return undefined
+  const h = Number(m[1])
+  const min = Number(m[2])
+  if (h > 23 || min > 59) return undefined
+  return `${String(h).padStart(2, '0')}:${m[2]}`
+}
+
+export function normalizeProposal(raw: PlanProposal): NormalizeResult {
+  const lifted = liftFlattenedBlock(raw)
+  const block = lifted?.[lifted?.kind]
+  if (!lifted?.kind || !block) {
     return { ok: false, error: 'The AI returned an incomplete plan. Try rephrasing.' }
   }
 
-  p = { ...p, title: stripLeadingEmoji(p.title ?? '') }
+  // Applies to every kind, so it happens before the branches rather than
+  // inside one of them.
+  const p = { ...lifted, title: stripLeadingEmoji(lifted.title ?? '') }
+
+  if (p.kind === 'task') {
+    const t = { ...p.task! }
+    // A model will write "22:45," or "9:05"; the create route wants HH:MM.
+    t.due_time = cleanTime(t.due_time)
+    return { ok: true, proposal: { ...p, task: t } }
+  }
 
   if (p.kind === 'habit') {
     const h = { ...p.habit! }

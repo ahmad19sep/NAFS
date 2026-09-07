@@ -45,6 +45,16 @@ is configured but fails on the day — 429, 5xx, 529, network — the call falls
 the Worker and reports `fellBack: true`, and the card says so. A rejected key (401) is
 not hidden that way: it surfaces as an error the owner needs to see.
 
+**Two things that made Claude fail silently, both fixed.** The request must not
+send `temperature` — newer models reject it outright (`400 temperature is
+deprecated for this model`), and because `aiDeep` falls back on any non-401
+failure, sending it meant every deep call quietly ran on the free Worker. And
+an API key that is not itself workspace-scoped is rejected with a 400 until
+`ANTHROPIC_WORKSPACE_ID` is set. Both were live for days without anything
+looking broken, which is why `fellBackReason` now travels to the UI: a
+misconfiguration that falls back quietly is indistinguishable from a working
+feature.
+
 It is paid per call, so it runs on demand and once a day per user, never on a cron.
 Nothing a chat turn can do may route here. The key is read only in `anthropic-ai.ts`,
 sent only as `x-api-key`, and never logged.

@@ -30,7 +30,6 @@ function getWorkspaceId(): string | null {
 /** A month of data and a 400-word answer: slower than a chat turn. */
 const TIMEOUT_MS = 60_000
 const DEFAULT_MAX_TOKENS = 2000
-const DEFAULT_TEMPERATURE = 0.5
 
 function getKey(): string | null {
   return process.env.ANTHROPIC_API_KEY || null
@@ -103,10 +102,15 @@ export async function anthropicChat(
         'anthropic-version': ANTHROPIC_VERSION,
         ...(getWorkspaceId() ? { 'anthropic-workspace-id': getWorkspaceId() as string } : {}),
       },
+      // No `temperature`. Newer Claude models reject it outright — measured
+      // live on claude-sonnet-5: `400 temperature is deprecated for this
+      // model` — and since aiDeep falls back on any non-401 failure, sending
+      // it meant every deep call quietly ran on the free Worker instead.
+      // Omitting it lets the model use its own default, which is what the
+      // deprecation intends and what older models did with our 0.5 anyway.
       body: JSON.stringify({
         model: ANTHROPIC_MODEL,
         max_tokens: opts.maxTokens ?? DEFAULT_MAX_TOKENS,
-        temperature: opts.temperature ?? DEFAULT_TEMPERATURE,
         ...(shaped.system ? { system: shaped.system } : {}),
         messages: shaped.messages,
       }),

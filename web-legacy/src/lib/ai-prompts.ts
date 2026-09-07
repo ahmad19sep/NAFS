@@ -123,6 +123,10 @@ Each step: { "kind": "task" | "habit" | "challenge", "title": string, "emoji": s
   "habit": { "type": "simple" | "counter" | "duration", "target_value"?: number, "unit"?: string, "time_target_mins"?: number, "schedule_kind": "daily" | "weekdays", "schedule_days"?: ["mon", ...] }
   "challenge": { "frequency": "daily" | "weekly" | "monthly" | "yearly", "duration_days": number, "requires_photo": boolean } }
 
+
+Worked example of one step. The fields live INSIDE the block named after "kind" — never beside it:
+{ "kind": "task", "title": "Move the charger to the kitchen", "emoji": "🔌", "reason": "So the phone is not the thing within reach at 11pm.", "task": { "priority": "high", "note": "Kitchen counter, not the bedroom." } }
+A step whose fields are written flat, beside "kind" instead of inside the block, is wrong.
 Reply with a single valid JSON value and nothing else.`
 
 /**
