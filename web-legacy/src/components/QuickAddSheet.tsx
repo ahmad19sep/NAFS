@@ -2,7 +2,8 @@
 
 import Link from 'next/link'
 import {
-  X, ListChecks, Repeat, Flame, Trophy, MoonStar, HeartPulse, type LucideIcon,
+  X, ListChecks, Repeat, Flame, Trophy, MoonStar, HeartPulse, Smartphone,
+  type LucideIcon,
 } from 'lucide-react'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { useDeenEnabled } from '@/hooks/useDeenEnabled'
@@ -19,6 +20,7 @@ const ACTIONS: { href: string; icon: LucideIcon; label: string }[] = [
   { href: '/goals',      icon: Trophy,     label: 'New goal' },
   { href: '/deen',       icon: MoonStar,   label: 'Log prayer' },
   { href: '/health',     icon: HeartPulse, label: 'Log health' },
+  { href: '/screentime', icon: Smartphone, label: 'Screen time' },
 ]
 
 export default function QuickAddSheet({ open, onClose }: Props) {
