@@ -49,7 +49,9 @@ export default function GrowthReviewCard({ initial, deepModel }: Props) {
         setNote('Already reviewed today — this is today’s. Tomorrow brings a fresh one.')
       } else {
         const parts: string[] = []
-        if (data.fellBack) parts.push('Claude was unavailable, so the free model wrote this one.')
+        if (data.fellBack) {
+          parts.push(`Written by the free model — Claude did not answer. ${data.fellBackReason ?? ''}`.trim())
+        }
         if (data.saved === false && data.hint) parts.push(data.hint)
         if (parts.length) setNote(parts.join(' '))
       }

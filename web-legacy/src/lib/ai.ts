@@ -87,19 +87,35 @@ export function deepProvider(): DeepProvider {
  * Paid per call. Only routes that do a real month-long analysis may use
  * this; anything a chat turn can do stays on aiChat.
  */
-export async function aiDeep(
-  messages: ChatMessage[],
-  opts: AiOptions = {},
-): Promise<{ text: string; provider: DeepProvider; model: string; fellBack: boolean }> {
+export interface DeepResult {
+  text: string
+  provider: DeepProvider
+  model: string
+  fellBack: boolean
+  /**
+   * Why Claude did not answer, when it was configured but did not. Carried so
+   * the UI can say "the key is not scoped to a workspace" instead of the much
+   * less useful "Claude was unavailable" — a misconfiguration that falls back
+   * silently looks exactly like a working feature, and stays broken for weeks.
+   */
+  fellBackReason?: string
+}
+
+export async function aiDeep(messages: ChatMessage[], opts: AiOptions = {}): Promise<DeepResult> {
   const o = { maxTokens: MAX_TOKENS_FOR.deep, ...opts }
   if (hasAnthropicAi()) {
+    let reason: string | undefined
     try {
       return { text: await anthropicChat(messages, o), provider: 'anthropic', model: ANTHROPIC_MODEL, fellBack: false }
     } catch (err) {
       if (err instanceof AiError && err.status === 401) throw err
+      reason = err instanceof AiError ? err.message : 'Claude could not be reached.'
       // Fall through to the Worker.
     }
-    return { text: await cloudflareChat(messages, o), provider: 'cloudflare', model: CLOUDFLARE_AI_MODEL, fellBack: true }
+    return {
+      text: await cloudflareChat(messages, o),
+      provider: 'cloudflare', model: CLOUDFLARE_AI_MODEL, fellBack: true, fellBackReason: reason,
+    }
   }
   return { text: await cloudflareChat(messages, o), provider: 'cloudflare', model: CLOUDFLARE_AI_MODEL, fellBack: false }
 }
@@ -126,7 +142,7 @@ export type AiFailureCode =
   | 'schema_mismatch'  // parsed, but the shape was wrong after retry
 
 export type AiResult<T> =
-  | { ok: true; data: T; attempts: number }
+  | { ok: true; data: T; attempts: number; provider?: DeepProvider; fellBack?: boolean; fellBackReason?: string }
   | { ok: false; code: AiFailureCode; message: string; attempts: number }
 
 /** Auth and configuration problems will not fix themselves on a second try. */
@@ -188,6 +204,13 @@ export async function aiStructured<T>(
   prompt: string,
   schema: Schema,
   system?: string,
+  /**
+   * deep: route through aiDeep (Claude when configured) instead of the
+   * Worker. For structured output that needs real reasoning — reading a
+   * whole conversation and proposing a plan from it. Paid per call, so
+   * only call sites that genuinely need it may pass this.
+   */
+  opts: { deep?: boolean } = {},
 ): Promise<AiResult<T>> {
   const MAX_ATTEMPTS = 2
   const startedAt = Date.now()
@@ -196,6 +219,10 @@ export async function aiStructured<T>(
     code: 'unavailable',
     message: 'The AI service is temporarily unavailable.',
   }
+  // Set only on the deep path, so a caller can say which model answered.
+  let provider: DeepProvider | undefined
+  let fellBack: boolean | undefined
+  let fellBackReason: string | undefined
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     // Stop rather than start a retry that cannot finish before the route is
@@ -204,12 +231,24 @@ export async function aiStructured<T>(
     if (budget === null) break
 
     let raw: string
+    const body = correction ? `${prompt}\n\n${correction}` : prompt
     try {
-      raw = await cloudflareText(
-        correction ? `${prompt}\n\n${correction}` : prompt,
-        jsonSystemPrompt(system),
-        { maxTokens: MAX_TOKENS_FOR.json, temperature: 0.2, timeoutMs: budget },
-      )
+      if (opts.deep) {
+        const out = await aiDeep(
+          [{ role: 'system', content: jsonSystemPrompt(system) }, { role: 'user', content: body }],
+          { maxTokens: MAX_TOKENS_FOR.json, temperature: 0.2, timeoutMs: budget },
+        )
+        raw = out.text
+        provider = out.provider
+        fellBack = out.fellBack
+        fellBackReason = out.fellBackReason
+      } else {
+        raw = await cloudflareText(
+          body,
+          jsonSystemPrompt(system),
+          { maxTokens: MAX_TOKENS_FOR.json, temperature: 0.2, timeoutMs: budget },
+        )
+      }
     } catch (err) {
       const failure = classify(err)
       // A reasoning model that runs out of budget mid-thought returns nothing
@@ -231,7 +270,7 @@ export async function aiStructured<T>(
     }
 
     const checked = validate<T>(parsed.value, schema)
-    if (checked.ok) return { ok: true, data: checked.value, attempts: attempt }
+    if (checked.ok) return { ok: true, data: checked.value, attempts: attempt, provider, fellBack, fellBackReason }
 
     last = { code: 'schema_mismatch', message: 'The AI service returned unexpected data.' }
     correction =

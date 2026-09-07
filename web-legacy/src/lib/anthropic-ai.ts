@@ -17,6 +17,16 @@ export const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-5'
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
+
+/**
+ * Only needed for an API key that is not itself scoped to a workspace. Such a
+ * key is rejected with a 400 until the workspace is named, which reads like a
+ * malformed request rather than the configuration problem it is — so the
+ * message for that status says exactly this.
+ */
+function getWorkspaceId(): string | null {
+  return process.env.ANTHROPIC_WORKSPACE_ID || null
+}
 /** A month of data and a 400-word answer: slower than a chat turn. */
 const TIMEOUT_MS = 60_000
 const DEFAULT_MAX_TOKENS = 2000
@@ -31,6 +41,10 @@ export function hasAnthropicAi(): boolean {
 }
 
 function messageForStatus(status: number): string {
+  if (status === 400) {
+    return 'Anthropic rejected the request (400). The usual cause is an API key that is not '
+      + 'scoped to a workspace: either create a workspace-scoped key, or set ANTHROPIC_WORKSPACE_ID.'
+  }
   if (status === 401) return 'The Anthropic API key was rejected.'
   if (status === 429) return 'The Anthropic rate limit has been reached. Try again in a minute.'
   if (status === 529 || status >= 500) return 'Anthropic is temporarily overloaded.'
@@ -87,6 +101,7 @@ export async function anthropicChat(
         'Content-Type': 'application/json',
         'x-api-key': key,
         'anthropic-version': ANTHROPIC_VERSION,
+        ...(getWorkspaceId() ? { 'anthropic-workspace-id': getWorkspaceId() as string } : {}),
       },
       body: JSON.stringify({
         model: ANTHROPIC_MODEL,

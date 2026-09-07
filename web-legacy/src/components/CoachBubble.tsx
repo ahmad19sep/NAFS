@@ -7,6 +7,7 @@ import { Sparkles, X, Send, Loader2, ExternalLink, LifeBuoy } from 'lucide-react
 import { cn } from '@/lib/utils'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { openQuickAdd } from '@/lib/quick-add'
+import ChatPlanButton from '@/components/ChatPlanButton'
 
 /**
  * The coach, reachable from anywhere.
@@ -181,6 +182,13 @@ export default function CoachBubble() {
               )}
               {error && <p className="text-xs text-red-400 px-1">{error}</p>}
             </div>
+
+            {/* Turn the conversation into tasks and habits, without leaving it */}
+            {messages.length > 0 && (
+              <div className="flex-shrink-0 px-4 pt-1">
+                <ChatPlanButton messages={messages} compact onNavigate={() => setOpen(false)} />
+              </div>
+            )}
 
             {/* Input */}
             <div className="px-4 pt-2 flex-shrink-0">

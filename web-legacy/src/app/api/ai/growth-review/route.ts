@@ -109,6 +109,7 @@ export async function POST(req: NextRequest) {
       cached: false,
       provider: out.provider,
       fellBack: out.fellBack,
+      fellBackReason: out.fellBackReason,
       saved: false,
       hint: 'This review was not kept — run supabase/ai_reports_growth.sql once so reviews are saved.',
     })
@@ -119,6 +120,7 @@ export async function POST(req: NextRequest) {
     cached: false,
     provider: out.provider,
     fellBack: out.fellBack,
+    fellBackReason: out.fellBackReason,
     saved: true,
   })
 }

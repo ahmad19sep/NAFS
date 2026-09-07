@@ -136,6 +136,79 @@ export function parseJson(raw: string): { ok: true; value: unknown } | { ok: fal
   try {
     return { ok: true, value: JSON.parse(text) }
   } catch {
+    // One narrow repair, then give up. See repairStrayObjectQuotes.
+    const repaired = repairStrayObjectQuotes(text)
+    if (repaired !== null) {
+      try {
+        return { ok: true, value: JSON.parse(repaired) }
+      } catch {
+        // fall through
+      }
+    }
     return { ok: false, error: 'not valid JSON' }
   }
+}
+
+/**
+ * Undo one specific malformation the free model produces, and nothing else.
+ *
+ * gpt-oss-20b intermittently wraps an object inside an array in quotes, so a
+ * list of steps comes back as `[{...}, "{...}]` — a stray double quote after
+ * the comma. Observed twice in live testing on plans of three or more steps;
+ * the content was correct both times and only the punctuation was wrong.
+ *
+ * The repair is purely syntactic: remove a double quote that sits between a
+ * comma or bracket and an opening brace, and its partner immediately after
+ * the matching closing brace. It never edits content, never guesses a value,
+ * and the result still has to parse — if it does not, the caller's corrective
+ * retry runs as before. Returns null when there is nothing of this shape.
+ */
+export function repairStrayObjectQuotes(text: string): string | null {
+  // Only attempt this on something that looks like the shape it breaks.
+  if (!/[,[]\s*"\s*\{/.test(text)) return null
+
+  const out: string[] = []
+  let inString = false
+  let escaped = false
+  let repairs = 0
+  // The last character written that was not whitespace. Tracked rather than
+  // re-joining `out` each time, which would make this quadratic.
+  let prevMeaningful = ''
+
+  const push = (ch: string) => {
+    out.push(ch)
+    if (!/\s/.test(ch)) prevMeaningful = ch
+  }
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+
+    if (inString) {
+      push(ch)
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+
+    if (ch === '"') {
+      // A quote opening an object inside an array: drop it.
+      if (/^\s*\{/.test(text.slice(i + 1)) && (prevMeaningful === ',' || prevMeaningful === '[')) {
+        repairs++
+        continue
+      }
+      // Its partner, closing that object: drop it too.
+      if (repairs > 0 && prevMeaningful === '}' && /^\s*[,\]]/.test(text.slice(i + 1))) {
+        repairs++
+        continue
+      }
+      inString = true
+      push(ch)
+      continue
+    }
+
+    push(ch)
+  }
+
+  return repairs > 0 ? out.join('') : null
 }

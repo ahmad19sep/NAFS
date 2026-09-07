@@ -109,6 +109,7 @@ export async function POST(req: NextRequest) {
       review: { id: 'unsaved', period, start_date: current.start, content_md: out.text, model_used: out.model, generated_at },
       provider: out.provider,
       fellBack: out.fellBack,
+      fellBackReason: out.fellBackReason,
       saved: false,
       hint: 'This read was not kept — run supabase/report_reviews.sql once so it is saved and printed.',
     })
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
     review: saved,
     provider: out.provider,
     fellBack: out.fellBack,
+    fellBackReason: out.fellBackReason,
     saved: true,
   })
 }

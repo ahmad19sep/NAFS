@@ -5,6 +5,7 @@ import { Send, Zap, Mail, FileText, Trash2 } from 'lucide-react'
 import { timeAgo } from '@/lib/utils'
 import RichText from '@/components/RichText'
 import GrowthReviewCard, { type GrowthReview } from '@/components/GrowthReviewCard'
+import ChatPlanButton from '@/components/ChatPlanButton'
 
 interface Report {
   id: string
@@ -282,6 +283,13 @@ export default function CoachClient({ userId, reports, letters, lastConversation
             )}
             <div ref={chatEndRef} />
           </div>
+
+          {/* Turn what was just discussed into tasks and habits, in place */}
+          {messages.length > 0 && (
+            <div className="pb-3">
+              <ChatPlanButton messages={messages} />
+            </div>
+          )}
 
           <div className="flex gap-2 pb-4">
             <input

@@ -161,6 +161,7 @@ docs first, then measure accuracy on real screenshots before trusting any of it.
 | `APP_KEY` | **yes** | Cloudflare Worker secret | must equal `CLOUDFLARE_APP_KEY` |
 | `ANTHROPIC_API_KEY` | **yes** | Vercel env vars, `.env.local` | enables the deep path (growth review); absent means the Worker answers |
 | `ANTHROPIC_MODEL` | no | optional override | defaults to `claude-sonnet-5` |
+| `ANTHROPIC_WORKSPACE_ID` | no | optional | **required when the API key is not itself workspace-scoped** — without it Anthropic rejects every call with a 400 and the deep path falls back silently |
 
 The key is server-side only, and has to be: the daily and weekly report crons run
 with **no browser attached**. A key held in the browser would break them permanently.
@@ -211,6 +212,7 @@ the coach and calls no model.
 |---|---|---|
 | `ai/chat` | `aiChat` | the coach, answering from 30 days of real data, what keeps not happening and what was different on those days, and what the user told it before — same context for the Coach page and the floating bubble |
 | `ai/growth-review` | `aiDeep` | improving, lacking, the pattern underneath, three rules for the week, one question — on demand, once a day, this week and this month against last |
+| `ai/plan-from-chat` | `aiStructured({ deep: true })` | reads a whole coach conversation and proposes the tasks, habits and challenges that answer it — **proposes only**; the user ticks and confirms, and each step is created through the normal route |
 | `ai/report-review` | `aiDeep` | the written read printed on the weekly/monthly report: in plain words, what improved, where to improve, the pattern, three things to do, one question. Stored per (period, start date), so a report printed weeks later carries the same words |
 | `coach/notes` | — | saves a reason for a miss, a bad-day note, or a life answer, in the user's words |
 | `ai/evening-verdict` | `aiText('verdict')` | end-of-day verdict |
@@ -262,6 +264,24 @@ records, say so with the numbers and ask them to choose.
 The app does not punish. The only consequence in it is one the user sets on
 themselves — a sadqa pledge on a challenge. The pattern card names the evidence
 and points at the coach.
+
+---
+
+## When the coach is talked to, and when it reports
+
+`ai/chat` used to rebuild the user's turn as `USER DATA: {5000 tokens of JSON}` followed by `USER QUESTION: <one line>`, and `ASK_ASCEND_SYSTEM` opened with "answer using THEIR data" and "always cite at least one specific number". Both were wrong in the same direction. Someone who wrote "I have fallen into this habit, help me" had their words buried at the bottom of a wall of statistics and got a reading of their consistency back. The model was obeying.
+
+Now the records go in as their own **system** turn, labelled background, and the user's message is left exactly as written so it is the last thing the model reads. The prompt's first rule is to answer what was actually said, and it branches on the kind of message: a situation gets a conversation, a question about the data gets numbers, anything else gets a normal reply.
+
+The conversation is where a plan starts, not where it ends. **Build a plan from this** under both chat surfaces sends the transcript to `ai/plan-from-chat`, which reads what was said and proposes real steps through the shared `PlanSteps` component. Nothing is created until the user ticks and confirms.
+
+---
+
+## One JSON repair, and why only one
+
+`parseJson` makes a single narrow repair before giving up: gpt-oss-20b intermittently wraps an object inside an array in quotes, so a list of steps arrives as `[{...}, "{...}]`. Observed twice in live testing on plans of three or more steps, with the content correct both times and only the punctuation wrong.
+
+The repair is purely syntactic and never edits content, the result still has to parse, and if it does not the caller's corrective retry runs exactly as before. `repairStrayObjectQuotes` is covered by tests that pin what it must NOT touch: braces inside strings, escaped quotes, and ordinary string elements that follow a comma.
 
 ---
 

@@ -145,7 +145,9 @@ export default function ReportsClient({ report: d, initialReview, deepModel }: P
       if (!res.ok || !data?.review) throw new Error(data?.error || 'The read could not be written right now.')
       setReview(data.review)
       const notes: string[] = []
-      if (data.fellBack) notes.push('Claude was unavailable, so the free model wrote this one.')
+      if (data.fellBack) {
+        notes.push(`Written by the free model — Claude did not answer. ${data.fellBackReason ?? ''}`.trim())
+      }
       if (data.saved === false && data.hint) notes.push(data.hint)
       if (notes.length) setReviewNote(notes.join(' '))
     } catch (e: any) {

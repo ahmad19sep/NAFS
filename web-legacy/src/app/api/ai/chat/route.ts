@@ -18,18 +18,35 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { messages } = await req.json()
-    const userQuestion = messages[messages.length - 1]?.content ?? ''
 
     const { context } = await buildCoachContext(supabase, user.id)
 
-    const contextPrompt =
-      `USER DATA (real, last 30 days):\n${JSON.stringify(context, null, 1)}\n\nUSER QUESTION: ${userQuestion}`
+    // The records go in as BACKGROUND, on their own system turn — not stitched
+    // onto the front of what the user typed.
+    //
+    // They used to be: one user turn reading "USER DATA: {5000 tokens of JSON}
+    // ... USER QUESTION: <one line>". Someone opening with "I have fallen into
+    // this habit, help me" had their words sitting at the bottom of a wall of
+    // statistics, and got a reading of their consistency back. Their message is
+    // now the last thing the model sees, which is where a question belongs.
+    const backgroundPrompt = [
+      "BACKGROUND — this person's own records, last 30 days.",
+      'Reference material, not the subject of the conversation.',
+      '',
+      JSON.stringify(context, null, 1),
+      '',
+      'Draw on this only where it bears on what they actually say to you.',
+      'Do not recite it, and do not open with statistics unless they asked about their numbers.',
+    ].join('\n')
 
     const aiMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
       { role: 'system', content: ASK_ASCEND_SYSTEM },
-      ...messages.slice(-8).map((m: any, i: number, arr: any[]) => ({
+      { role: 'system', content: backgroundPrompt },
+      // The turns exactly as they were written. Both transports keep system
+      // messages ahead of the turns, so the newest user message stays last.
+      ...messages.slice(-8).map((m: any) => ({
         role: m.role as 'user' | 'assistant',
-        content: m.role === 'user' && i === arr.length - 1 ? contextPrompt : m.content,
+        content: String(m.content ?? ''),
       })),
     ]
 
