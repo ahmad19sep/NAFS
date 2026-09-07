@@ -1,10 +1,15 @@
 'use client'
 
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import {
   X, ListChecks, Repeat, Flame, Trophy, MoonStar, HeartPulse, Smartphone,
-  type LucideIcon,
+  Check, Loader2, type LucideIcon,
 } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
+import { cn, todayString, formatDate } from '@/lib/utils'
+import { isHabitScheduledOn } from '@/lib/history'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { useDeenEnabled } from '@/hooks/useDeenEnabled'
 
@@ -13,7 +18,7 @@ interface Props {
   onClose: () => void
 }
 
-const ACTIONS: { href: string; icon: LucideIcon; label: string }[] = [
+const CREATE_ACTIONS: { href: string; icon: LucideIcon; label: string }[] = [
   { href: '/tasks',      icon: ListChecks, label: 'New task' },
   { href: '/habits',     icon: Repeat,     label: 'New habit' },
   { href: '/challenges', icon: Flame,      label: 'New challenge' },
@@ -23,18 +28,96 @@ const ACTIONS: { href: string; icon: LucideIcon; label: string }[] = [
   { href: '/screentime', icon: Smartphone, label: 'Screen time' },
 ]
 
+interface QuickHabit {
+  id: string
+  name: string
+  emoji: string
+  type: 'simple' | 'counter' | 'duration' | 'subject'
+  target_value: number
+  time_target_mins: number
+  unit: string | null
+  is_paused: boolean
+  schedule_kind: string
+  schedule_days: string[] | null
+  done: boolean
+}
+
 export default function QuickAddSheet({ open, onClose }: Props) {
   useBodyScrollLock(open)
   const deenEnabled = useDeenEnabled()
+  const router = useRouter()
+  const supabase = createClient()
+  const today = todayString()
+
+  // Log is the default: recording something you already do is the common case,
+  // and the old sheet made you enter a creation flow to do it.
+  const [mode, setMode] = useState<'log' | 'create'>('log')
+  const [habits, setHabits] = useState<QuickHabit[] | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [justLogged, setJustLogged] = useState<{ id: string; name: string } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setHabits([]); return }
+
+    const [{ data: rows }, { data: logs }] = await Promise.all([
+      supabase.from('habits')
+        .select('id, name, emoji, type, target_value, time_target_mins, unit, is_paused, schedule_kind, schedule_days, sort_order')
+        .eq('user_id', user.id).eq('is_active', true).order('sort_order'),
+      supabase.from('habit_logs')
+        .select('habit_id, completed').eq('user_id', user.id).eq('date', today),
+    ])
+
+    const doneIds = new Set((logs ?? []).filter((l: any) => l.completed).map((l: any) => l.habit_id))
+    setHabits((rows ?? []).map((h: any) => ({ ...h, done: doneIds.has(h.id) })))
+  }, [supabase, today])
+
+  useEffect(() => {
+    if (!open) return
+    setMode('log'); setJustLogged(null); setError(null)
+    setHabits(null)
+    load()
+  }, [open, load])
+
   if (!open) return null
 
-  const actions = ACTIONS.filter((a) => deenEnabled || a.href !== '/deen')
+  const createActions = CREATE_ACTIONS.filter((a) => deenEnabled || a.href !== '/deen')
+
+  // Only what can genuinely be finished in one tap. A counter or duration habit
+  // needs a number, and offering a control that cannot record it honestly is
+  // worse than sending the user to the page that can.
+  const oneTap = (habits ?? []).filter(
+    (h) => h.type === 'simple' && isHabitScheduledOn(h as any, today),
+  )
+  const needsDetail = (habits ?? []).filter(
+    (h) => h.type !== 'simple' && isHabitScheduledOn(h as any, today),
+  )
+
+  async function setHabitDone(h: QuickHabit, done: boolean) {
+    if (busy) return
+    setBusy(h.id); setError(null)
+    try {
+      const res = await fetch('/api/habits/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // An absolute state, not a flip: repeating it is harmless.
+        body: JSON.stringify({ habitId: h.id, date: today, completed: done, value: done ? 1 : 0 }),
+      })
+      if (!res.ok) { setError('Could not save that. Try again.'); return }
+
+      setHabits((prev) => (prev ?? []).map((x) => (x.id === h.id ? { ...x, done } : x)))
+      setJustLogged(done ? { id: h.id, name: h.name } : null)
+      router.refresh()   // dashboard, history and streaks read the same rows
+    } catch {
+      setError('Not saved — check your connection.')
+    } finally {
+      setBusy(null)
+    }
+  }
 
   return (
-    <div
-      className="modal-overlay items-end backdrop-blur-sm animate-in fade-in"
-      onClick={onClose}
-    >
+    <div className="modal-overlay items-end backdrop-blur-sm animate-in fade-in" onClick={onClose}>
       <div
         className="w-full max-w-md rounded-t-3xl border-t border-white/10
                    bg-gradient-to-b from-[#16314a] via-[#0f2235] to-[#0b1a2b]
@@ -42,40 +125,135 @@ export default function QuickAddSheet({ open, onClose }: Props) {
                    pb-[max(env(safe-area-inset-bottom),1rem)]"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Grabber */}
         <div className="flex justify-center pt-2.5 pb-1">
           <div className="h-1 w-12 rounded-full bg-white/20" />
         </div>
 
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 pt-1 pb-3">
-          <p className="text-base font-bold text-foreground">Quick add</p>
+        {/* Header — the date is shown, because what you log is dated and a
+            sheet that hides it invites logging the wrong day. */}
+        <div className="flex items-start justify-between px-5 pt-1 pb-3">
+          <div>
+            <p className="text-base font-bold text-foreground">
+              {mode === 'log' ? 'Log something' : 'Create'}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(today)}</p>
+          </div>
           <button onClick={onClose}
             className="h-8 w-8 rounded-lg hover:bg-white/10 flex items-center justify-center transition-colors">
             <X size={16} className="text-muted-foreground" />
           </button>
         </div>
 
-        {/* Action grid */}
-        <div className="px-5 grid grid-cols-3 gap-2.5">
-          {actions.map((a) => (
-            <Link key={a.href} href={a.href} onClick={onClose}
-              className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-center
-                         transition-all active:scale-95 hover:border-gold/30 hover:bg-white/[0.07]">
-              <div className="mx-auto h-10 w-10 rounded-xl border border-gold/20 bg-gold/[0.07]
-                              flex items-center justify-center mb-2">
-                <a.icon size={17} strokeWidth={2} className="text-gold" />
-              </div>
-              <p className="text-[11px] font-medium text-foreground leading-tight">{a.label}</p>
-            </Link>
-          ))}
+        {/* Mode switch */}
+        <div className="px-5 pb-3">
+          <div className="grid grid-cols-2 gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
+            {(['log', 'create'] as const).map((m) => (
+              <button key={m} onClick={() => setMode(m)}
+                className={cn('rounded-lg py-2 text-xs font-semibold transition-all',
+                  mode === m ? 'bg-gold/15 text-gold' : 'text-muted-foreground hover:text-foreground',
+                )}>
+                {m === 'log' ? 'Log' : 'Create'}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="px-5 mt-3 pb-3 text-center">
-          <p className="text-[10px] text-muted-foreground">
-            Tap a card to open its create flow
-          </p>
-        </div>
+        {mode === 'log' ? (
+          <div className="px-5 pb-4">
+            {habits === null && (
+              <div className="flex items-center justify-center py-8 text-muted-foreground">
+                <Loader2 size={18} className="animate-spin" />
+              </div>
+            )}
+
+            {habits !== null && oneTap.length === 0 && needsDetail.length === 0 && (
+              <div className="py-6 text-center">
+                <p className="text-sm font-semibold text-foreground">Nothing scheduled today</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Habits you schedule for today appear here for one-tap logging.
+                </p>
+                <button onClick={() => setMode('create')}
+                  className="btn-gold mt-4 px-5 py-2 text-xs">Create something</button>
+              </div>
+            )}
+
+            {oneTap.length > 0 && (
+              <div className="space-y-2">
+                {oneTap.map((h) => (
+                  <button key={h.id} onClick={() => setHabitDone(h, !h.done)} disabled={!!busy}
+                    className={cn('flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-all active:scale-95 disabled:opacity-60',
+                      h.done ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-white/10 bg-white/5',
+                    )}>
+                    <span className="text-lg">{h.emoji}</span>
+                    <span className={cn('flex-1 text-sm font-medium',
+                      h.done ? 'text-emerald-300' : 'text-foreground')}>{h.name}</span>
+                    {busy === h.id
+                      ? <Loader2 size={15} className="animate-spin text-muted-foreground" />
+                      : h.done
+                        ? <Check size={16} className="text-emerald-400" />
+                        : <span className="text-[10px] uppercase tracking-wider text-muted-foreground">tap</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Undo, because the whole point of one tap is that it is easy to
+                tap the wrong thing. */}
+            {justLogged && (
+              <div className="mt-3 flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+                <p className="flex-1 min-w-0 truncate text-xs text-muted-foreground">
+                  Logged <span className="text-foreground font-medium">{justLogged.name}</span>
+                </p>
+                <button
+                  onClick={() => {
+                    const h = (habits ?? []).find((x) => x.id === justLogged.id)
+                    if (h) setHabitDone(h, false)
+                  }}
+                  className="shrink-0 rounded-lg border border-gold/40 bg-gold/10 px-3 py-1 text-[11px] font-semibold text-gold">
+                  Undo
+                </button>
+              </div>
+            )}
+
+            {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
+
+            {needsDetail.length > 0 && (
+              <div className="mt-4">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">
+                  Needs a number
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {needsDetail.map((h) => (
+                    <Link key={h.id} href="/habits" onClick={onClose}
+                      className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5
+                                 text-xs text-foreground hover:border-gold/40 transition-all active:scale-95">
+                      <span>{h.emoji}</span>{h.name}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <div className="px-5 grid grid-cols-3 gap-2.5">
+              {createActions.map((a) => (
+                <Link key={a.href} href={a.href} onClick={onClose}
+                  className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 text-center
+                             transition-all active:scale-95 hover:border-gold/30 hover:bg-white/[0.07]">
+                  <div className="mx-auto h-10 w-10 rounded-xl border border-gold/20 bg-gold/[0.07]
+                                  flex items-center justify-center mb-2">
+                    <a.icon size={17} strokeWidth={2} className="text-gold" />
+                  </div>
+                  <p className="text-[11px] font-medium text-foreground leading-tight">{a.label}</p>
+                </Link>
+              ))}
+            </div>
+            <div className="px-5 mt-3 pb-3 text-center">
+              <p className="text-[10px] text-muted-foreground">Tap a card to open its create flow</p>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
