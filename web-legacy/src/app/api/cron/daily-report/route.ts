@@ -2,13 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceClient } from '@/lib/supabase/service'
 import { aiText } from '@/lib/ai'
-import { sendEmail, dailyReportHTML, hasEmail } from '@/lib/email'
 import { sendWhatsApp, hasWhatsApp } from '@/lib/whatsapp'
 import { todayInTZ, shiftDate } from '@/lib/utils'
 import webpush from 'web-push'
 
 // Vercel Cron: `{ "path": "/api/cron/daily-report", "schedule": "0 16 * * *" }`
-// 16:00 UTC = 21:00 Pakistan (Asia/Karachi). Delivers email + push + WhatsApp.
+// 16:00 UTC = 21:00 Pakistan (Asia/Karachi). Delivers push, plus WhatsApp when
+// configured. Email delivery was removed — see the VAPID guard below.
 
 interface User {
   id: string
@@ -46,7 +46,15 @@ export async function GET(req: NextRequest) {
   const isTest = req.nextUrl.searchParams.get('test') === '1'
 
   if (!isCron && !isTest) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!hasEmail()) return NextResponse.json({ error: 'RESEND_API_KEY not set' }, { status: 500 })
+
+  // Email delivery was removed — it needed a third-party account and a verified
+  // domain to be useful. The verdict goes out by push, which needs only the
+  // VAPID keys, with WhatsApp as an optional extra.
+  if (!process.env.VAPID_PRIVATE_KEY || !process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) {
+    return NextResponse.json({
+      error: 'VAPID keys are not set — the daily verdict has no way to reach anyone.',
+    }, { status: 500 })
+  }
 
   // SAFE-02. A cron request carries no session, so the cookie-based client sees
   // auth.uid() = NULL, every RLS policy fails closed, and the job reports
@@ -94,11 +102,6 @@ export async function GET(req: NextRequest) {
 }
 
 async function buildAndSend(u: User, today: string, yest: string, supabase: any, isTest: boolean) {
-  if (!u.email) return false
-  // In test mode, allow overriding the recipient (Resend free tier only sends
-  // to your own verified email until you verify a domain).
-  const recipient = (isTest && process.env.RESEND_DEV_RECIPIENT) || u.email
-
   // Pull today's snapshot
   const [
     { data: prayer },
@@ -244,23 +247,7 @@ Health metrics logged: ${healthDone}/${healthTotal}`
     healthEngaged ? { emoji: '❤️', label: 'Health',     earned: healthDone,    max: healthTotal } : null,
   ].filter(Boolean) as { emoji: string; label: string; earned: number; max: number }[]
 
-  const html = dailyReportHTML({
-    name: u.name || 'friend',
-    date: today,
-    score,
-    delta,
-    verdict: verdictText,
-    stats,
-    tomorrow: tomorrowText,
-  })
-
-  await sendEmail({
-    to: recipient,
-    subject: `${isTest ? '[TEST] ' : ''}Your Ascend daily verdict — ${score}%`,
-    html,
-  })
-
-  // ----- Push copy (free, instant) -----
+  // ----- Push (the delivery channel) -----
   const sub = (u as any).push_subscription
   if (sub && (u as any).notifications_enabled !== false &&
       process.env.VAPID_PRIVATE_KEY && process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) {

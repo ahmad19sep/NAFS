@@ -51,7 +51,7 @@ NAFS/
 | Layer | Where it runs | What it does |
 |---|---|---|
 | **Native app** (this repo root) | Android / iOS via Expo | UI, local auth, direct Supabase queries |
-| **Web backend** (`web-legacy/`) | Vercel | AI routes (Cloudflare Worker), email reports, push cron |
+| **Web backend** (`web-legacy/`) | Vercel | AI routes (Cloudflare Worker), push notifications, cron |
 
 The app calls Supabase directly for all data reads/writes, and calls `EXPO_PUBLIC_API_BASE_URL/api/...` for AI features that need server-side API keys.
 
@@ -227,7 +227,7 @@ The `web-legacy/` folder is the original Next.js app. It is still the **live web
 
 ```
 web-legacy/
-├── src/app/api/         # 27 API routes (AI, notifications, cron, email)
-├── src/lib/             # ai.ts + cloudflare-ai.ts (AI), email (Resend)
+├── src/app/api/         # API routes (AI, notifications, cron)
+├── src/lib/             # ai.ts + cloudflare-ai.ts (AI), report, scoring
 └── package.json         # Web app dependencies (Next.js 14)
 ```

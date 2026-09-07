@@ -60,15 +60,15 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
   const [aboutMe, setAboutMe] = useState(initialAbout)
   const aboutFilled = !!(aboutMe.bio || aboutMe.occupation || aboutMe.birth_date || aboutMe.location || (aboutMe.interests?.length))
 
-  // Email reports prefs
+  // Nightly verdict pref. Still stored as notify_email_daily — the column is
+  // reused rather than migrated now that delivery is push rather than email.
   const [emailDaily, setEmailDaily]   = useState<boolean>(!!profile?.notify_email_daily)
-  const [emailWeekly, setEmailWeekly] = useState<boolean>(!!profile?.notify_email_weekly)
   const [deenOn, setDeenOn]           = useState<boolean>((profile?.deen_enabled ?? true) as boolean)
   const [pushOn, setPushOn]           = useState<boolean>(
     !!profile?.push_subscription && profile?.notifications_enabled !== false
   )
   const [savingPref, setSavingPref]   = useState<string | null>(null)
-  const [sendingTest, setSendingTest] = useState<'daily' | 'weekly' | null>(null)
+  const [sendingTest, setSendingTest] = useState<'daily' | null>(null)
 
   // Delete account
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -307,7 +307,7 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
     }
   }
 
-  async function toggleEmailPref(key: 'notify_email_daily' | 'notify_email_weekly', value: boolean) {
+  async function toggleEmailPref(key: 'notify_email_daily', value: boolean) {
     setSavingPref(key)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { setSavingPref(null); flash('err', 'Not signed in'); return }
@@ -315,7 +315,6 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
     setSavingPref(null)
     if (error) { flash('err', error.message); return }
     if (key === 'notify_email_daily')  setEmailDaily(value)
-    if (key === 'notify_email_weekly') setEmailWeekly(value)
     flash('ok', value ? 'Email reports enabled' : 'Email reports disabled')
   }
 
@@ -376,10 +375,10 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
     setSendingTest(null)
   }
 
-  async function sendTestReport(which: 'daily' | 'weekly') {
+  async function sendTestReport(which: 'daily') {
     setSendingTest(which)
     try {
-      const res = await fetch(`/api/cron/${which === 'daily' ? 'daily-report' : 'weekly-report'}?test=1`)
+      const res = await fetch('/api/cron/daily-report?test=1')
       const data = await res.json().catch(() => ({}))
       if (!res.ok) { flash('err', data?.error || 'Failed to send'); return }
       flash('ok', `${which === 'daily' ? 'Daily' : 'Weekly'} test sent to ${profile?.email}`)
@@ -594,27 +593,19 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges }: Pr
 
       {/* NOTIFICATIONS */}
       <Section title="Notifications">
-        <ToggleRow icon={<Mail size={15} />} label="Daily email report"
-          subLabel="Score + AI verdict + tomorrow's focus, every night"
+        {/* Email delivery was removed; the nightly verdict arrives as a push
+            notification. The stored preference is reused rather than migrated,
+            so turning this off still stops the nightly send. */}
+        <ToggleRow icon={<Bell size={15} />} label="Nightly verdict"
+          subLabel="Score, AI verdict and tomorrow's focus, pushed each night"
           value={emailDaily}
           saving={savingPref === 'notify_email_daily'}
           onToggle={(v) => toggleEmailPref('notify_email_daily', v)} />
         {emailDaily && (
-          <Row icon={<Send size={15} />} label="Send a test daily report now"
-            subLabel={`Goes to ${profile?.email}`}
+          <Row icon={<Send size={15} />} label="Send tonight's verdict now"
+            subLabel="Arrives as a notification on this device"
             onClick={() => sendTestReport('daily')}
             loading={sendingTest === 'daily'} />
-        )}
-        <ToggleRow icon={<Mail size={15} />} label="Weekly tribunal email"
-          subLabel="Full weekly verdict + goal alignment, Sunday 9pm"
-          value={emailWeekly}
-          saving={savingPref === 'notify_email_weekly'}
-          onToggle={(v) => toggleEmailPref('notify_email_weekly', v)} />
-        {emailWeekly && (
-          <Row icon={<Send size={15} />} label="Send a test weekly report now"
-            subLabel={`Goes to ${profile?.email}`}
-            onClick={() => sendTestReport('weekly')}
-            loading={sendingTest === 'weekly'} />
         )}
         <ToggleRow icon={<Bell size={15} />} label="Push notifications"
           subLabel={pushSupported()
