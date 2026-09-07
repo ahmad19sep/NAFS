@@ -183,9 +183,29 @@ export default function TasksClient({ tasks, today }: Props) {
       })
     }
   }
-  async function deleteTask(id: string) {
-    if (!confirm('Delete this task?')) return
-    await fetch(`/api/tasks/${id}`, { method: 'DELETE' })
+  // Deleting is reversible, so it does not need a confirm() blocking the way.
+  // The undo offer replaces it: quicker for the common case, and recoverable
+  // for the mis-tap that the dialog was there to prevent.
+  const [undo, setUndo] = useState<{ id: string; title: string } | null>(null)
+
+  async function deleteTask(t: Task) {
+    setUndo(null)
+    const res = await fetch(`/api/tasks/${t.id}`, { method: 'DELETE' })
+    const body = await res.json().catch(() => ({}))
+    router.refresh()
+
+    // Only offer undo when the task can actually come back. Before the
+    // migration the delete is permanent, and promising otherwise would be worse
+    // than saying nothing.
+    if (res.ok && body?.undoable) setUndo({ id: t.id, title: t.title })
+  }
+
+  async function undoDelete() {
+    if (!undo) return
+    const id = undo.id
+    setUndo(null)
+    const res = await fetch(`/api/tasks/${id}/restore`, { method: 'POST' })
+    if (!res.ok) setFormError('That task could not be restored.')
     router.refresh()
   }
 
@@ -220,6 +240,25 @@ export default function TasksClient({ tasks, today }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Undo stays until dismissed rather than timing out — a banner that
+          disappears on its own is no use if you looked away. */}
+      {undo && (
+        <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+          <p className="flex-1 min-w-0 text-sm text-muted-foreground truncate">
+            Deleted <span className="text-foreground font-medium">{undo.title}</span>
+          </p>
+          <button onClick={undoDelete}
+            className="shrink-0 rounded-lg border border-gold/40 bg-gold/10 px-3 py-1.5 text-xs font-semibold
+                       text-gold hover:bg-gold/20 transition-all active:scale-95">
+            Undo
+          </button>
+          <button onClick={() => setUndo(null)} aria-label="Dismiss"
+            className="shrink-0 text-muted-foreground/60 hover:text-foreground">
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="grid grid-cols-3 gap-2">
@@ -335,7 +374,7 @@ export default function TasksClient({ tasks, today }: Props) {
           <p className="section-header">{periodLabel(tab, currentAnchor, today)}</p>
           {currentTasks.map((t) => (
             <TaskRow key={t.id} task={t} today={today} onToggle={() => toggleTask(t)}
-              onEdit={() => openEdit(t)} onDelete={() => deleteTask(t.id)} />
+              onEdit={() => openEdit(t)} onDelete={() => deleteTask(t)} />
           ))}
         </div>
       )}
@@ -348,7 +387,7 @@ export default function TasksClient({ tasks, today }: Props) {
           </p>
           {graceTasks.map((t) => (
             <TaskRow key={t.id} task={t} today={today} onToggle={() => toggleTask(t)}
-              onEdit={() => openEdit(t)} onDelete={() => deleteTask(t.id)} />
+              onEdit={() => openEdit(t)} onDelete={() => deleteTask(t)} />
           ))}
         </div>
       )}

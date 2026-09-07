@@ -271,12 +271,34 @@ The rules live in [`write-conflict.ts`](../web-legacy/src/lib/write-conflict.ts)
 so the dangerous case is pinned: a guarded update that matched **no rows**
 returns no error, and reading that as success is the entire bug.
 
+### Fixed: deleting a task is reversible
+
+Deleting was permanent behind a browser `confirm()`. A mis-tap lost the task
+and everything it recorded about that day.
+
+Deletes now set `deleted_at` and the page offers Undo, which restores the
+original row rather than inserting a copy — so the task keeps its id, its
+creation time and its place in history. Restoring is idempotent, so a
+double-tap on Undo does nothing odd.
+
+The hiding is done in RLS, not in the queries. Thirteen places read tasks —
+dashboard, history, profile, reports, the tasks page, the coach context, goal
+alignment, both report crons, task reminders. Adding "and not deleted" to each
+is a condition someone will eventually forget, and the failure is silent: a
+deleted task quietly reappearing in a report or in what the AI is told. The
+SELECT policy hides them instead, so no query *can* forget. UPDATE
+deliberately does not filter, because a restore has to reach a hidden row.
+
+See [`task_soft_delete.sql`](../supabase/task_soft_delete.sql), which carries its
+own rollback. Without it, deleting still works and simply reports itself as
+not undoable — the UI only offers Undo when the task can actually come back.
+
 ### Still open in LOG-01
 
 - **Only creation is guarded.** `withIdempotency` is generic, but no other
   write passes a request id yet.
 - **No pending state on every surface.** Tasks now say "Not saved" on a
   network failure; the other forms do not.
-- **No Undo anywhere.** Corrections work by writing a new value; there is no
-  operation that targets the original mutation and recomputes what depended
-  on it.
+- **Undo covers task deletion only.** Habit logs, health entries and the rest
+  still correct by overwriting, with nothing that targets the original
+  mutation.

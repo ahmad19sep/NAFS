@@ -23,11 +23,35 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json({ task: data })
 }
 
+/**
+ * Soft delete, so the action can be undone.
+ *
+ * The row stays and is hidden by the SELECT policy from task_soft_delete.sql —
+ * every read is filtered in the database rather than in thirteen separate
+ * queries, so a deleted task cannot reappear in a report or in what the AI is
+ * told because one of them forgot a condition.
+ *
+ * Falls back to a hard delete when the migration has not been run, so deleting
+ * keeps working; only the undo is unavailable.
+ */
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  await supabase.from('tasks').delete().eq('id', params.id).eq('user_id', user.id)
-  return NextResponse.json({ ok: true })
+  const { error } = await supabase
+    .from('tasks')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', params.id).eq('user_id', user.id)
+
+  if (error) {
+    const missingColumn = /deleted_at|column .* does not exist/i.test(error.message)
+    if (!missingColumn) {
+      return NextResponse.json({ error: 'Could not delete the task.' }, { status: 500 })
+    }
+    await supabase.from('tasks').delete().eq('id', params.id).eq('user_id', user.id)
+    return NextResponse.json({ ok: true, undoable: false })
+  }
+
+  return NextResponse.json({ ok: true, undoable: true })
 }
