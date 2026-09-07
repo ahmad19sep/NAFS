@@ -8,6 +8,8 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { cn, scoreColor } from '@/lib/utils'
+import { healthProgress } from '@/lib/health-progress'
+import { type CustomMetric } from '@/lib/health'
 import { PRAYERS } from '@/lib/scoring'
 import type { Habit, HabitLog, Weekday } from '@/types'
 import {
@@ -102,14 +104,17 @@ export default function HomeClient({
   const milestonesDone = allMilestones.filter((m: any) => m.done).length
   const milestonesTotal = allMilestones.length
 
-  const healthTargets = [
-    (healthLog?.water_glasses ?? 0) > 0,
-    !!healthLog?.exercise_done,
-    (healthLog?.sleep_hours ?? 0) > 0,
-    (healthLog?.steps ?? 0) > 0,
-  ]
-  const healthDone = healthTargets.filter(Boolean).length
-  const healthTotal = 4
+  // UI-01: the same selector the Health page uses. Home used to hardcode a
+  // denominator of 4 while Health derived its own from the enabled categories,
+  // so one day read 0/4 here and 0/5 there. Both were self-consistent, which is
+  // what made it confusing rather than obviously broken.
+  const health = healthProgress(
+    healthLog as any,
+    (profile?.health_defaults_hidden ?? []) as string[],
+    (profile?.health_extras_config ?? []) as CustomMetric[],
+  )
+  const healthDone = health.done
+  const healthTotal = health.total
 
   // ---- Faith mode: Deen module is opt-in (signup question / Profile toggle).
   // Default true when the column is missing so pre-migration DBs keep working.

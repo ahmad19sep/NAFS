@@ -11,6 +11,7 @@ import HistoryTeaserCard from '@/components/HistoryTeaserCard'
 import { computeHealthHistory } from '@/lib/history'
 import { computeBMI } from '@/lib/bmi'
 import { classifyWrite } from '@/lib/write-conflict'
+import { healthProgress } from '@/lib/health-progress'
 import {
   type CustomMetric, type CustomMetricType, type ExtrasValues, type SleepSession,
   makeMetricId, isMetricDone,
@@ -512,13 +513,23 @@ export default function HealthPage() {
     water: water > 0, steps: !!steps, exercise,
   }
   const ateCount = mealsEaten(meals)
-  const tracked = [
-    sleptMins > 0,
-    ateCount > 0,
-    ...optionalIds.map((id) => optionalDone[id]),
-    ...(extrasConfig.map((m) => isMetricDone(m, extrasValues[m.id]))),
-  ].filter(Boolean).length
-  const total = 2 + optionalIds.length + extrasConfig.length
+  // The same selector Home uses, fed from what is on screen rather than from
+  // the saved row, so the count follows edits before they are saved. Home reads
+  // the stored row through the identical function, so the two cannot drift.
+  const progress = healthProgress(
+    {
+      sleep_sessions: sleepSessions,
+      meals,
+      water_glasses: water,
+      steps: steps ? Number(steps) : null,
+      exercise_done: exercise,
+      extras: extrasValues,
+    },
+    hiddenDefaults,
+    extrasConfig,
+  )
+  const tracked = progress.done
+  const total = progress.total
 
   return (
     <div className="mx-auto max-w-md px-4 space-y-5 pb-8">
