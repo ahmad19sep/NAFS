@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { aiStructured, type Schema } from '@/lib/ai'
+import { aiStructured } from '@/lib/ai'
+import { HEALTH_RECOMMENDATION_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
 import { computeBMI } from '@/lib/bmi'
 import { buildHealthDigest, describeHealthDigest } from '@/lib/health-digest'
 
@@ -61,48 +62,6 @@ Evidence rules — these matter more than the advice:
 
 /** Two weeks: long enough to show a pattern, short enough to be current. */
 const DIGEST_DAYS = 14
-
-/**
- * The shape the model must actually return. Enum members are listed so an
- * invented goal type or habit type is rejected rather than stored and later
- * used to create a malformed habit.
- */
-const RECOMMENDATION_SCHEMA: Schema = {
-  kind: 'object',
-  fields: {
-    summary: { kind: 'string', minLength: 10, maxLength: 600 },
-    priorities: {
-      kind: 'array', minItems: 1, maxItems: 6,
-      of: { kind: 'string', minLength: 3, maxLength: 200 },
-    },
-    suggested_goals: {
-      kind: 'array', minItems: 1, maxItems: 6,
-      of: {
-        kind: 'object',
-        fields: {
-          title: { kind: 'string', minLength: 3, maxLength: 120 },
-          type: { kind: 'enum', values: ['weekly', 'monthly', 'yearly'] },
-          category: { kind: 'enum', values: ['health', 'deen', 'personal'] },
-        },
-      },
-    },
-    suggested_habits: {
-      kind: 'array', minItems: 1, maxItems: 6,
-      of: {
-        kind: 'object',
-        optional: ['target_value', 'unit', 'time_target_mins'],
-        fields: {
-          name: { kind: 'string', minLength: 2, maxLength: 80 },
-          emoji: { kind: 'string', minLength: 1, maxLength: 8 },
-          type: { kind: 'enum', values: ['simple', 'counter', 'duration'] },
-          target_value: { kind: 'number', min: 1, max: 1000 },
-          unit: { kind: 'string', maxLength: 24 },
-          time_target_mins: { kind: 'number', min: 1, max: 600, int: true },
-        },
-      },
-    },
-  },
-}
 
 function ageFrom(birth_date?: string): number | null {
   if (!birth_date) return null
@@ -178,14 +137,11 @@ Now generate the personalized health plan as JSON.`
     // AI-01: the shape is checked at runtime, with one corrective retry, so a
     // malformed reply produces an explicit failure instead of a silent null.
     const result = await aiStructured<Omit<HealthRecommendation, 'generated_at'>>(
-      prompt, RECOMMENDATION_SCHEMA, SYSTEM,
+      prompt, HEALTH_RECOMMENDATION_SCHEMA, SYSTEM,
     )
 
     if (!result.ok) {
-      const status = result.code === 'rate_limited' ? 429
-        : result.code === 'unauthorized' || result.code === 'not_configured' ? 503
-        : 502
-      return NextResponse.json({ error: result.message }, { status })
+      return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
     }
 
     const stored: HealthRecommendation = {

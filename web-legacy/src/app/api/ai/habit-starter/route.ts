@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { aiJSON } from '@/lib/ai'
+import { aiStructured } from '@/lib/ai'
+import { HABIT_STARTER_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
 
 interface HabitStarterPack {
   pattern_insight: string                       // What the user's history reveals
@@ -101,17 +102,21 @@ ${about.occupation ? `Occupation: ${about.occupation}` : ''}
 
 Now generate the starter pack as JSON. Use real patterns from their data.`
 
-    const result = await aiJSON<Omit<HabitStarterPack, 'generated_at'>>(prompt, SYSTEM)
+    // AI-01: the shape is checked at runtime, with one corrective retry, so a
+    // malformed reply produces an explicit failure instead of a silent null.
+    const result = await aiStructured<Omit<HabitStarterPack, 'generated_at'>>(
+      prompt, HABIT_STARTER_SCHEMA, SYSTEM,
+    )
 
-    if (!result || !result.pattern_insight) {
-      return NextResponse.json({ error: 'AI returned an unparseable response' }, { status: 502 })
+    if (!result.ok) {
+      return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
     }
 
     const stored: HabitStarterPack = {
-      pattern_insight: result.pattern_insight,
-      how_to_succeed: result.how_to_succeed || '',
-      best_time: result.best_time || '',
-      related_habits: Array.isArray(result.related_habits) ? result.related_habits.slice(0, 3) : [],
+      pattern_insight: result.data.pattern_insight,
+      how_to_succeed: result.data.how_to_succeed || '',
+      best_time: result.data.best_time || '',
+      related_habits: Array.isArray(result.data.related_habits) ? result.data.related_habits.slice(0, 3) : [],
       generated_at: new Date().toISOString(),
     }
 

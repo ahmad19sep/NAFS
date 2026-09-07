@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { aiJSON } from '@/lib/ai'
+import { aiStructured } from '@/lib/ai'
+import { CHALLENGE_STARTER_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
 
 interface ChallengeStarterPack {
   why_this_works: string                       // Encouragement based on user history
@@ -86,17 +87,21 @@ ${about.occupation ? `Occupation: ${about.occupation}` : ''}
 
 Now generate the starter pack as JSON. Be honest about likely obstacles.`
 
-    const result = await aiJSON<Omit<ChallengeStarterPack, 'generated_at'>>(prompt, SYSTEM)
+    // AI-01: the shape is checked at runtime, with one corrective retry, so a
+    // malformed reply produces an explicit failure instead of a silent null.
+    const result = await aiStructured<Omit<ChallengeStarterPack, 'generated_at'>>(
+      prompt, CHALLENGE_STARTER_SCHEMA, SYSTEM,
+    )
 
-    if (!result || !result.why_this_works) {
-      return NextResponse.json({ error: 'AI returned an unparseable response' }, { status: 502 })
+    if (!result.ok) {
+      return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
     }
 
     const stored: ChallengeStarterPack = {
-      why_this_works: result.why_this_works,
-      hardest_obstacle: result.hardest_obstacle || '',
-      daily_anchor: result.daily_anchor || '',
-      supporting_habits: Array.isArray(result.supporting_habits) ? result.supporting_habits.slice(0, 3) : [],
+      why_this_works: result.data.why_this_works,
+      hardest_obstacle: result.data.hardest_obstacle || '',
+      daily_anchor: result.data.daily_anchor || '',
+      supporting_habits: Array.isArray(result.data.supporting_habits) ? result.data.supporting_habits.slice(0, 3) : [],
       generated_at: new Date().toISOString(),
     }
 

@@ -10,7 +10,7 @@
 // ./cloudflare-ai.
 
 import {
-  cloudflareChat, cloudflareText, safeParseJSON, AiError,
+  cloudflareChat, cloudflareText, AiError,
   type ChatMessage, type AiOptions,
 } from './cloudflare-ai'
 import { parseJson, validate, type Schema } from './schema'
@@ -59,23 +59,10 @@ export async function aiChat(messages: ChatMessage[], opts: AiOptions = {}): Pro
   return cloudflareChat(messages, { maxTokens: MAX_TOKENS_FOR.chat, ...opts })
 }
 
-/**
- * JSON-output generation. gpt-oss-20b has no strict JSON mode, so the schema
- * instruction is reinforced in the system prompt and the reply is parsed
- * permissively. Returns null when the model doesn't produce usable JSON.
- *
- * Prefer `aiStructured` for new work: this returns null for every failure —
- * bad JSON, wrong fields, a dead provider — so callers cannot tell a model
- * problem from an outage, and a `null` becomes a silent broken feature.
- */
-export async function aiJSON<T = unknown>(prompt: string, system?: string): Promise<T | null> {
-  const raw = await cloudflareText(prompt, jsonSystemPrompt(system), {
-    maxTokens: MAX_TOKENS_FOR.json,
-    // Lower than the default so structured output stays on-format.
-    temperature: 0.2,
-  })
-  return safeParseJSON<T>(raw)
-}
+// aiJSON was removed once every route moved to aiStructured. It returned null
+// for every failure — bad JSON, wrong fields, a dead provider — so callers
+// could not tell a model problem from an outage and a null became a silently
+// broken feature. Use aiStructured; it validates and says what went wrong.
 
 function jsonSystemPrompt(system?: string): string {
   return [

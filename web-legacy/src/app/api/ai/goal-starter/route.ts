@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { aiJSON } from '@/lib/ai'
+import { aiStructured } from '@/lib/ai'
+import { GOAL_STARTER_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
 
 interface StarterPack {
   summary: string
@@ -122,17 +123,21 @@ ${(about.interests ?? []).length ? `Interests: ${(about.interests as string[]).j
 
 Now generate the starter pack as JSON. Be specific to THIS goal.`
 
-    const result = await aiJSON<Omit<StarterPack, 'generated_at'>>(prompt, SYSTEM)
+    // AI-01: the shape is checked at runtime, with one corrective retry, so a
+    // malformed reply produces an explicit failure instead of a silent null.
+    const result = await aiStructured<Omit<StarterPack, 'generated_at'>>(
+      prompt, GOAL_STARTER_SCHEMA, SYSTEM,
+    )
 
-    if (!result || !result.summary) {
-      return NextResponse.json({ error: 'AI returned an unparseable response' }, { status: 502 })
+    if (!result.ok) {
+      return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
     }
 
     const stored: StarterPack = {
-      summary: result.summary,
-      suggested_tasks: Array.isArray(result.suggested_tasks) ? result.suggested_tasks.slice(0, 5) : [],
-      suggested_habits: Array.isArray(result.suggested_habits) ? result.suggested_habits.slice(0, 5) : [],
-      suggested_challenges: Array.isArray(result.suggested_challenges) ? result.suggested_challenges.slice(0, 3) : [],
+      summary: result.data.summary,
+      suggested_tasks: Array.isArray(result.data.suggested_tasks) ? result.data.suggested_tasks.slice(0, 5) : [],
+      suggested_habits: Array.isArray(result.data.suggested_habits) ? result.data.suggested_habits.slice(0, 5) : [],
+      suggested_challenges: Array.isArray(result.data.suggested_challenges) ? result.data.suggested_challenges.slice(0, 3) : [],
       generated_at: new Date().toISOString(),
     }
 

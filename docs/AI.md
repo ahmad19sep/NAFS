@@ -27,8 +27,7 @@ that touches the network or the key.
 |---|---|---|
 | `aiText(task, prompt, system?)` | one-shot generation | `string` |
 | `aiChat(messages, opts?)` | multi-turn conversation | `string` |
-| `aiStructured<T>(prompt, schema, system?)` | **structured output — prefer this** | `AiResult<T>` |
-| `aiJSON<T>(prompt, system?)` | legacy structured output | `T \| null` |
+| `aiStructured<T>(prompt, schema, system?)` | structured output | `AiResult<T>` |
 
 There is deliberately **no image input** — see [Why there is no vision](#why-there-is-no-vision).
 
@@ -55,10 +54,14 @@ if (!r.ok) return NextResponse.json({ error: r.message }, { status: statusFor(r.
 Failure codes: `not_configured`, `unauthorized`, `rate_limited`, `unavailable`,
 `invalid_json`, `schema_mismatch`. Raw model text never reaches `message`.
 
-`aiJSON` remains for the routes not yet migrated. It returns `null` for every
-failure — bad JSON, wrong fields, a dead provider — so callers cannot tell them
-apart and a `null` becomes a silently broken feature. Migrate to `aiStructured`
-when touching a route.
+Schemas live together in
+[`ai-schemas.ts`](../web-legacy/src/lib/ai-schemas.ts), so the habit shape that
+four routes suggest and one code path creates is defined once — a model that
+invents a habit `type` is rejected identically everywhere.
+
+`aiJSON` was removed once every route moved across. It returned `null` for every
+failure, so callers could not tell a bad reply from an outage and a `null` became
+a silently broken feature.
 
 **To add an AI feature:** import a function from `lib/ai.ts`. Do not import
 `cloudflare-ai.ts`, and do not add a second provider without reading
@@ -169,11 +172,11 @@ One call site in each of 14 routes.
 | `ai/pull-narrator` | `aiText('verdict')` | dream-trajectory narration |
 | `ai/future-self` | `aiText('chat')` | reply from your future self |
 | `ai/goal-plan` | `aiText('chat')` | plan for one goal |
-| `ai/goal-starter` | `aiJSON` | starter pack for a new goal |
-| `ai/goal-alignment` | `aiJSON` | how goals line up with the dream |
-| `ai/habit-starter` | `aiJSON` | suggested habits |
-| `ai/challenge-starter` | `aiJSON` | suggested challenge tactics |
-| `ai/health-recommend` | `aiJSON` | health plan, goals and habits |
+| `ai/goal-starter` | `aiStructured` | starter pack for a new goal |
+| `ai/goal-alignment` | `aiStructured` | how goals line up with the dream |
+| `ai/habit-starter` | `aiStructured` | suggested habits |
+| `ai/challenge-starter` | `aiStructured` | suggested challenge tactics |
+| `ai/health-recommend` | `aiStructured` | health plan, goals and habits |
 | `cron/daily-report` | `aiText('verdict')` | emailed daily summary |
 | `cron/weekly-report` | `aiText('verdict')` | emailed weekly summary |
 | `screentime/analyze` | `aiText('verdict')` | verdict on the screen-time numbers you entered |
@@ -211,8 +214,8 @@ Still to do: meals do not appear in the daily/weekly reports or the coach contex
 ### ~~3. `aiJSON` gives up after one bad reply~~ — DONE (AI-01)
 
 `aiStructured` validates at runtime and makes one corrective retry. See
-[Structured output](#structured-output). `health-recommend` is migrated; the other
-four `aiJSON` routes still need moving over — that is the next bounded task.
+[Structured output](#structured-output). All five structured routes are migrated and `aiJSON` has been removed.
+
 
 ### 4. The coach re-sends a 30-day data dump every message
 **Medium value · medium effort**

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { aiJSON } from '@/lib/ai'
+import { aiStructured } from '@/lib/ai'
+import { GOAL_ALIGNMENT_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
 
 interface AlignmentResult {
   score: number
@@ -142,17 +143,21 @@ Active challenges: ${fmtChallenges(challenges ?? [])}
 Now analyze: is the user actually working toward this goal? Be honest.
 Return JSON only.`
 
-    const result = await aiJSON<Omit<AlignmentResult, 'analyzed_at'>>(prompt, SYSTEM)
+    // AI-01: the shape is checked at runtime, with one corrective retry, so a
+    // malformed reply produces an explicit failure instead of a silent null.
+    const result = await aiStructured<Omit<AlignmentResult, 'analyzed_at'>>(
+      prompt, GOAL_ALIGNMENT_SCHEMA, SYSTEM,
+    )
 
-    if (!result || typeof result.score !== 'number') {
-      return NextResponse.json({ error: 'AI returned an invalid response' }, { status: 502 })
+    if (!result.ok) {
+      return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
     }
 
     const stored: AlignmentResult = {
-      score: Math.max(0, Math.min(100, Math.round(result.score))),
-      doing_well: result.doing_well || '',
-      missing: result.missing || '',
-      suggested_action: result.suggested_action || '',
+      score: Math.max(0, Math.min(100, Math.round(result.data.score))),
+      doing_well: result.data.doing_well || '',
+      missing: result.data.missing || '',
+      suggested_action: result.data.suggested_action || '',
       analyzed_at: new Date().toISOString(),
     }
 
