@@ -5,6 +5,11 @@ import { PLAN_SCHEMA, RECOVERY_SCHEMA, statusForAiFailure } from '@/lib/ai-schem
 import { normalizeProposal, normalizeRecovery, type PlanProposal, type RecoveryPlan } from '@/lib/plan'
 import { buildCoachContext } from '@/lib/coach-context'
 
+// A structured plan is slow on purpose: the model reasons before it writes,
+// and a rich context makes it reason longer. Measured live at 36.6s, so the
+// default serverless ceiling would kill a correct answer.
+export const maxDuration = 60
+
 /**
  * Two jobs, one contract.
  *

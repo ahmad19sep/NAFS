@@ -42,11 +42,35 @@ export type NormalizeResult =
  * with no days named is just a daily habit, so it is downgraded rather than
  * rejected.
  */
+/**
+ * One emoji character: a surrogate pair (most emoji), or one of the symbol
+ * ranges that hold the rest (⏰ ⏱️ ♂), plus the joiners that glue a sequence
+ * together. Written without the /u flag and \p{...} classes, which need a
+ * newer compile target than this project sets.
+ */
+const EMOJI_CHAR =
+  '(?:[\\uD800-\\uDBFF][\\uDC00-\\uDFFF]' +
+  '|[\\u2190-\\u21FF\\u2300-\\u23FF\\u25A0-\\u27BF\\u2B00-\\u2BFF\\uFE0F\\u200D\\u20E3])'
+const LEADING_EMOJI = new RegExp(`^(?:${EMOJI_CHAR}+[\\s\\u200B]*)+`)
+
+/**
+ * The emoji is its own field and is rendered beside the title, so a title
+ * that also starts with one shows two ("🗓️" + "📅 Gym plan" — seen live).
+ * Strips leading emoji, and keeps the original when stripping would leave
+ * nothing worth showing.
+ */
+export function stripLeadingEmoji(title: string): string {
+  const stripped = title.replace(LEADING_EMOJI, '').trim()
+  return stripped.length >= 2 ? stripped : title.trim()
+}
+
 export function normalizeProposal(p: PlanProposal): NormalizeResult {
   const block = p?.[p?.kind]
   if (!p?.kind || !block) {
     return { ok: false, error: 'The AI returned an incomplete plan. Try rephrasing.' }
   }
+
+  p = { ...p, title: stripLeadingEmoji(p.title ?? '') }
 
   if (p.kind === 'habit') {
     const h = { ...p.habit! }

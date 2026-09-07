@@ -134,6 +134,32 @@ function isRetryable(code: AiFailureCode): boolean {
   return code !== 'not_configured' && code !== 'unauthorized'
 }
 
+/**
+ * How long aiStructured may spend in total, across both attempts.
+ *
+ * A structured call can legitimately take half a minute — measured live, an
+ * "overcome" plan took 36.6s, because the model thinks longer when the
+ * context is rich. But the route that awaits it has its own ceiling
+ * (`maxDuration = 60` on Vercel), and a request killed by the platform
+ * returns no error the user can read. So the budget is set below that, and
+ * the retry is skipped when there is not enough time left to finish it —
+ * better one honest failure than two truncated ones.
+ */
+export const STRUCTURED_TOTAL_BUDGET_MS = 50_000
+const ATTEMPT_TIMEOUT_MS = 45_000
+const MIN_RETRY_BUDGET_MS = 10_000
+const MIN_ATTEMPT_MS = 5_000
+
+/**
+ * The time budget for the next attempt, or null when starting one would only
+ * guarantee a timeout.
+ */
+export function nextAttemptBudget(elapsedMs: number, attempt: number): number | null {
+  const remaining = STRUCTURED_TOTAL_BUDGET_MS - elapsedMs
+  if (attempt > 1 && remaining < MIN_RETRY_BUDGET_MS) return null
+  return Math.max(MIN_ATTEMPT_MS, Math.min(ATTEMPT_TIMEOUT_MS, remaining))
+}
+
 function classify(err: unknown): { code: AiFailureCode; message: string } {
   if (err instanceof AiError) {
     if (err.status === 401) return { code: 'unauthorized', message: err.message }
@@ -164,6 +190,7 @@ export async function aiStructured<T>(
   system?: string,
 ): Promise<AiResult<T>> {
   const MAX_ATTEMPTS = 2
+  const startedAt = Date.now()
   let correction = ''
   let last: { code: AiFailureCode; message: string } = {
     code: 'unavailable',
@@ -171,12 +198,17 @@ export async function aiStructured<T>(
   }
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    // Stop rather than start a retry that cannot finish before the route is
+    // killed; the failure already in `last` is the honest answer.
+    const budget = nextAttemptBudget(Date.now() - startedAt, attempt)
+    if (budget === null) break
+
     let raw: string
     try {
       raw = await cloudflareText(
         correction ? `${prompt}\n\n${correction}` : prompt,
         jsonSystemPrompt(system),
-        { maxTokens: MAX_TOKENS_FOR.json, temperature: 0.2 },
+        { maxTokens: MAX_TOKENS_FOR.json, temperature: 0.2, timeoutMs: budget },
       )
     } catch (err) {
       const failure = classify(err)

@@ -75,7 +75,7 @@ export async function anthropicChat(
   if (shaped.messages.length === 0) throw new AiError('Nothing to send to the AI service.')
 
   const timeout = new AbortController()
-  const timer = setTimeout(() => timeout.abort(), TIMEOUT_MS)
+  const timer = setTimeout(() => timeout.abort(), opts.timeoutMs ?? TIMEOUT_MS)
   const onCallerAbort = () => timeout.abort()
   opts.signal?.addEventListener('abort', onCallerAbort)
 

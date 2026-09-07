@@ -4,6 +4,9 @@ import { aiChat, AiError } from '@/lib/ai'
 import { buildCoachContext } from '@/lib/coach-context'
 import { ASK_ASCEND_SYSTEM } from '@/lib/ai-prompts'
 
+// The coach reasons over a month of context before it answers.
+export const maxDuration = 60
+
 // Ask Ascend — the coach answers from the user's REAL data across every
 // feature: habits, prayers (if faith mode), tasks, health, goals, challenges,
 // dream trajectory, and what the user has told it before. The context is

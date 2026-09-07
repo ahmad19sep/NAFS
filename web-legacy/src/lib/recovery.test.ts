@@ -1,5 +1,48 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeRecovery, normalizeProposal, minutesFrom, type PlanProposal, type RecoveryPlan } from './plan'
+import { normalizeRecovery, normalizeProposal, minutesFrom, stripLeadingEmoji, type PlanProposal, type RecoveryPlan } from './plan'
+import { nextAttemptBudget, STRUCTURED_TOTAL_BUDGET_MS } from './ai'
+
+describe('stripLeadingEmoji', () => {
+  it('removes a leading emoji so it is not shown twice', () => {
+    // Seen live: emoji field "🗓️", title "📅 Gym plan".
+    expect(stripLeadingEmoji('📅 Gym plan')).toBe('Gym plan')
+    expect(stripLeadingEmoji('🚫📱 No phone after 10pm')).toBe('No phone after 10pm')
+    expect(stripLeadingEmoji('🏋️‍♂️ Gym 3×/week')).toBe('Gym 3×/week')
+  })
+
+  it('leaves an ordinary title alone', () => {
+    expect(stripLeadingEmoji('Move the charger to the kitchen')).toBe('Move the charger to the kitchen')
+    expect(stripLeadingEmoji('  Read 20 min  ')).toBe('Read 20 min')
+  })
+
+  it('keeps the original when stripping would leave nothing', () => {
+    expect(stripLeadingEmoji('🔥')).toBe('🔥')
+    expect(stripLeadingEmoji('📅 x')).toBe('📅 x')
+  })
+
+  it('does not eat a leading digit or punctuation', () => {
+    expect(stripLeadingEmoji('10 pages a day')).toBe('10 pages a day')
+    expect(stripLeadingEmoji('"No phone" rule')).toBe('"No phone" rule')
+  })
+})
+
+describe('nextAttemptBudget', () => {
+  it('gives the first attempt a full-length budget', () => {
+    expect(nextAttemptBudget(0, 1)).toBe(45_000)
+  })
+
+  it('shrinks a retry to the time that is actually left', () => {
+    expect(nextAttemptBudget(20_000, 2)).toBe(30_000)
+  })
+
+  it('refuses a retry that could not finish', () => {
+    expect(nextAttemptBudget(STRUCTURED_TOTAL_BUDGET_MS - 5_000, 2)).toBeNull()
+  })
+
+  it('never returns a uselessly short budget', () => {
+    expect(nextAttemptBudget(STRUCTURED_TOTAL_BUDGET_MS + 10_000, 1)).toBe(5_000)
+  })
+})
 
 describe('minutesFrom', () => {
   it('reads minute and hour units, and nothing else', () => {

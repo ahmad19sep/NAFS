@@ -9,6 +9,8 @@ import { todayInTZ, todayString } from '@/lib/utils'
 import type { CustomMetric } from '@/lib/health'
 
 export const dynamic = 'force-dynamic'
+// A month of records, read by a model that thinks before it writes.
+export const maxDuration = 60
 
 const SELECT = 'id, content_md, generated_at, model_used'
 

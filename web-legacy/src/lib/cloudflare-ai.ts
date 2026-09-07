@@ -23,6 +23,12 @@ export const CLOUDFLARE_AI_URL =
 export const DEFAULT_MAX_TOKENS = 1500
 export const DEFAULT_TEMPERATURE = 0.6
 
+/**
+ * A chat turn is quick. A structured plan is not: measured live on
+ * 2026-09-07, an "overcome" plan took 36.6s end to end, because a reasoning
+ * model thinks for longer when the context is rich. Callers that expect that
+ * pass their own budget; see aiStructured.
+ */
 const TIMEOUT_MS = 30_000
 /** Free-tier allowance is small, so history is capped before it's sent. */
 const MAX_HISTORY_MESSAGES = 20
@@ -36,6 +42,8 @@ export interface ChatMessage {
 export interface AiOptions {
   maxTokens?: number
   temperature?: number
+  /** Overrides the default 30s budget for this call. */
+  timeoutMs?: number
   /** Caller-supplied cancellation, combined with the built-in timeout. */
   signal?: AbortSignal
 }
@@ -85,7 +93,7 @@ export async function cloudflareChat(
   if (!key) throw new AiError('Cloudflare AI key is not configured. Set CLOUDFLARE_APP_KEY.')
 
   const timeout = new AbortController()
-  const timer = setTimeout(() => timeout.abort(), TIMEOUT_MS)
+  const timer = setTimeout(() => timeout.abort(), opts.timeoutMs ?? TIMEOUT_MS)
   const onCallerAbort = () => timeout.abort()
   opts.signal?.addEventListener('abort', onCallerAbort)
 

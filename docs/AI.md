@@ -90,13 +90,14 @@ a silently broken feature.
 ## Token budgets — read this before changing them
 
 > **The Worker has its own ceiling, and it wins.** The Worker clamps
-> `max_tokens` with `Math.min(requested, CEILING)`. The first version shipped
-> with a ceiling of **1000**. Probed live on 2026-09-07, the deployed Worker
-> returned `completion_tokens: 1000` and an empty reply for requests of 2000
-> and 3000 — so every budget below is effectively 1000 until the Worker's
-> ceiling is raised to 2000. A reasoning model that hits the ceiling
-> mid-thought returns nothing, not a shorter answer. `aiStructured` makes one
-> extra attempt on an empty reply for exactly this reason.
+> `max_tokens` with `Math.min(requested, CEILING)`. That ceiling was **1000**
+> and is now **2000**, matching the `json` budget below. Verified live on
+> 2026-09-07: before the change, requests for 2000 and 3000 both came back
+> `completion_tokens: 1000` with an empty reply; after it, a long generation
+> ran to 1877 tokens and returned real text. A reasoning model that hits the
+> ceiling mid-thought returns **nothing**, not a shorter answer — which is why
+> `aiStructured` makes one extra attempt on an empty reply, and why lowering
+> the ceiling again would silently break structured output.
 
 `gpt-oss-20b` is a **reasoning model**. It spends completion tokens thinking
 before it emits a message, and the Worker only ever returns the final message.
@@ -181,11 +182,23 @@ internals are never echoed to the client.
 | 429 | Free Cloudflare AI quota or rate limit has been reached. Try again later. |
 | 5xx | The AI service is temporarily unavailable. |
 | network | Could not connect to the AI service. |
-| timeout (30s) | The AI request timed out. Please try again. |
+| timeout (30s default, 45s per structured attempt) | The AI request timed out. Please try again. |
 | bad JSON body | Received an invalid response from the AI service. |
 | `response` empty | The AI service returned an empty response. |
 
 A missing key throws before any request is made.
+
+### How long a call may take
+
+A chat turn is quick; a structured plan is not. Measured live, an "overcome"
+plan took **36.6s** end to end, because the model reasons for longer when the
+context is rich — the old flat 30s timeout would have killed a correct answer.
+
+So `AiOptions.timeoutMs` overrides the 30s default per call, and `aiStructured`
+runs on a **50s total budget** across both attempts: 45s for one attempt, and
+the retry is skipped when less than 10s remains (`nextAttemptBudget`). The AI
+routes carry `maxDuration = 60`, so the budget always expires before the
+platform kills the request — one readable failure instead of a dead connection.
 
 ---
 
