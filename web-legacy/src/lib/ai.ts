@@ -10,9 +10,12 @@
 // ./cloudflare-ai.
 
 import {
-  cloudflareChat, cloudflareText, safeParseJSON,
+  cloudflareChat, cloudflareText, safeParseJSON, AiError,
   type ChatMessage, type AiOptions,
 } from './cloudflare-ai'
+import { parseJson, validate, type Schema } from './schema'
+
+export type { Schema } from './schema'
 
 export { AiError, safeParseJSON, hasCloudflareAi } from './cloudflare-ai'
 export type { ChatMessage, AiOptions } from './cloudflare-ai'
@@ -60,20 +63,115 @@ export async function aiChat(messages: ChatMessage[], opts: AiOptions = {}): Pro
  * JSON-output generation. gpt-oss-20b has no strict JSON mode, so the schema
  * instruction is reinforced in the system prompt and the reply is parsed
  * permissively. Returns null when the model doesn't produce usable JSON.
+ *
+ * Prefer `aiStructured` for new work: this returns null for every failure —
+ * bad JSON, wrong fields, a dead provider — so callers cannot tell a model
+ * problem from an outage, and a `null` becomes a silent broken feature.
  */
 export async function aiJSON<T = unknown>(prompt: string, system?: string): Promise<T | null> {
-  const jsonSystem = [
-    system,
-    'Reply with a single valid JSON value and nothing else. No markdown fences, no commentary before or after.',
-  ].filter(Boolean).join('\n\n')
-
-  const raw = await cloudflareText(prompt, jsonSystem, {
+  const raw = await cloudflareText(prompt, jsonSystemPrompt(system), {
     maxTokens: MAX_TOKENS_FOR.json,
     // Lower than the default so structured output stays on-format.
     temperature: 0.2,
   })
   return safeParseJSON<T>(raw)
 }
+
+function jsonSystemPrompt(system?: string): string {
+  return [
+    system,
+    'Reply with a single valid JSON value and nothing else. No markdown fences, no commentary before or after.',
+  ].filter(Boolean).join('\n\n')
+}
+
+/** Why a structured request failed, so callers can react rather than guess. */
+export type AiFailureCode =
+  | 'not_configured'   // no key — never retried
+  | 'unauthorized'     // key rejected — never retried
+  | 'rate_limited'
+  | 'unavailable'      // provider 5xx, network, timeout
+  | 'invalid_json'     // survived retry and still would not parse
+  | 'schema_mismatch'  // parsed, but the shape was wrong after retry
+
+export type AiResult<T> =
+  | { ok: true; data: T; attempts: number }
+  | { ok: false; code: AiFailureCode; message: string; attempts: number }
+
+/** Auth and configuration problems will not fix themselves on a second try. */
+function isRetryable(code: AiFailureCode): boolean {
+  return code !== 'not_configured' && code !== 'unauthorized'
+}
+
+function classify(err: unknown): { code: AiFailureCode; message: string } {
+  if (err instanceof AiError) {
+    if (err.status === 401) return { code: 'unauthorized', message: err.message }
+    if (err.status === 429) return { code: 'rate_limited', message: err.message }
+    if (err.message.includes('not configured')) return { code: 'not_configured', message: err.message }
+    return { code: 'unavailable', message: err.message }
+  }
+  return { code: 'unavailable', message: 'The AI service is temporarily unavailable.' }
+}
+
+/**
+ * Structured output that is actually checked before it reaches a caller.
+ *
+ * The pipeline is: call → reject empty → parse (one fence stripped, no brace
+ * guessing) → runtime schema check → return validated data or an explicit
+ * failure. On a parse or schema failure it makes exactly ONE corrective
+ * retry, telling the model what was wrong without echoing its invalid output
+ * back as instructions. Transport failures are not retried here — the Worker
+ * and the caller already have their own handling, and stacking retries at
+ * three layers turns one slow request into nine.
+ *
+ * Raw invalid output never reaches the returned message, only the validation
+ * errors, so model text cannot leak into a client-facing string.
+ */
+export async function aiStructured<T>(
+  prompt: string,
+  schema: Schema,
+  system?: string,
+): Promise<AiResult<T>> {
+  const MAX_ATTEMPTS = 2
+  let correction = ''
+  let last: { code: AiFailureCode; message: string } = {
+    code: 'unavailable',
+    message: 'The AI service is temporarily unavailable.',
+  }
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let raw: string
+    try {
+      raw = await cloudflareText(
+        correction ? `${prompt}\n\n${correction}` : prompt,
+        jsonSystemPrompt(system),
+        { maxTokens: MAX_TOKENS_FOR.json, temperature: 0.2 },
+      )
+    } catch (err) {
+      const failure = classify(err)
+      // A dead or refusing provider will not be fixed by asking again.
+      return { ok: false, ...failure, attempts: attempt }
+    }
+
+    const parsed = parseJson(raw)
+    if (!parsed.ok) {
+      last = { code: 'invalid_json', message: 'The AI service returned malformed output.' }
+      correction = 'Your previous reply was not valid JSON. Reply with only the JSON value.'
+      continue
+    }
+
+    const checked = validate<T>(parsed.value, schema)
+    if (checked.ok) return { ok: true, data: checked.value, attempts: attempt }
+
+    last = { code: 'schema_mismatch', message: 'The AI service returned unexpected data.' }
+    correction =
+      'Your previous reply had the wrong shape. Fix these problems and reply with only the JSON value:\n' +
+      checked.errors.map((e) => `- ${e}`).join('\n')
+  }
+
+  return { ok: false, ...last, attempts: MAX_ATTEMPTS }
+}
+
+export { isRetryable }
 
 // There is no image input. gpt-oss-20b is text-only, and the vision models
 // available on Workers AI were tried and rejected — see docs/AI.md. Features

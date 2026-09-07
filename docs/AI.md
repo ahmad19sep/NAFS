@@ -27,12 +27,38 @@ that touches the network or the key.
 |---|---|---|
 | `aiText(task, prompt, system?)` | one-shot generation | `string` |
 | `aiChat(messages, opts?)` | multi-turn conversation | `string` |
-| `aiJSON<T>(prompt, system?)` | structured output | `T \| null` |
+| `aiStructured<T>(prompt, schema, system?)` | **structured output — prefer this** | `AiResult<T>` |
+| `aiJSON<T>(prompt, system?)` | legacy structured output | `T \| null` |
 
 There is deliberately **no image input** — see [Why there is no vision](#why-there-is-no-vision).
 
-`aiJSON` returns `null` rather than throwing when the reply isn't parseable JSON.
-Callers must handle that — a `null` is a silent feature failure otherwise.
+### Structured output
+
+`aiStructured` is the one to use. It calls, rejects an empty reply, parses
+(stripping at most one complete markdown fence — it does **not** hunt for the
+first `{` and last `}`, because that turns prose into a confident wrong object),
+checks the value against a runtime [`Schema`](../web-legacy/src/lib/schema.ts),
+and on a parse or shape failure makes exactly **one** corrective retry telling
+the model what was wrong. Transport failures are not retried here; the Worker
+and caller have their own handling, and stacking retries at three layers turns
+one slow request into nine. Auth and configuration errors are never retried.
+
+It returns a discriminated result, so a caller can tell a model problem from an
+outage:
+
+```ts
+const r = await aiStructured<Plan>(prompt, PLAN_SCHEMA, SYSTEM)
+if (!r.ok) return NextResponse.json({ error: r.message }, { status: statusFor(r.code) })
+// r.data is validated — enums, ranges, required fields all checked
+```
+
+Failure codes: `not_configured`, `unauthorized`, `rate_limited`, `unavailable`,
+`invalid_json`, `schema_mismatch`. Raw model text never reaches `message`.
+
+`aiJSON` remains for the routes not yet migrated. It returns `null` for every
+failure — bad JSON, wrong fields, a dead provider — so callers cannot tell them
+apart and a `null` becomes a silently broken feature. Migrate to `aiStructured`
+when touching a route.
 
 **To add an AI feature:** import a function from `lib/ai.ts`. Do not import
 `cloudflare-ai.ts`, and do not add a second provider without reading
@@ -159,35 +185,34 @@ One call site in each of 14 routes.
 Ranked by value against effort. Each is grounded in something actually in the code
 today, not a wish list.
 
-### 1. `health-recommend` is blind to the data we now collect
-**High value · small effort · has a live bug**
+### ~~1. `health-recommend` is blind to the data we now collect~~ — DONE (AI-02)
 
-[`health-recommend`](../web-legacy/src/app/api/ai/health-recommend/route.ts) still
-reads `usual_sleep_time` / `usual_wake_time` — columns whose setup UI was removed
-when per-day sleep sessions landed. For any new user they are `NULL`, so the prompt
-literally reads `Sleep schedule: ?–? (? hours)`.
+It read `usual_sleep_time` / `usual_wake_time`, profile columns whose setup UI was
+removed when per-day sleep sessions landed, so for anyone who signed up afterwards
+the prompt read `Sleep schedule: ?–? (? hours)`.
 
-Meanwhile the app now stores **real** sleep sessions (`health_logs.sleep_sessions`)
-and **meals** (`health_logs.meals`) that no AI feature has ever seen. Feeding the
-last 7–30 days of actual sleep totals, nap patterns, and what the user ate would
-turn a generic BMI plan into a specific one. This is the single biggest gap.
+It now builds a [health digest](../web-legacy/src/lib/health-digest.ts) from the
+last 14 days of `health_logs` — real sleep sessions with nap and overlap handling,
+meals grouped by food category, water, steps, exercise and weight. Every metric
+carries its own observed count and eligible denominator, absent stays `null`, and
+a `limitations` list states what is unknown so the model cannot fill the gaps.
+Verified live: the model now opens with "recorded sleep on 3 of 14 nights with an
+average of 6h 5m" and closes with "the remaining days are unknown, not zero".
 
-### 2. Nothing analyses meals or nutrition
-**High value · medium effort**
+### ~~2. Nothing analyses meals or nutrition~~ — PARTLY DONE (AI-02)
 
-Meals are logged in detail — breakfast/lunch/dinner plus naps of eating, each with
-named foods — and nothing reads them. Candidates: a nutrition verdict in the daily
-report, "you ate 5 times, 3 were fast food" patterns, or meal suggestions in
-`health-recommend`. The food catalogue in [`lib/food.ts`](../web-legacy/src/lib/food.ts)
-already carries categories the model could reason over without any new data entry.
+The digest counts meals actually eaten (an empty meal slot is not a meal) and
+groups foods by the [menu categories](../web-legacy/src/lib/food.ts), so the model
+reasons over `fastfood 2, rice 1` rather than food names. Hand-typed foods count
+as `unknownFoods` instead of being guessed at.
 
-### 3. `aiJSON` gives up after one bad reply
-**Medium value · small effort**
+Still to do: meals do not appear in the daily/weekly reports or the coach context.
 
-`aiJSON` parses once and returns `null` on failure. An open model without strict
-JSON mode *will* occasionally wrap output in prose. One retry — same prompt, lower
-temperature, "your last reply was not valid JSON" appended — would recover most of
-those. Right now a single malformed reply silently kills a starter pack.
+### ~~3. `aiJSON` gives up after one bad reply~~ — DONE (AI-01)
+
+`aiStructured` validates at runtime and makes one corrective retry. See
+[Structured output](#structured-output). `health-recommend` is migrated; the other
+four `aiJSON` routes still need moving over — that is the next bounded task.
 
 ### 4. The coach re-sends a 30-day data dump every message
 **Medium value · medium effort**
