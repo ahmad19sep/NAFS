@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildGrowthPrompt, PREVIOUS_REVIEW_MAX_CHARS, type PeriodSummary } from './growth'
+import { buildGrowthPrompt, buildReportReviewPrompt, PREVIOUS_REVIEW_MAX_CHARS, type PeriodSummary } from './growth'
 
 const period = (over: Partial<PeriodSummary> = {}): PeriodSummary => ({
   period: 'This week', previous: 'Last week',
@@ -41,5 +41,25 @@ describe('buildGrowthPrompt', () => {
     const p = buildGrowthPrompt({ context: {}, week: period({ days_elapsed: 2, days_logged: 1 }), month: period() })
     expect(p).toContain('"days_elapsed": 2')
     expect(p).toContain('"days_logged": 1')
+  })
+})
+
+describe('buildReportReviewPrompt', () => {
+  it('leads with the period the reader is holding, and names it', () => {
+    const p = buildReportReviewPrompt({
+      summary: period({ period: 'Mon 1 – Sun 7 Sep' }),
+      context: { today: '2026-09-07' },
+      period: 'weekly',
+    })
+    expect(p.indexOf('THIS WEEK AGAINST LAST')).toBeLessThan(p.indexOf('WIDER CONTEXT'))
+    expect(p).toContain('"period": "Mon 1 – Sun 7 Sep"')
+    expect(p).toContain('absent means unknown, not zero')
+    expect(p.trim().endsWith("Write the coach's read for this week's printed report.")).toBe(true)
+  })
+
+  it('says month when the period is monthly', () => {
+    const p = buildReportReviewPrompt({ summary: period(), context: {}, period: 'monthly' })
+    expect(p).toContain('THIS MONTH AGAINST LAST')
+    expect(p.trim().endsWith("Write the coach's read for this month's printed report.")).toBe(true)
   })
 })

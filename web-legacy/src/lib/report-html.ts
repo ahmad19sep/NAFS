@@ -64,11 +64,51 @@ const SEVERITY_ICON: Record<Severity, string> = {
   warning: '■',
 }
 
+/** The coach's written read of one period, as stored in `report_reviews`. */
+export interface ReportReview {
+  content_md: string
+  generated_at: string
+  model_used?: string | null
+}
+
+/**
+ * The model writes plain prose with **bold** headings, and nothing else.
+ * Escaped first, then the only two things allowed through are the bold runs
+ * and the paragraph breaks — model output can never become markup here.
+ */
+export function reviewToHtml(md: string): string {
+  return md
+    .split(/\n\s*\n|\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const html = esc(line).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      // A line that is only a heading gets its own class, so the six
+      // headings read as headings on paper.
+      const heading = /^<strong>[^<]+<\/strong>\s*(—.*)?$/.test(html)
+      return `<p class="${heading ? 'read-h' : 'read-p'}">${html}</p>`
+    })
+    .join('')
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function reportToHtml(d: ReportData, opts: { autoPrint?: boolean } = {}): string {
+export function reportToHtml(
+  d: ReportData,
+  opts: { autoPrint?: boolean; review?: ReportReview | null } = {},
+): string {
   const periodName = d.period === 'weekly' ? 'Weekly' : 'Monthly'
   const unit = d.period === 'weekly' ? 'week' : 'month'
+
+  // The coach's read, when one has been written. It goes first: a reader
+  // holding the paper wants the plain-words version before the tables.
+  const review = !opts.review?.content_md ? '' : `
+    <div class="read">
+      ${reviewToHtml(opts.review.content_md)}
+      <p class="read-meta">Written ${esc(prettyDate(opts.review.generated_at.slice(0, 10), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))} by ${
+        opts.review.model_used ? esc(opts.review.model_used) : 'the coach'
+      } from the numbers in this report. This is one reading of them — <strong>the tables that follow are the record</strong>, so trust a figure there over a figure here. It reads what you logged, not what you intended: a day you did not log is unknown to it, never counted as a failure.</p>
+    </div>`
 
   // ── Hero: the one number the report leads with ─────────────────────────────
   const trendLine = d.score_delta == null
@@ -634,6 +674,16 @@ export function reportToHtml(d: ReportData, opts: { autoPrint?: boolean } = {}):
               border-radius: 8px; padding: 9px 12px 9px 25px; margin: 0; font-size: 10px; }
   .insights li { margin-bottom: 4px; }
 
+  /* ── The coach's read: prose, so it is set to be read, not scanned ────── */
+  .read { border: 1px solid var(--grid); border-left: 3px solid ${GOLD};
+          border-radius: 8px; padding: 11px 14px; background: #fdfdfb; }
+  .read-h { font-size: 10.5px; margin: 9px 0 2px; color: ${NAVY}; }
+  .read-h:first-child { margin-top: 0; }
+  .read-h strong { letter-spacing: .01em; }
+  .read-p { font-size: 10.5px; line-height: 1.62; margin: 0 0 5px; max-width: 62em; }
+  .read-meta { font-size: 8.5px; color: var(--muted); margin: 9px 0 0;
+               border-top: 1px solid var(--grid); padding-top: 6px; }
+
   .quote { border-left: 2px solid var(--grid); padding: 2px 0 2px 9px; margin-bottom: 7px; page-break-inside: avoid; }
   .quote-date { font-size: 8.5px; color: var(--now); font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
   .quote-text { white-space: pre-wrap; color: #33465a; font-size: 10px; }
@@ -664,6 +714,7 @@ export function reportToHtml(d: ReportData, opts: { autoPrint?: boolean } = {}):
 
 ${hero}
 
+${section(`The coach's read of this ${unit}`, review)}
 ${section(`Progress vs last ${unit}`, comparisonBlock, `${d.wins.length} area${d.wins.length === 1 ? '' : 's'} up`)}
 ${section('Where to improve next', focusBlock, d.focus.length ? `${d.focus.length} ranked` : '')}
 ${section('What went well', winsBlock)}

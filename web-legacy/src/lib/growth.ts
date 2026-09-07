@@ -102,3 +102,29 @@ export function buildGrowthPrompt(input: GrowthPromptInput): string {
   parts.push('', 'Write the growth review.')
   return parts.join('\n')
 }
+
+export interface ReportReviewPromptInput {
+  /** The period being reported on, already compared against the one before. */
+  summary: PeriodSummary
+  /** Habits, misses, causes and the user's own words. Trimmed by the route. */
+  context: Record<string, unknown>
+  period: 'weekly' | 'monthly'
+}
+
+/**
+ * The prompt behind the written read on a printed report. It leads with the
+ * period summary, because that is what the reader is holding, and carries the
+ * coach context underneath so a cause can be named.
+ */
+export function buildReportReviewPrompt(input: ReportReviewPromptInput): string {
+  const word = input.period === 'weekly' ? 'week' : 'month'
+  return [
+    `THIS ${word.toUpperCase()} AGAINST LAST (deterministic, from the records; every count carries its denominator):`,
+    JSON.stringify(input.summary, null, 1),
+    '',
+    'WIDER CONTEXT (last 30 days; absent means unknown, not zero):',
+    JSON.stringify(input.context, null, 1),
+    '',
+    `Write the coach's read for this ${word}'s printed report.`,
+  ].join('\n')
+}

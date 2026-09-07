@@ -3,10 +3,10 @@ import { createClient } from '@/lib/supabase/server'
 import { aiDeep, AiError } from '@/lib/ai'
 import { buildCoachContext } from '@/lib/coach-context'
 import { buildReport, periodRange } from '@/lib/report'
+import { fetchReportRows, toReportInput } from '@/lib/report-data'
 import { summarizeReport, buildGrowthPrompt } from '@/lib/growth'
 import { GROWTH_REVIEW_SYSTEM } from '@/lib/ai-prompts'
 import { todayInTZ, todayString } from '@/lib/utils'
-import type { CustomMetric } from '@/lib/health'
 
 export const dynamic = 'force-dynamic'
 // A month of records, read by a model that thinks before it writes.
@@ -33,10 +33,7 @@ export async function POST(req: NextRequest) {
   const force = req.nextUrl.searchParams.get('force') === '1'
 
   const { data: profile } = await supabase
-    .from('users')
-    .select('name, email, timezone, deen_enabled, health_extras_config')
-    .eq('id', user.id)
-    .maybeSingle()
+    .from('users').select('timezone').eq('id', user.id).maybeSingle()
   const tz = profile?.timezone || 'UTC'
 
   // The latest review, and whether it was written today on the user's calendar.
@@ -61,45 +58,14 @@ export async function POST(req: NextRequest) {
   const from = lastMonth.start < lastWeek.start ? lastMonth.start : lastWeek.start
   const to = today
 
-  const [ctx, results] = await Promise.all([
+  // One fetch over the widest range, two reports built from it.
+  const [ctx, rows] = await Promise.all([
     buildCoachContext(supabase, user.id),
-    Promise.allSettled([
-      supabase.from('habits').select('*').eq('user_id', user.id).eq('is_active', true),
-      supabase.from('habit_logs').select('*').eq('user_id', user.id).gte('date', from).lte('date', to),
-      supabase.from('prayer_logs').select('*').eq('user_id', user.id).gte('date', from).lte('date', to),
-      supabase.from('tasks').select('*').eq('user_id', user.id).gte('period_date', from).lte('period_date', to),
-      supabase.from('health_logs').select('*').eq('user_id', user.id).gte('date', from).lte('date', to),
-      supabase.from('quran_log').select('date, pages_read, surah').eq('user_id', user.id).gte('date', from).lte('date', to),
-      supabase.from('daily_checkins').select('date, evening_text, ai_verdict').eq('user_id', user.id).gte('date', from).lte('date', to),
-      supabase.from('challenges').select('*').eq('user_id', user.id),
-      supabase.from('challenge_checkins').select('challenge_id, date, completed').gte('date', from).lte('date', to),
-      supabase.from('goals').select('*, goal_milestones(done)').eq('user_id', user.id),
-    ]),
+    fetchReportRows(supabase, user.id, from, to),
   ])
-  const data = (i: number): any =>
-    results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
 
-  const extrasConfig = profile?.health_extras_config
-  const healthMetrics: CustomMetric[] = Array.isArray(extrasConfig) ? extrasConfig : []
-
-  const base = {
-    today,
-    deenEnabled: (profile?.deen_enabled ?? true) as boolean,
-    user: { name: profile?.name || 'Friend', email: profile?.email || '' },
-    habits: data(0) ?? [],
-    habitLogs: data(1) ?? [],
-    prayerLogs: data(2) ?? [],
-    tasks: data(3) ?? [],
-    healthLogs: data(4) ?? [],
-    quranLogs: data(5) ?? [],
-    checkins: data(6) ?? [],
-    challenges: data(7) ?? [],
-    challengeCheckins: data(8) ?? [],
-    goals: data(9) ?? [],
-    healthMetrics,
-  }
-  const week = summarizeReport(buildReport({ ...base, period: 'weekly', offset: 0 }))
-  const month = summarizeReport(buildReport({ ...base, period: 'monthly', offset: 0 }))
+  const week = summarizeReport(buildReport(toReportInput(rows, { period: 'weekly', offset: 0, today })))
+  const month = summarizeReport(buildReport(toReportInput(rows, { period: 'monthly', offset: 0, today })))
 
   const prompt = buildGrowthPrompt({
     context: ctx.context,

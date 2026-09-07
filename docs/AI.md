@@ -211,6 +211,7 @@ the coach and calls no model.
 |---|---|---|
 | `ai/chat` | `aiChat` | the coach, answering from 30 days of real data, what keeps not happening and what was different on those days, and what the user told it before — same context for the Coach page and the floating bubble |
 | `ai/growth-review` | `aiDeep` | improving, lacking, the pattern underneath, three rules for the week, one question — on demand, once a day, this week and this month against last |
+| `ai/report-review` | `aiDeep` | the written read printed on the weekly/monthly report: in plain words, what improved, where to improve, the pattern, three things to do, one question. Stored per (period, start date), so a report printed weeks later carries the same words |
 | `coach/notes` | — | saves a reason for a miss, a bad-day note, or a life answer, in the user's words |
 | `ai/evening-verdict` | `aiText('verdict')` | end-of-day verdict |
 | `ai/tribunal` | `aiText('verdict')` | weekly tribunal |
@@ -261,6 +262,34 @@ records, say so with the numbers and ask them to choose.
 The app does not punish. The only consequence in it is one the user sets on
 themselves — a sadqa pledge on a challenge. The pattern card names the evidence
 and points at the coach.
+
+---
+
+## Prose is an interpretation; tables are the record
+
+The written surfaces — the growth review and the report review — are the only
+places a model's words carry numbers, and a model can get a number wrong. Live
+on the free 20b model, a review read "missed 5 of 7 days" back as "not done on
+2 of 7". Claude handles it; the fallback does not always.
+
+Three things follow from that, and none of them is "trust the prose":
+
+1. **The prompts forbid arithmetic.** Numbers are to be copied exactly, never
+   recomputed, rounded or reversed.
+2. **The printed report states the hierarchy.** The read is introduced as *one
+   reading* of the numbers, with the tables named as the record. The
+   deterministic "Where to improve next" list sits below it with the true
+   figures, computed by `buildReport` and covered by tests.
+3. **Neither surface generates scripture.** Both prompts forbid quoting or
+   citing Quran or hadith, including chapter-and-verse references — a review
+   once closed with a generated ayah, and a misattributed line on a page
+   someone prints and keeps would outlive any correction. Every scripture the
+   app shows comes from the curated list in
+   [`quotes.ts`](../web-legacy/src/lib/quotes.ts), and the printed report's
+   footer carries a verified ayah of its own.
+
+`TRIBUNAL_SYSTEM` still permits a generated scripture line. It predates this
+rule and is unchanged here; it should get the same treatment.
 
 ---
 

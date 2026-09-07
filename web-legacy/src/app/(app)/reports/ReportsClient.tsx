@@ -2,13 +2,17 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { ChevronLeft, ChevronRight, Printer, ExternalLink, FileText } from 'lucide-react'
+import {
+  ChevronLeft, ChevronRight, Printer, ExternalLink, FileText,
+  Sparkles, Loader2, RefreshCw,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   prettyDate,
   type ReportData, type ReportPeriod, type AreaComparison, type Severity,
 } from '@/lib/report'
-import { reportToHtml, reportFileName } from '@/lib/report-html'
+import { reportToHtml, reportFileName, type ReportReview } from '@/lib/report-html'
+import RichText from '@/components/RichText'
 
 // Roles validated against the navy card surface (#132B41):
 //   now  #6EC5D8  7.34:1   teal, this period
@@ -109,9 +113,47 @@ function Dumbbell({ row }: { row: AreaComparison }) {
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
-export default function ReportsClient({ report: d }: { report: ReportData }) {
+interface Props {
+  report: ReportData
+  /** The coach's written read of this period, if one has been written. */
+  initialReview: ReportReview | null
+  /** Which model writes it right now. From the server, so it is true. */
+  deepModel: 'anthropic' | 'cloudflare'
+}
+
+export default function ReportsClient({ report: d, initialReview, deepModel }: Props) {
   const [printing, setPrinting] = useState(false)
   const unit = d.period === 'weekly' ? 'week' : 'month'
+
+  // The read travels into the printout, so it has to live here rather than
+  // inside the card — print() reads it at the moment the user prints.
+  const [review, setReview] = useState<ReportReview | null>(initialReview)
+  const [writing, setWriting] = useState(false)
+  const [reviewNote, setReviewNote] = useState<string | null>(null)
+  const [reviewError, setReviewError] = useState<string | null>(null)
+
+  async function writeReview() {
+    if (writing) return
+    setWriting(true); setReviewError(null); setReviewNote(null)
+    try {
+      const res = await fetch('/api/ai/report-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ period: d.period, offset: d.offset }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data?.review) throw new Error(data?.error || 'The read could not be written right now.')
+      setReview(data.review)
+      const notes: string[] = []
+      if (data.fellBack) notes.push('Claude was unavailable, so the free model wrote this one.')
+      if (data.saved === false && data.hint) notes.push(data.hint)
+      if (notes.length) setReviewNote(notes.join(' '))
+    } catch (e: any) {
+      setReviewError(e?.message || 'The read could not be written right now.')
+    } finally {
+      setWriting(false)
+    }
+  }
 
   function href(period: ReportPeriod, offset: number) {
     return `/reports?period=${period}&offset=${Math.max(0, offset)}`
@@ -136,7 +178,7 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
         setTimeout(() => frame.remove(), 60_000)
       }
     }
-    frame.srcdoc = reportToHtml(d)
+    frame.srcdoc = reportToHtml(d, { review })
     document.body.appendChild(frame)
     // never leave the button stuck on "Preparing…" if load never fires
     setTimeout(() => setPrinting(false), 8_000)
@@ -148,7 +190,7 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
    * its own page, where the system Share → Print always works.
    */
   function openPrintable() {
-    const blob = new Blob([reportToHtml(d, { autoPrint: true })], { type: 'text/html' })
+    const blob = new Blob([reportToHtml(d, { autoPrint: true, review })], { type: 'text/html' })
     const url = URL.createObjectURL(blob)
     const w = window.open(url, '_blank')
     if (!w) {
@@ -251,6 +293,61 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
           ))}
         </div>
       </div>
+
+      {/* The coach's read — explains the period in words, and prints with it */}
+      {d.days_logged > 0 && (
+        <div className="nafs-card p-4">
+          <div className="mb-1 flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-gold/20 bg-gold/10">
+                <Sparkles size={15} className="text-gold" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold leading-tight text-foreground">The coach&apos;s read</h2>
+                <p className="text-[10px] text-muted-foreground">
+                  {deepModel === 'anthropic' ? 'Written by Claude' : 'Written by the free model'} · prints with the report
+                </p>
+              </div>
+            </div>
+            {review && (
+              <span className="flex-shrink-0 text-[10px] text-muted-foreground">
+                {prettyDate(review.generated_at.slice(0, 10))}
+              </span>
+            )}
+          </div>
+
+          {review ? (
+            <>
+              <div className="mt-3 text-xs leading-relaxed text-foreground/90">
+                <RichText text={review.content_md} />
+              </div>
+              <p className="mt-3 border-t border-white/10 pt-2 text-[10px] leading-relaxed text-muted-foreground">
+                One reading of the numbers. The cards below are the record — trust a figure
+                there over a figure here.
+              </p>
+            </>
+          ) : (
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+              Six short sections in plain words: how the {unit} went, what improved, where you
+              need to improve, the pattern underneath, three things to do next {unit}, and one
+              question. It is written once and saved, so the printout carries it.
+            </p>
+          )}
+
+          {reviewNote && <p className="mt-2 text-[11px] text-muted-foreground">{reviewNote}</p>}
+          {reviewError && <p className="mt-2 text-[11px] text-red-400">{reviewError}</p>}
+
+          <button onClick={writeReview} disabled={writing}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5
+                       text-xs font-semibold text-white transition-all active:scale-[0.99] disabled:opacity-50">
+            {writing
+              ? <><Loader2 size={14} className="animate-spin" /> Reading your {unit}…</>
+              : review
+                ? <><RefreshCw size={14} /> Write it again</>
+                : <><Sparkles size={14} /> Write the read</>}
+          </button>
+        </div>
+      )}
 
       {/* Progress vs last period */}
       {d.comparison.length > 0 && (
@@ -545,7 +642,8 @@ export default function ReportsClient({ report: d }: { report: ReportData }) {
       )}
 
       <p className="text-center text-[10px] text-muted-foreground">
-        The printout adds the full day-by-day log and every reflection.
+        The printout adds the full day-by-day log and every reflection
+        {review ? ", and opens with the coach's read" : ''}.
       </p>
 
       {/* Print bar */}
