@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { aiText } from '@/lib/ai'
 import { sendEmail, dailyReportHTML, hasEmail } from '@/lib/email'
 import { sendWhatsApp, hasWhatsApp } from '@/lib/whatsapp'
+import { todayInTZ, shiftDate } from '@/lib/utils'
 import webpush from 'web-push'
 
 // Vercel Cron: `{ "path": "/api/cron/daily-report", "schedule": "0 16 * * *" }`
@@ -18,10 +19,10 @@ interface User {
   weight_kg: number | null
 }
 
-function todayString(): string { return new Date().toISOString().split('T')[0] }
-function yesterdayString(): string {
-  const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().split('T')[0]
-}
+// DATA-03: "today" is resolved per user, in their stored timezone. It used to
+// be one UTC date computed before the loop, so a user far enough east of UTC
+// received a report for the wrong day — the cron fires at a fixed UTC hour,
+// which falls on a different local date depending where the account is.
 
 export async function GET(req: NextRequest) {
   // Allow either Vercel cron auth or manual trigger from settings (?test=1 with a logged-in user)
@@ -33,8 +34,6 @@ export async function GET(req: NextRequest) {
   if (!hasEmail()) return NextResponse.json({ error: 'RESEND_API_KEY not set' }, { status: 500 })
 
   const supabase = createClient()
-  const today = todayString()
-  const yest = yesterdayString()
 
   // In test mode, only send to the currently signed-in user
   const COLUMNS = 'id, name, email, timezone, notify_email_daily, height_cm, weight_kg, push_subscription, notifications_enabled'
@@ -55,6 +54,9 @@ export async function GET(req: NextRequest) {
   let sent = 0
   for (const u of users) {
     try {
+      // Each account's own calendar day, not the server's.
+      const today = todayInTZ(u.timezone || 'UTC')
+      const yest = shiftDate(today, -1)
       const r = await buildAndSend(u, today, yest, supabase, isTest)
       if (r) sent++
     } catch (err: any) {

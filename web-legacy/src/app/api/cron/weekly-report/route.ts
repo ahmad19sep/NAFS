@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { aiText } from '@/lib/ai'
 import { sendEmail, weeklyReportHTML, hasEmail } from '@/lib/email'
+import { todayInTZ, shiftDate } from '@/lib/utils'
 
 // Vercel Cron: `{ "path": "/api/cron/weekly-report", "schedule": "0 21 * * 0" }` (Sunday 9 PM)
 
@@ -11,7 +12,6 @@ interface User {
   height_cm: number | null
 }
 
-function fmtDate(d: Date) { return d.toISOString().split('T')[0] }
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization')
@@ -56,10 +56,11 @@ async function buildAndSend(u: User, supabase: any, isTest: boolean) {
   if (!u.email) return false
   const recipient = (isTest && process.env.RESEND_DEV_RECIPIENT) || u.email
 
-  const now = new Date()
-  const start = new Date(now); start.setDate(now.getDate() - 6)
-  const startStr = fmtDate(start)
-  const todayStr = fmtDate(now)
+  // DATA-03: the window is this account's own last seven calendar days. It was
+  // derived from the server's UTC date, which lands on a different local day
+  // for accounts far enough from UTC, shifting the whole week by one.
+  const todayStr = todayInTZ(u.timezone || 'UTC')
+  const startStr = shiftDate(todayStr, -6)
 
   // Pull 7 days of activity
   const [
@@ -130,9 +131,11 @@ async function buildAndSend(u: User, supabase: any, isTest: boolean) {
 
   const weekDays: { date: string; day: string; score: number }[] = []
   for (let i = 6; i >= 0; i--) {
-    const d = new Date(now); d.setDate(now.getDate() - i)
-    const ds = fmtDate(d)
-    weekDays.push({ date: ds, day: DAY_NAMES[d.getDay()], score: dayScore(ds) })
+    const ds = shiftDate(todayStr, -i)
+    // Midday UTC, so reading the weekday back off the date string can't slip
+    // across a boundary the way midnight can.
+    const weekday = DAY_NAMES[new Date(`${ds}T12:00:00Z`).getUTCDay()]
+    weekDays.push({ date: ds, day: weekday, score: dayScore(ds) })
   }
 
   const validDays = weekDays.filter((d) => d.score > 0)
@@ -198,7 +201,11 @@ Active goals: ${(goals ?? []).length}`
     recs = ['Identify what made your best day great — replicate it.', 'Pick one habit to harden.', 'Cut one source of friction.']
   }
 
-  const weekLabel = `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+  // Labelled from the resolved local dates, so the heading matches the window
+  // the figures were actually computed over.
+  const labelFor = (ds: string, opts: Intl.DateTimeFormatOptions) =>
+    new Date(`${ds}T12:00:00Z`).toLocaleDateString('en-US', { ...opts, timeZone: 'UTC' })
+  const weekLabel = `${labelFor(startStr, { month: 'short', day: 'numeric' })} – ${labelFor(todayStr, { month: 'short', day: 'numeric', year: 'numeric' })}`
 
   const html = weeklyReportHTML({
     name: u.name || 'friend',

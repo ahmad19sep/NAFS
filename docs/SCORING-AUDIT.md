@@ -97,7 +97,7 @@ Reproduced by fixture **D13**.
 
 ## Test harness
 
-`vitest` (one devDependency, native TypeScript) with `npm test`. 26 tests:
+`vitest` (one devDependency, native TypeScript) with `npm test`. 68 tests:
 
 | Fixture | Covers |
 |---|---|
@@ -114,7 +114,7 @@ than inventing one mid-refactor.
 
 ```bash
 cd web-legacy
-npm test           # 26 tests
+npm test           # 68 tests
 npx tsc --noEmit   # clean
 npm run build      # compiles
 ```
@@ -140,3 +140,42 @@ Take the owner decision on missing-day policy, then wire `coverage.ts` into one
 surface — Health is the best candidate, since its denominator is already the
 most misleading — and extend the fixtures to that surface before touching the
 others.
+
+---
+
+## DATA-03 — date resolution (partial)
+
+The blueprint's first date rule: *resolve "today" using the account's explicit
+timezone, not the server's date.*
+
+`notify-tasks` already did this correctly, resolving each account's local date
+and time before deciding whether a reminder is due. The two scheduled reports
+did not: both derived a single UTC date **before** their per-user loop.
+
+Because Vercel cron fires at a fixed UTC hour, that date lands on a different
+calendar day depending where the account is. An account far enough east of UTC
+received a daily report for the wrong day, and a weekly window shifted by one —
+silently, since every figure in it was internally consistent.
+
+Fixed: both reports now resolve `todayInTZ(u.timezone || 'UTC')` **inside** the
+loop, per account, and derive the rest with `shiftDate`, a pure calendar
+operation that never touches a timezone. `health-recommend`'s 14-day window had
+the same flaw and is fixed the same way.
+
+Covered by [`dates.test.ts`](../web-legacy/src/lib/dates.test.ts): month, year
+and leap-day boundaries, window construction, round-trip stability, and that two
+far-apart zones are never more than one day apart — which is what makes a fixed
+UTC hour unsafe in the first place.
+
+### Still open in DATA-03
+
+- **38 sites still derive dates from `toISOString()`**, which is UTC. Most are
+  wide range starts where a one-day edge does not change what the user sees, but
+  they have not been audited one by one.
+- **`todayString()` uses the runtime's local zone.** Correct in the browser;
+  on the server it is whatever `TZ` is set to. Client code calling it is fine —
+  server code should take the account's timezone instead.
+- **Sleep sessions store wall-clock times, not instants.** The blueprint asks
+  for real instants so duration survives a timezone change or DST. Today a
+  session recorded either side of a clock change computes from wall-clock
+  arithmetic. Changing that needs a migration and belongs with DATA-02.

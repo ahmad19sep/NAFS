@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { aiStructured } from '@/lib/ai'
 import { HEALTH_RECOMMENDATION_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
 import { computeBMI } from '@/lib/bmi'
+import { todayInTZ, shiftDate } from '@/lib/utils'
 import { buildHealthDigest, describeHealthDigest } from '@/lib/health-digest'
 
 interface HealthRecommendation {
@@ -82,7 +83,7 @@ export async function POST(_req: NextRequest) {
 
     const { data: profile } = await supabase
       .from('users')
-      .select('gender, height_cm, weight_kg, about_me')
+      .select('gender, height_cm, weight_kg, about_me, timezone')
       .eq('id', user.id).maybeSingle()
 
     if (!profile?.height_cm || !profile?.weight_kg) {
@@ -92,22 +93,21 @@ export async function POST(_req: NextRequest) {
     // AI-02: the plan reads the last 14 days of actual logs. It used to read
     // usual_sleep_time/usual_wake_time, profile fields whose setup UI is gone,
     // so for anyone who signed up since they were always null.
-    const endDate = new Date()
-    const startDate = new Date(endDate)
-    startDate.setDate(startDate.getDate() - (DIGEST_DAYS - 1))
-    const iso = (d: Date) => d.toISOString().slice(0, 10)
+    // DATA-03: the window is the account's own calendar days. Deriving it from
+    // the server's UTC date excluded the user's current day whenever local time
+    // was ahead of UTC midnight.
+    const endDate = todayInTZ(profile.timezone || 'UTC')
+    const startDate = shiftDate(endDate, -(DIGEST_DAYS - 1))
 
     const { data: healthRows } = await supabase
       .from('health_logs')
       .select('date, sleep_sessions, sleep_hours, meals, water_glasses, steps, exercise_done, exercise_minutes, weight_kg')
       .eq('user_id', user.id)
-      .gte('date', iso(startDate))
-      .lte('date', iso(endDate))
+      .gte('date', startDate)
+      .lte('date', endDate)
 
     const digest = buildHealthDigest(healthRows ?? [], {
-      startDate: iso(startDate),
-      endDate: iso(endDate),
-      eligibleDays: DIGEST_DAYS,
+      startDate, endDate, eligibleDays: DIGEST_DAYS,
     })
 
     const bmi = computeBMI(profile.weight_kg, profile.height_cm)

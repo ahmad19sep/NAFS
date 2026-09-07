@@ -48,6 +48,21 @@ export function todayInTZ(tz: string): string {
   }
 }
 
+/**
+ * Shift a YYYY-MM-DD date by whole days — a pure calendar operation.
+ *
+ * Everything happens in UTC so no local offset can move the result: the point
+ * is arithmetic on a date the caller has already resolved in the right
+ * timezone, not another conversion. `shiftDate(todayInTZ(tz), -1)` is the
+ * user's yesterday, wherever the server happens to be running.
+ */
+export function shiftDate(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  dt.setUTCDate(dt.getUTCDate() + days)
+  return dt.toISOString().slice(0, 10)
+}
+
 export function daysUntil(dateStr: string): number {
   const target = new Date(dateStr)
   const now = new Date()
