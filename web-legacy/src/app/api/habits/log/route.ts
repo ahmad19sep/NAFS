@@ -32,33 +32,48 @@ export async function POST(req: NextRequest) {
     .from('habits').select('*').eq('id', habitId).eq('user_id', user.id).single()
   if (habitErr || !habit) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // ---- Subject-tracked: update position by delta ----
-  let logValue: number = value ?? (completed ? 1 : 0)
-  let logCompleted: boolean = !!completed
+  // ---- Subject-tracked: move the reading position ----
+  //
+  // LOG-01. This used to read subject_position, add a delta in JavaScript and
+  // write the result back. Two requests interleaving between the read and the
+  // write meant one person's progress was silently dropped, and the surviving
+  // number still looked plausible. The whole adjustment now happens in one
+  // statement under a row lock, inside log_subject_habit.
+  let subjectPosition: number | null = null
 
   if (habit.type === 'subject') {
-    const { data: existing } = await supabase.from('habit_logs')
-      .select('value')
-      .eq('user_id', user.id).eq('habit_id', habitId).eq('date', date).maybeSingle()
-    const oldDelta = existing?.value ?? 0
-    const newDelta = Math.max(0, subject_delta ?? value ?? 0)
-    const adjustment = newDelta - oldDelta
-    const total = habit.subject_total ?? Number.MAX_SAFE_INTEGER
-    const newPosition = Math.max(0, Math.min(total, (habit.subject_position ?? 0) + adjustment))
-    await supabase.from('habits').update({ subject_position: newPosition }).eq('id', habitId)
-    logValue = newDelta
-    logCompleted = newDelta > 0
-  }
+    const { data: applied, error: rpcErr } = await supabase.rpc('log_subject_habit', {
+      p_habit_id: habitId,
+      p_date: date,
+      p_new_delta: Math.max(0, subject_delta ?? value ?? 0),
+      p_duration_mins: duration_mins ?? 0,
+      p_notes: notes ?? null,
+    })
 
-  await supabase.from('habit_logs').upsert({
-    user_id: user.id,
-    habit_id: habitId,
-    date,
-    completed: logCompleted,
-    value: logValue,
-    duration_mins: duration_mins ?? 0,
-    notes: notes ?? null,
-  }, { onConflict: 'user_id,habit_id,date' })
+    if (rpcErr) {
+      // Better to refuse than to fall back to the racy path and quietly
+      // corrupt a running total.
+      const missing = /could not find the function|does not exist/i.test(rpcErr.message)
+      return NextResponse.json({
+        error: missing
+          ? 'Reading progress needs a database update. Run supabase/atomic_habit_progress.sql.'
+          : 'Could not save reading progress.',
+      }, { status: missing ? 503 : 500 })
+    }
+
+    const row = Array.isArray(applied) ? applied[0] : applied
+    subjectPosition = row?.subject_position ?? null
+  } else {
+    await supabase.from('habit_logs').upsert({
+      user_id: user.id,
+      habit_id: habitId,
+      date,
+      completed: !!completed,
+      value: value ?? (completed ? 1 : 0),
+      duration_mins: duration_mins ?? 0,
+      notes: notes ?? null,
+    }, { onConflict: 'user_id,habit_id,date' })
+  }
 
   // ---- Recalculate streak (schedule-aware) ----
   const { data: recentLogs } = await supabase
@@ -142,5 +157,8 @@ export async function POST(req: NextRequest) {
     ok: true,
     currentStreak,
     longestStreak: Math.max(longestStreak, currentStreak),
+    // The position the database settled on, not what the client assumed, so a
+    // concurrent update from another device is reflected immediately.
+    ...(subjectPosition != null ? { subjectPosition } : {}),
   })
 }

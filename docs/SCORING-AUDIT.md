@@ -97,7 +97,7 @@ Reproduced by fixture **D13**.
 
 ## Test harness
 
-`vitest` (one devDependency, native TypeScript) with `npm test`. 68 tests:
+`vitest` (one devDependency, native TypeScript) with `npm test`. 79 tests:
 
 | Fixture | Covers |
 |---|---|
@@ -114,7 +114,7 @@ than inventing one mid-refactor.
 
 ```bash
 cd web-legacy
-npm test           # 68 tests
+npm test           # 79 tests
 npx tsc --noEmit   # clean
 npm run build      # compiles
 ```
@@ -179,3 +179,53 @@ UTC hour unsafe in the first place.
   for real instants so duration survives a timezone change or DST. Today a
   session recorded either side of a clock change computes from wall-clock
   arithmetic. Changing that needs a migration and belongs with DATA-02.
+
+---
+
+## LOG-01 — write safety (partial)
+
+The blueprint's rule: *do not let two devices overwrite each other's totals
+silently. Use atomic increments for additive quantities.*
+
+### Fixed: the lost update on reading progress
+
+`/api/habits/log` handled subject habits (a book with a page position) in three
+steps: read the day's stored amount, read `habits.subject_position`, then write
+position + (new − old). Two requests interleaving between the read and the write
+meant one person's pages were dropped — and because the surviving number was
+still plausible, nothing ever surfaced the loss. One device retrying on a flaky
+connection was enough.
+
+That now runs inside `log_subject_habit`
+([supabase/atomic_habit_progress.sql](../supabase/atomic_habit_progress.sql)),
+which takes a row lock on the habit before reading, so concurrent calls queue
+rather than race, and returns the position it settled on so the client shows the
+true total instead of its own guess. If the function is missing the route
+returns 503 naming the migration, rather than falling back to the racy path and
+quietly corrupting a running total.
+
+The design is idempotent by construction: a day's log stores the **absolute**
+amount read that day, and the position moves by the difference from what was
+stored before. Replaying a request after a lost response applies a zero
+adjustment. Pinned by [`habit-progress.test.ts`](../web-legacy/src/lib/habit-progress.test.ts),
+which also covers D06 bounds and D08 replay.
+
+Because the SQL cannot be unit-tested from here, the arithmetic it must
+implement is duplicated as an executable specification in
+[`habit-progress.ts`](../web-legacy/src/lib/habit-progress.ts). Change one,
+change both — the alternative is an untested rule living only in a migration.
+
+### Still open in LOG-01
+
+- **No request identifiers.** The blueprint wants each user intent to carry a
+  stable id, unique per owner in durable storage, so a retry is recognised
+  rather than re-executed. Subject habits are idempotent by their delta design,
+  but nothing else is.
+- **Absolute writes have no revision check.** The health page upserts water,
+  steps and the rest from client state, so two devices silently overwrite each
+  other. The blueprint asks for a version check on absolute edits.
+- **No Undo anywhere.** Corrections work by writing a new value; there is no
+  operation that targets the original mutation and recomputes what depended on
+  it.
+- **No pending state.** The UI does not distinguish "saved" from "not saved
+  yet", so a failed write can look successful.
