@@ -10,6 +10,7 @@ import { Droplet, Footprints, Moon, Sun, Dumbbell, Scale, Ruler, Plus, Minus, X,
 import HistoryTeaserCard from '@/components/HistoryTeaserCard'
 import { computeHealthHistory } from '@/lib/history'
 import { computeBMI } from '@/lib/bmi'
+import { classifyWrite } from '@/lib/write-conflict'
 import {
   type CustomMetric, type CustomMetricType, type ExtrasValues, type SleepSession,
   makeMetricId, isMetricDone,
@@ -81,6 +82,12 @@ export default function HealthPage() {
   const [adding, setAdding] = useState<string | null>(null)
   const [addedKeys, setAddedKeys] = useState<Set<string>>(new Set())
 
+  // Today's row and the version it was at when this page loaded. Together they
+  // let a save refuse to overwrite a change made somewhere else.
+  const [logId, setLogId] = useState<string | null>(null)
+  const [loadedAt, setLoadedAt] = useState<string | null>(null)
+  const [conflict, setConflict] = useState(false)
+
   useEffect(() => {
     async function load() {
       const { data: { user } } = await supabase.auth.getUser()
@@ -114,6 +121,8 @@ export default function HealthPage() {
       }
 
       if (todayLog) {
+        setLogId(todayLog.id)
+        setLoadedAt(todayLog.updated_at)
         setWater(todayLog.water_glasses ?? 0)
         setSteps(String(todayLog.steps ?? ''))
         setExercise(todayLog.exercise_done ?? false)
@@ -349,7 +358,7 @@ export default function HealthPage() {
     const sessions = sleepSessions.filter((s) => sleepSessionMinutes(s.start, s.end) != null)
     const totalMins = totalSleepMinutes(sessions)
 
-    const { error: logErr } = await supabase.from('health_logs').upsert({
+    const payload = {
       user_id: userId, date: today,
       water_glasses: water,
       steps: steps ? Number(steps) : null,
@@ -364,12 +373,36 @@ export default function HealthPage() {
       sleep_time: sessions[0]?.start ?? null,
       wake_time: sessions[sessions.length - 1]?.end ?? null,
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id,date' })
+    }
 
-    if (logErr) {
+    // LOG-01. Every field here is an absolute value taken from this form, so a
+    // plain upsert is last-write-wins: open the page on a phone and a laptop,
+    // save on both, and whichever saved first is silently replaced — including
+    // fields the second device never touched. The row's updated_at acts as a
+    // version. If it moved since this page loaded, someone else wrote to today
+    // and we stop rather than overwrite them.
+    let saved: { id: string; updated_at: string } | null = null
+
+    const isInsert = !logId
+    const { data, error } = isInsert
+      ? await supabase.from('health_logs').insert(payload)
+          .select('id, updated_at').maybeSingle()
+      : await supabase.from('health_logs').update(payload)
+          .eq('id', logId).eq('updated_at', loadedAt)
+          .select('id, updated_at').maybeSingle()
+
+    const outcome = classifyWrite(error, !!data, isInsert)
+    if (outcome.kind !== 'saved') {
       setSaving(false)
-      alert(`Could not save: ${logErr.message}`)
+      if (outcome.kind === 'conflict') setConflict(true)
+      else alert('Could not save. Please try again.')
       return
+    }
+    saved = data
+
+    if (saved) {
+      setLogId(saved.id)
+      setLoadedAt(saved.updated_at)
     }
 
     if (dailyWeightNum) {
@@ -497,6 +530,25 @@ export default function HealthPage() {
         <h1 className="text-2xl font-bold text-foreground">Health</h1>
         <p className="text-sm text-muted-foreground mt-0.5">{tracked}/{total} logged today</p>
       </div>
+
+      {/* Someone saved today's health log elsewhere while this page was open.
+          Neither version is discarded automatically — reloading shows theirs,
+          and the entries here stay on screen until then. */}
+      {conflict && (
+        <div className="rounded-2xl border border-orange-500/40 bg-orange-500/10 p-4">
+          <p className="text-sm font-semibold text-orange-300">Today was updated somewhere else</p>
+          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            Another device saved today&apos;s health log after this page loaded. Saving
+            now would overwrite it, including anything it recorded that isn&apos;t on
+            this screen. Reload to see the newer version, then re-enter anything missing.
+          </p>
+          <button onClick={() => window.location.reload()}
+            className="mt-3 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white
+                       hover:bg-teal-light transition-all active:scale-95">
+            Reload today
+          </button>
+        </div>
+      )}
 
       {/* BMI banner */}
       {bmi && (

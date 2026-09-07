@@ -97,7 +97,7 @@ Reproduced by fixture **D13**.
 
 ## Test harness
 
-`vitest` (one devDependency, native TypeScript) with `npm test`. 104 tests:
+`vitest` (one devDependency, native TypeScript) with `npm test`. 113 tests:
 
 | Fixture | Covers |
 |---|---|
@@ -114,7 +114,7 @@ than inventing one mid-refactor.
 
 ```bash
 cd web-legacy
-npm test           # 104 tests
+npm test           # 113 tests
 npx tsc --noEmit   # clean
 npm run build      # compiles
 ```
@@ -253,15 +253,30 @@ Pinned by [`idempotency.test.ts`](../web-legacy/src/lib/idempotency.test.ts),
 including that a conflict is never mistaken for a replay — the dangerous
 confusion, since it would return the wrong task.
 
+### Fixed: two devices no longer overwrite each other on the Health page
+
+Every field on that page is an absolute value taken from the form, so the
+upsert was last-write-wins. Open the day on a phone and a laptop, save on
+both, and whichever saved first was silently replaced — including fields the
+second device never touched and whose values it had never seen.
+
+The row's `updated_at` is now read when the page loads and required to still
+match at save time. If it moved, the write is refused and the page says so,
+offering to reload. Neither version is discarded automatically: what is on
+screen stays until the reload is taken. An insert colliding on (user_id, date)
+is treated the same way, since it means the row appeared while the page was
+open.
+
+The rules live in [`write-conflict.ts`](../web-legacy/src/lib/write-conflict.ts)
+so the dangerous case is pinned: a guarded update that matched **no rows**
+returns no error, and reading that as success is the entire bug.
+
 ### Still open in LOG-01
 
 - **Only creation is guarded.** `withIdempotency` is generic, but no other
   write passes a request id yet.
-- **Absolute writes have no revision check.** The health page upserts water,
-  steps and the rest from client state, so two devices silently overwrite each
-  other. The blueprint asks for a version check on absolute edits.
+- **No pending state on every surface.** Tasks now say "Not saved" on a
+  network failure; the other forms do not.
 - **No Undo anywhere.** Corrections work by writing a new value; there is no
-  operation that targets the original mutation and recomputes what depended on
-  it.
-- **No pending state.** The UI does not distinguish "saved" from "not saved
-  yet", so a failed write can look successful.
+  operation that targets the original mutation and recomputes what depended
+  on it.
