@@ -81,7 +81,7 @@ export function reportToHtml(d: ReportData, opts: { autoPrint?: boolean } = {}):
   const hero = `
     <div class="hero">
       <div class="hero-main">
-        <div class="hero-label">Average daily score</div>
+        <div class="hero-label">Average score across the ${d.days_logged} day${d.days_logged === 1 ? '' : 's'} you logged</div>
         <div class="hero-figure">${d.avg_score}<span class="hero-unit">%</span></div>
         <div class="hero-trend">${trendLine}</div>
       </div>
@@ -323,6 +323,35 @@ export function reportToHtml(d: ReportData, opts: { autoPrint?: boolean } = {}):
           </tr>`).join('')}
       </tbody>
     </table>`
+
+  // DATA-02, stated rather than silently applied: this report counts missing
+  // days two different ways, and the reader cannot reconcile the figures
+  // without knowing which is which. Nothing here changes a number — it names
+  // the basis of each, which is what makes them comparable.
+  const unlogged = d.days_elapsed - d.days_logged
+  const methods = `
+    <p class="note">
+      You logged something on <strong>${d.days_logged} of ${d.days_elapsed} days</strong>${
+        unlogged > 0 ? ` — ${unlogged} day${unlogged === 1 ? ' has' : 's have'} no record at all` : ''
+      }. A day with no record is <strong>unknown</strong>, not a zero: it means
+      nothing was written down, not that nothing was done.
+    </p>
+    <p class="note">
+      <strong>The headline average</strong> covers only the days you logged, so it
+      answers "how did the days I recorded go?". It does not drop when you simply
+      forget to log.
+    </p>
+    <p class="note">
+      <strong>Salah and Health percentages</strong> are counted differently: they
+      divide by every day in the period, so an unrecorded day lowers them. That is
+      why they can look worse than the headline in a week you logged patchily —
+      the difference is missing records, not a change in what you did.
+    </p>
+    <p class="note">
+      <strong>Habits, tasks and challenges</strong> divide by what was actually
+      scheduled or created, so days off and periods before an item existed are
+      never counted against you.
+    </p>`
 
   const h = d.health
   const sd = h.sleep_detail
@@ -650,6 +679,7 @@ ${section('Weekday pattern', weekdays)}
 
 ${dailyLog ? `<div class="page-break"></div>${section('Day-by-day log', dailyLog)}` : ''}
 ${section('Your reflections', reflections, `${d.reflections.length} entries`)}
+${section('How these numbers are counted', methods)}
 
 <footer>
   <div class="ayah">"Indeed, Allah will not change the condition of a people until they change what is in themselves." — Quran 13:11</div>

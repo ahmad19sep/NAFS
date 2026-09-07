@@ -97,7 +97,7 @@ Reproduced by fixture **D13**.
 
 ## Test harness
 
-`vitest` (one devDependency, native TypeScript) with `npm test`. 79 tests:
+`vitest` (one devDependency, native TypeScript) with `npm test`. 82 tests:
 
 | Fixture | Covers |
 |---|---|
@@ -114,7 +114,7 @@ than inventing one mid-refactor.
 
 ```bash
 cd web-legacy
-npm test           # 79 tests
+npm test           # 82 tests
 npx tsc --noEmit   # clean
 npm run build      # compiles
 ```
@@ -128,7 +128,8 @@ npm run build      # compiles
   refactor.
 - **`coverage.ts` is unwired.** Wiring it is DATA-02 and changes displayed
   numbers, which needs the decision above first.
-- **The mixed-policy skew is documented, not repaired.** Repairing it means
+- **The mixed-policy skew is now disclosed in the report itself**, under "How
+  these numbers are counted", rather than repaired. Repairing it means
   choosing one policy for the whole report.
 - **Home vs Health denominator mismatch** (4 vs 5 categories) is untouched — the
   blueprint asks for it to be reproduced in one account with identical enabled

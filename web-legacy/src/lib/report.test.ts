@@ -296,3 +296,37 @@ describe('the report carries sleep and meals with their coverage', () => {
     expect(r.health.meals.days_with_any_meal).toBeLessThan(r.health.meals.eligible_days)
   })
 })
+
+describe('DATA-02 — the two missing-day policies the report actually uses', () => {
+  // One fully-recorded health day in a seven-day period, and nothing else.
+  // The report describes this in its methods note; these pin the relationship
+  // so the prose cannot quietly become wrong.
+  const healthLogs = [{
+    date: '2026-08-31',
+    water_glasses: 6,
+    steps: 8000,
+    sleep_hours: 7,
+    exercise_done: true,
+  }]
+  const r = report([], healthLogs)
+
+  it('counts the headline average over logged days only', () => {
+    expect(r.days_logged).toBe(1)
+    expect(r.days_elapsed).toBe(7)
+  })
+
+  it('counts Health against every day in the period, so it zero-fills', () => {
+    const health = r.comparison.find((c) => c.key === 'health')
+    expect(health).toBeDefined()
+    // 4 flags hit on the one recorded day, divided by 4 x 7 elapsed days.
+    // Observed-basis would be 100%; this is the other policy, and the gap
+    // between them is exactly what the methods note exists to explain.
+    expect(health!.current).toBe(14)
+    expect(health!.current).not.toBe(100)
+  })
+
+  it('exposes coverage as its own figure rather than folding it into a score', () => {
+    const consistency = r.comparison.find((c) => c.key === 'consistency')
+    expect(consistency!.current).toBe(14) // 1 of 7 days
+  })
+})
