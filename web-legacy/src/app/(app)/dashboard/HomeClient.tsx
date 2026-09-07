@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { cn, scoreColor } from '@/lib/utils'
 import { healthProgress } from '@/lib/health-progress'
+import { selectNextUp } from '@/lib/next-up'
 import { type CustomMetric } from '@/lib/health'
 import { PRAYERS } from '@/lib/scoring'
 import type { Habit, HabitLog, Weekday } from '@/types'
@@ -141,6 +142,30 @@ export default function HomeClient({
     : 0
   const noEngagement = totalWeight === 0
 
+  // ---- What's actually left today ----
+  const doneHabitIds = useMemo(
+    () => new Set(
+      (habits as Habit[])
+        .filter((h) => isHabitDoneToday(h, (habitLogs as HabitLog[]).find((l) => l.habit_id === h.id)))
+        .map((h) => h.id),
+    ),
+    [habits, habitLogs],
+  )
+  const nextUp = useMemo(() => selectNextUp({
+    today,
+    tasks: todayTasks as any,
+    habits: habits as any,
+    doneHabitIds,
+    deenEnabled: deenOn,
+    // Recorded, not "prayed": a deliberately logged miss is still a decision
+    // made, and Next Up is about what still needs attention.
+    prayersRecorded: prayerValues.filter((v) => v > 0).length,
+  }), [today, todayTasks, habits, doneHabitIds, deenOn, prayerValues])
+
+  const plannedRemaining =
+    (tasksTotal - tasksDone) + (habitsTotal - habitsDone)
+    + (deenOn ? Math.max(0, 5 - prayerValues.filter((v) => v > 0).length) : 0)
+
   // ---- 30-day history (for sparkline + delta vs yesterday) ----
   const habitsHistory     = useMemo(() => computeHabitsHistory(habits as Habit[], habitLogs30 as HabitLog[], today), [habits, habitLogs30, today])
   const deenHistory       = useMemo(() => deenOn ? computeDeenHistory(prayerLogs30, today) : [], [deenOn, prayerLogs30, today])
@@ -272,6 +297,44 @@ export default function HomeClient({
           </div>
         </div>
       </div>
+
+      {/* ───────────── Next up ─────────────
+          What is actually left today, above the navigation grid. Each row goes
+          straight to the control that can record it, so acting on it is one
+          tap rather than a hunt through the app. */}
+      {nextUp.length > 0 ? (
+        <div className="anim-up rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+          <div className="flex items-baseline justify-between mb-3">
+            <p className="text-sm font-semibold text-foreground">Next up</p>
+            <p className="text-[11px] text-muted-foreground">{plannedRemaining} left today</p>
+          </div>
+          <div className="space-y-2">
+            {nextUp.map((item) => (
+              <Link key={`${item.kind}-${item.id}`} href={item.href}
+                className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3
+                           transition-all active:scale-95 hover:border-gold/30 hover:bg-white/[0.07]">
+                <span className="text-lg">{item.emoji}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block truncate text-sm font-medium text-foreground">{item.label}</span>
+                  {item.detail && (
+                    <span className="block text-[11px] text-muted-foreground">{item.detail}</span>
+                  )}
+                </span>
+                <ChevronRight size={15} className="text-muted-foreground/50 shrink-0" />
+              </Link>
+            ))}
+          </div>
+        </div>
+      ) : !noEngagement && (
+        // Everything scheduled is done. Say so and stop — offering more work
+        // here would punish finishing.
+        <div className="anim-up rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.07] p-4 text-center">
+          <p className="text-sm font-semibold text-emerald-300">Today&apos;s plan is complete</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Nothing left scheduled. Anything else today is a bonus.
+          </p>
+        </div>
+      )}
 
       {/* ───────────── Features grid ───────────── */}
       <div className="anim-up anim-d2">
