@@ -30,8 +30,16 @@ with no browser attached, so the key must live in the server environment for
 them to work at all.
 
 ### Service role key (required for scheduled jobs)
-Supabase Dashboard -> Project Settings -> API -> service_role key.
-Set it as SUPABASE_SERVICE_ROLE_KEY in Vercel.
+Supabase Dashboard -> Project Settings -> API Keys.
+
+Newer projects show "Publishable and secret API keys": take the **Secret key**
+(sb_secret_...), which replaces service_role. Older projects show it under
+"Legacy anon, service_role API keys" as service_role. Either works.
+
+Do NOT use the publishable key — that replaces anon and is still subject to
+row-level security, which is the problem this solves.
+
+Set it as SUPABASE_SERVICE_ROLE_KEY in Vercel (Production), then redeploy.
 
 Scheduled jobs run with no signed-in user, so the normal client sees
 auth.uid() = NULL and every row-level policy denies. Without this key the
