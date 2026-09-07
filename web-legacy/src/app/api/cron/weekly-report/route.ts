@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { aiText } from '@/lib/ai'
 import { sendEmail, weeklyReportHTML, hasEmail } from '@/lib/email'
 import { todayInTZ, shiftDate } from '@/lib/utils'
@@ -21,12 +22,20 @@ export async function GET(req: NextRequest) {
   if (!isCron && !isTest) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!hasEmail()) return NextResponse.json({ error: 'RESEND_API_KEY not set' }, { status: 500 })
 
-  const supabase = createClient()
+  // SAFE-02: a cron request has no session, so the cookie client reads nothing
+  // under RLS. See lib/supabase/service — bypassing RLS means every query below
+  // must scope by user itself.
+  const supabase = isTest ? createClient() : createServiceClient()
+  if (!supabase) {
+    return NextResponse.json({
+      error: 'SUPABASE_SERVICE_ROLE_KEY is not set — scheduled reports cannot read the database.',
+    }, { status: 500 })
+  }
 
   const COLUMNS = 'id, name, email, timezone, notify_email_weekly, height_cm'
   let users: User[] | null = null
   if (isTest) {
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user } } = await createClient().auth.getUser()
     if (!user) return NextResponse.json({ error: 'Test mode: sign in first' }, { status: 401 })
     const { data } = await supabase.from('users').select(COLUMNS).eq('id', user.id)
     users = data as any
@@ -48,6 +57,12 @@ export async function GET(req: NextRequest) {
     }
   }
   return NextResponse.json({ ok: true, sent, total: users.length })
+}
+
+/** challenge_checkins has no user_id; ownership lives on the parent challenge. */
+async function ownedChallengeIds(supabase: any, userId: string): Promise<string[]> {
+  const { data } = await supabase.from('challenges').select('id').eq('user_id', userId)
+  return (data ?? []).map((c: { id: string }) => c.id)
 }
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -79,9 +94,14 @@ async function buildAndSend(u: User, supabase: any, isTest: boolean) {
     supabase.from('habit_logs').select('habit_id, date, completed, value, duration_mins')
       .eq('user_id', u.id).gte('date', startStr),
     supabase.from('tasks').select('title, status, period_date, type')
-      .eq('user_id', u.id).eq('type', 'daily').gte('period_date', startStr),
+      .eq('user_id', u.id).eq('type', 'daily').gte('period_date', startStr).is('deleted_at', null),
     supabase.from('challenges').select('id, title, current_streak, status').eq('user_id', u.id).eq('status', 'active'),
-    supabase.from('challenge_checkins').select('challenge_id, date, completed').gte('date', startStr),
+    // SAFE-02: challenge_checkins carries no user_id, so under the service
+    // client this must be constrained to this user's challenges. Unfiltered it
+    // would fold everybody's check-ins into one person's week.
+    supabase.from('challenge_checkins').select('challenge_id, date, completed')
+      .gte('date', startStr)
+      .in('challenge_id', await ownedChallengeIds(supabase, u.id)),
     supabase.from('health_logs').select('*').eq('user_id', u.id).gte('date', startStr),
     supabase.from('goals').select('title, ai_alignment, progress_pct').eq('user_id', u.id),
   ])

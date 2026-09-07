@@ -29,6 +29,16 @@ The scheduled reports (`/api/cron/daily-report`, `/api/cron/weekly-report`) run
 with no browser attached, so the key must live in the server environment for
 them to work at all.
 
+### Service role key (required for scheduled jobs)
+Supabase Dashboard -> Project Settings -> API -> service_role key.
+Set it as SUPABASE_SERVICE_ROLE_KEY in Vercel.
+
+Scheduled jobs run with no signed-in user, so the normal client sees
+auth.uid() = NULL and every row-level policy denies. Without this key the
+daily and weekly reports and the task reminders read nothing and report
+success having sent nothing. This key bypasses row-level security, so it
+is server-only and must never be exposed to the browser.
+
 ### Web Push VAPID keys
 Run: `npx web-push generate-vapid-keys`
 Copy the output into `NEXT_PUBLIC_VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY`

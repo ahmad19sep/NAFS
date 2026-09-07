@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import { aiText } from '@/lib/ai'
 import { sendEmail, dailyReportHTML, hasEmail } from '@/lib/email'
 import { sendWhatsApp, hasWhatsApp } from '@/lib/whatsapp'
@@ -24,6 +25,20 @@ interface User {
 // received a report for the wrong day — the cron fires at a fixed UTC hour,
 // which falls on a different local date depending where the account is.
 
+/**
+ * The challenge ids belonging to one user.
+ *
+ * challenge_checkins carries no user_id; ownership lives on the parent. RLS
+ * expressed that for session clients, but the service client has no RLS, so
+ * every read of that table has to say whose challenges it means.
+ */
+async function ownedChallengeIds(supabase: any, userId: string): Promise<string[]> {
+  const { data } = await supabase.from('challenges').select('id').eq('user_id', userId)
+  // An empty list would make `.in()` match nothing, which is the safe direction:
+  // a user with no challenges contributes no check-ins.
+  return (data ?? []).map((c: { id: string }) => c.id)
+}
+
 export async function GET(req: NextRequest) {
   // Allow either Vercel cron auth or manual trigger from settings (?test=1 with a logged-in user)
   const authHeader = req.headers.get('authorization')
@@ -33,13 +48,24 @@ export async function GET(req: NextRequest) {
   if (!isCron && !isTest) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!hasEmail()) return NextResponse.json({ error: 'RESEND_API_KEY not set' }, { status: 500 })
 
-  const supabase = createClient()
+  // SAFE-02. A cron request carries no session, so the cookie-based client sees
+  // auth.uid() = NULL, every RLS policy fails closed, and the job reports
+  // success having read nothing. Scheduled runs therefore need the service
+  // client — which bypasses RLS, so every query below scopes by user itself.
+  const supabase = isTest ? createClient() : createServiceClient()
 
-  // In test mode, only send to the currently signed-in user
+  if (!supabase) {
+    // Loudly, rather than the silent sent: 0 this used to return.
+    return NextResponse.json({
+      error: 'SUPABASE_SERVICE_ROLE_KEY is not set — scheduled reports cannot read the database.',
+    }, { status: 500 })
+  }
+
   const COLUMNS = 'id, name, email, timezone, notify_email_daily, height_cm, weight_kg, push_subscription, notifications_enabled'
   let users: User[] | null = null
   if (isTest) {
-    const { data: { user } } = await supabase.auth.getUser()
+    // Test mode runs as the signed-in user, under RLS, and only for them.
+    const { data: { user } } = await createClient().auth.getUser()
     if (!user) return NextResponse.json({ error: 'Test mode: sign in first' }, { status: 401 })
     const { data } = await supabase.from('users').select(COLUMNS).eq('id', user.id)
     users = data as any
@@ -90,12 +116,18 @@ async function buildAndSend(u: User, today: string, yest: string, supabase: any,
     supabase.from('habits').select('id, name, current_streak, type, target_value, time_target_mins, is_paused, schedule_kind, schedule_days')
       .eq('user_id', u.id).eq('is_active', true),
     supabase.from('habit_logs').select('habit_id, completed, value, duration_mins').eq('user_id', u.id).eq('date', today),
-    supabase.from('tasks').select('title, status').eq('user_id', u.id).eq('type', 'daily').eq('period_date', today),
-    supabase.from('challenge_checkins').select('completed').eq('date', today),
+    supabase.from('tasks').select('title, status').eq('user_id', u.id).eq('type', 'daily').eq('period_date', today).is('deleted_at', null),
+    // SAFE-02: challenge_checkins has no user_id — RLS scoped it through the
+    // parent challenge. The service client has no RLS, so without constraining
+    // to this user's challenges this would count everyone's check-ins and put
+    // them in one person's report.
+    supabase.from('challenge_checkins').select('completed, challenge_id')
+      .eq('date', today)
+      .in('challenge_id', await ownedChallengeIds(supabase, u.id)),
     supabase.from('health_logs').select('*').eq('user_id', u.id).eq('date', today).maybeSingle(),
     supabase.from('prayer_logs').select('*').eq('user_id', u.id).eq('date', yest).maybeSingle(),
     supabase.from('habit_logs').select('habit_id, completed').eq('user_id', u.id).eq('date', yest),
-    supabase.from('tasks').select('status').eq('user_id', u.id).eq('type', 'daily').eq('period_date', yest),
+    supabase.from('tasks').select('status').eq('user_id', u.id).eq('type', 'daily').eq('period_date', yest).is('deleted_at', null),
     supabase.from('health_logs').select('water_glasses, steps, exercise_done, sleep_hours').eq('user_id', u.id).eq('date', yest).maybeSingle(),
   ])
 

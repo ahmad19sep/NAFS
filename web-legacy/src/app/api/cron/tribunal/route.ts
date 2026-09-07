@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import webpush from 'web-push'
 
 // Vercel Cron — runs every Sunday at 8 PM
@@ -19,7 +19,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const supabase = createClient()
+  // SAFE-02: no session on a cron request, so the cookie client reads
+  // nothing under RLS. The service client bypasses RLS, so every query
+  // below scopes by user itself.
+  const supabase = createServiceClient()
+  if (!supabase) {
+    return NextResponse.json({
+      error: 'SUPABASE_SERVICE_ROLE_KEY is not set — this job cannot read the database.',
+    }, { status: 500 })
+  }
 
   // Get all users with push subscriptions
   const { data: users } = await supabase

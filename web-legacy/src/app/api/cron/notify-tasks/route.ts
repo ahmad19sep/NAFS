@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/service'
 import webpush from 'web-push'
 
 // Vercel Cron — runs every 15 min.
@@ -56,7 +56,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const supabase = createClient()
+  // SAFE-02: no session on a cron request, so the cookie client reads
+  // nothing under RLS. The service client bypasses RLS, so every query
+  // below scopes by user itself.
+  const supabase = createServiceClient()
+  if (!supabase) {
+    return NextResponse.json({
+      error: 'SUPABASE_SERVICE_ROLE_KEY is not set — this job cannot read the database.',
+    }, { status: 500 })
+  }
 
   // Pull users opted in with a push subscription
   const { data: users } = await supabase
@@ -83,6 +91,8 @@ export async function GET(req: NextRequest) {
       .eq('period_date', localDate)
       .eq('status', 'active')
       .not('due_time', 'is', null)
+      // Service client bypasses RLS, so the deleted filter must be explicit.
+      .is('deleted_at', null)
 
     if (!tasks?.length) continue
 
@@ -128,7 +138,9 @@ export async function GET(req: NextRequest) {
         await supabase
           .from('tasks')
           .update({ alerts_sent: [...alertsSent, key] })
-          .eq('id', task.id)
+          // Ownership stated explicitly: without RLS, an id alone is not proof
+          // the row belongs to the user being processed.
+          .eq('id', task.id).eq('user_id', user.id)
         sent++
       } catch (err) {
         console.error('push failed for task', task.id, err)
