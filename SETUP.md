@@ -14,9 +14,20 @@
 5. Go to Authentication → Providers → Enable Google OAuth
    (requires Google Cloud Console OAuth2 credentials)
 
-### Gemini (AI engine — free)
-1. Go to aistudio.google.com → Get API Key → Create API key
-2. Copy the key → `GEMINI_API_KEY`
+### Cloudflare AI (AI engine)
+Every AI feature goes through your own Cloudflare Worker, which calls Workers AI
+running `@cf/openai/gpt-oss-20b`. The app never calls Workers AI directly.
+
+1. Set `CLOUDFLARE_APP_KEY` to the shared key your Worker checks on the
+   `Authorization: Bearer …` header. It is a **server-side secret** — set it in
+   `.env.local` locally and in Vercel → Settings → Environment Variables for
+   production. Never put it in `NEXT_PUBLIC_*`, source code, or the client.
+2. Optionally set `CLOUDFLARE_AI_URL` to override the Worker endpoint. It
+   defaults to the deployed Worker and is not a secret.
+
+The scheduled reports (`/api/cron/daily-report`, `/api/cron/weekly-report`) run
+with no browser attached, so the key must live in the server environment for
+them to work at all.
 
 ### Web Push VAPID keys
 Run: `npx web-push generate-vapid-keys`

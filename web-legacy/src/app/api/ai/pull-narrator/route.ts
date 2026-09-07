@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { generateText } from '@/lib/gemini'
+import { aiText } from '@/lib/ai'
 import { PULL_NARRATOR_SYSTEM, buildPullNarratorPrompt } from '@/lib/ai-prompts'
 
 export async function POST(req: NextRequest) {
@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const data = await req.json()
-    const reply = await generateText(buildPullNarratorPrompt(data), PULL_NARRATOR_SYSTEM)
+    const reply = await aiText('verdict', buildPullNarratorPrompt(data), PULL_NARRATOR_SYSTEM)
 
     await supabase.from('ai_reports').insert({
       user_id: user.id,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { generateText } from '@/lib/gemini'
+import { aiText } from '@/lib/ai'
 
 export async function POST(req: NextRequest) {
   try {
@@ -44,7 +44,7 @@ TODAY'S DATA:
 
 Give the evening verdict.`
 
-    const verdict = await generateText(prompt, system)
+    const verdict = await aiText('verdict', prompt, system)
 
     await supabase.from('ai_reports').insert({
       user_id: user.id,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { generateJSON } from '@/lib/gemini'
+import { aiJSON } from '@/lib/ai'
 
 interface AlignmentResult {
   score: number
@@ -142,7 +142,7 @@ Active challenges: ${fmtChallenges(challenges ?? [])}
 Now analyze: is the user actually working toward this goal? Be honest.
 Return JSON only.`
 
-    const result = await generateJSON<Omit<AlignmentResult, 'analyzed_at'>>(prompt, SYSTEM)
+    const result = await aiJSON<Omit<AlignmentResult, 'analyzed_at'>>(prompt, SYSTEM)
 
     if (!result || typeof result.score !== 'number') {
       return NextResponse.json({ error: 'AI returned an invalid response' }, { status: 502 })

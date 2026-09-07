@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { generateText } from '@/lib/gemini'
+import { aiText } from '@/lib/ai'
 
 export async function POST(req: NextRequest) {
   try {
@@ -23,7 +23,7 @@ Write a plan with:
 2. The daily habit that will move the needle most
 3. How to know if they're on track in 30 days`
 
-    const plan = await generateText(prompt, system)
+    const plan = await aiText('chat', prompt, system)
     return NextResponse.json({ plan })
   } catch (err: any) {
     return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 })

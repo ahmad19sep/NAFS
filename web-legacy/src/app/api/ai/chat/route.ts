@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { aiChat } from '@/lib/ai'
+import { aiChat, AiError } from '@/lib/ai'
 import { ASK_ASCEND_SYSTEM } from '@/lib/ai-prompts'
 
 // Ask Ascend — the coach answers from the user's REAL data across every
@@ -149,13 +149,12 @@ export async function POST(req: NextRequest) {
     })
 
     return NextResponse.json({ reply })
-  } catch (err: any) {
-    console.error('chat AI error:', err)
-    const status = err?.status === 429 ? 429 : 500
-    return NextResponse.json({
-      error: status === 429
-        ? 'The AI is rate-limited right now. Try again in a minute.'
-        : (err?.message || 'AI chat failed'),
-    }, { status })
+  } catch (err: unknown) {
+    // AiError messages are written for the user; anything else stays generic
+    // so internals are never echoed back to the client.
+    if (err instanceof AiError) {
+      return NextResponse.json({ error: err.message }, { status: err.status ?? 502 })
+    }
+    return NextResponse.json({ error: 'AI chat failed' }, { status: 500 })
   }
 }

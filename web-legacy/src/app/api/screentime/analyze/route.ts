@@ -1,21 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { geminiVision, generateText, safeParseJSON } from '@/lib/gemini'
+import { aiText, AiError, hasCloudflareAi } from '@/lib/ai'
 
 export const maxDuration = 60
-
-const VISION_PROMPT = `This is a phone screen time screenshot. Extract every app and exact time shown.
-
-Return ONLY valid JSON, no markdown:
-{
-  "total_mins": <integer>,
-  "apps": [
-    { "app": "App Name", "minutes": <integer>, "category": "social|entertainment|productivity|communication|learning|other" }
-  ],
-  "summary": "<2-3 sentence honest verdict: what was wasted vs productive, which app dominated, one recommendation>"
-}
-
-If NOT a screen time screenshot: {"error": "Not a screen time screenshot"}`
 
 export async function POST(req: NextRequest) {
   try {
@@ -23,12 +10,12 @@ export async function POST(req: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    if (!process.env.GEMINI_API_KEY) {
-      return NextResponse.json({ error: 'GEMINI_API_KEY not set in .env.local' }, { status: 500 })
+    if (!hasCloudflareAi()) {
+      return NextResponse.json({ error: 'AI is not configured on the server.' }, { status: 503 })
     }
 
     const body = await req.json()
-    const { base64, mimeType, manualData } = body
+    const { manualData } = body
 
     // --- Manual entry path (no vision needed) ---
     if (manualData) {
@@ -42,7 +29,7 @@ Apps: ${manualData.apps.map((a: any) => `${a.app}: ${a.minutes}m`).join(', ')}
 
 Give an honest analysis.`
 
-      const summary = await generateText(prompt, system)
+      const summary = await aiText('verdict', prompt, system)
 
       return NextResponse.json({
         total_mins: manualData.totalMins,
@@ -51,28 +38,16 @@ Give an honest analysis.`
       })
     }
 
-    // --- Vision path (Gemini Flash supports vision natively) ---
-    if (!base64) return NextResponse.json({ error: 'No image data' }, { status: 400 })
-
-    const text = await geminiVision(base64, mimeType || 'image/jpeg', VISION_PROMPT)
-    const parsed = safeParseJSON<any>(text)
-
-    if (!parsed) {
-      return NextResponse.json({
-        error: 'Could not read screenshot. Try manual entry.',
-      }, { status: 422 })
-    }
-
-    if (parsed.error) return NextResponse.json({ error: parsed.error }, { status: 422 })
-
+    // Screenshot reading is gone: gpt-oss-20b is text-only, so there is no
+    // vision model behind the Worker to send an image to.
     return NextResponse.json({
-      total_mins: parsed.total_mins ?? 0,
-      apps: parsed.apps ?? [],
-      summary: parsed.summary ?? '',
-    })
-  } catch (err: any) {
-    console.error('screentime analyze error:', err)
-    return NextResponse.json({ error: err.message ?? 'Analysis failed' }, { status: 500 })
+      error: 'Screenshot reading is no longer available. Enter your screen time manually.',
+    }, { status: 415 })
+  } catch (err: unknown) {
+    if (err instanceof AiError) {
+      return NextResponse.json({ error: err.message }, { status: err.status ?? 502 })
+    }
+    return NextResponse.json({ error: 'Analysis failed' }, { status: 500 })
   }
 }
 

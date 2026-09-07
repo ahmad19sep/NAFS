@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { generateText } from '@/lib/gemini'
+import { aiText } from '@/lib/ai'
 import { FUTURE_SELF_SYSTEM, buildFutureSelfPrompt } from '@/lib/ai-prompts'
 
 export async function POST(req: NextRequest) {
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
       worst_recent_metric: 'weighted hours',
     })
 
-    const aiReply = await generateText(prompt, FUTURE_SELF_SYSTEM)
+    const aiReply = await aiText('chat', prompt, FUTURE_SELF_SYSTEM)
 
     // Save reply and mark delivered
     await supabase.from('future_self_letters').update({

@@ -1,99 +1,84 @@
-// Smart AI router. Picks the right provider per task and falls back on failure.
+// Single AI entry point for the whole app.
 //
-// Routing:
-//   chat / verdict → Groq Llama 3.3 70B (high RPM, fast)         → Gemini fallback
-//   bulk           → Groq Llama 3.1 8B Instant (500K tokens/day) → Gemini fallback
-//   json           → Gemini (best structured output / JSON mode) → Groq fallback (re-parsed)
-//   vision         → Gemini (Groq has no vision)
+// Every AI feature goes through the four functions below, and they all resolve
+// to one provider: the Cloudflare Worker running @cf/openai/gpt-oss-20b.
+// Gemini and Groq were removed — there is no provider routing or fallback left,
+// so a failure here is a real failure and surfaces as an AiError with a
+// user-facing message.
 //
-// All paths automatically fall back if the primary fails (esp. 429 rate-limits).
+// Keep this file as the only thing routes import; the transport lives in
+// ./cloudflare-ai.
 
-import { generateText, generateJSON, geminiVision, chatGemini, safeParseJSON } from './gemini'
-import { generateGroq, chatGroq, hasGroq } from './groq'
+import {
+  cloudflareChat, cloudflareText, safeParseJSON,
+  AiError, type ChatMessage, type AiOptions,
+} from './cloudflare-ai'
 
+export { AiError, safeParseJSON, hasCloudflareAi } from './cloudflare-ai'
+export type { ChatMessage, AiOptions } from './cloudflare-ai'
+
+/**
+ * Kept so existing call sites read the same. It no longer picks a provider —
+ * it only tunes how much output the task needs.
+ */
 export type AiTask = 'chat' | 'verdict' | 'bulk' | 'json'
-type Msg = { role: 'system' | 'user' | 'assistant'; content: string }
 
-// ---------- core helper ----------
-async function withFallback<T>(
-  attempts: Array<{ name: string; fn: () => Promise<T> }>,
-): Promise<T> {
-  let lastErr: any
-  for (const { name, fn } of attempts) {
-    try {
-      const out = await fn()
-      console.log(`[ai] ${name} OK`)
-      return out
-    } catch (err: any) {
-      console.warn(`[ai] ${name} failed: ${err?.status ?? ''} ${err?.message ?? err}`)
-      lastErr = err
-    }
-  }
-  throw lastErr ?? new Error('All providers failed')
+/**
+ * gpt-oss-20b is a reasoning model: it spends completion tokens thinking before
+ * it emits the message, and the Worker only ever sees the message. If the
+ * budget runs out mid-reasoning the reply comes back empty — not truncated,
+ * *empty*. Measured against the live Worker on a realistic coaching prompt:
+ *
+ *   max_tokens 300  → 300 used, no message
+ *   max_tokens 500  → 500 used, no message
+ *   max_tokens 800  → 462 used, message returned
+ *   max_tokens 1200 → 180 used, message returned
+ *
+ * Reasoning length swings a lot between identical calls, so these carry real
+ * headroom rather than sitting near the observed minimum. They are ceilings,
+ * not spend — billing follows tokens actually used, so generous is cheap.
+ * Do not lower these without re-measuring.
+ */
+const MAX_TOKENS_FOR: Record<AiTask, number> = {
+  chat: 1500,
+  verdict: 1500,
+  bulk: 1200,
+  json: 2000,
 }
-
-// ---------- public API ----------
 
 /** Single-prompt text generation. */
 export async function aiText(task: AiTask, prompt: string, system?: string): Promise<string> {
-  if (task === 'chat' || task === 'verdict') {
-    return withFallback([
-      ...(hasGroq() ? [{ name: 'groq-70b', fn: () => generateGroq(prompt, system, 'llama-3.3-70b-versatile') }] : []),
-      { name: 'gemini-flash', fn: () => generateText(prompt, system) },
-    ])
-  }
-  if (task === 'bulk') {
-    return withFallback([
-      ...(hasGroq() ? [{ name: 'groq-8b', fn: () => generateGroq(prompt, system, 'llama-3.1-8b-instant') }] : []),
-      { name: 'gemini-flash', fn: () => generateText(prompt, system) },
-    ])
-  }
-  // json
-  return withFallback([
-    { name: 'gemini-flash', fn: () => generateText(prompt, system) },
-    ...(hasGroq() ? [{ name: 'groq-70b', fn: () => generateGroq(prompt, system, 'llama-3.3-70b-versatile') }] : []),
-  ])
+  return cloudflareText(prompt, system, { maxTokens: MAX_TOKENS_FOR[task] })
 }
 
-/** Multi-turn chat. Routes to Groq first (better RPM), Gemini fallback. */
-export async function aiChat(messages: Msg[]): Promise<string> {
-  return withFallback([
-    ...(hasGroq() ? [{ name: 'groq-chat-70b', fn: () => chatGroq(messages) }] : []),
-    { name: 'gemini-chat', fn: () => chatGemini(messages) },
-  ])
+/** Multi-turn chat. History is trimmed to the recent turns before sending. */
+export async function aiChat(messages: ChatMessage[], opts: AiOptions = {}): Promise<string> {
+  return cloudflareChat(messages, { maxTokens: MAX_TOKENS_FOR.chat, ...opts })
 }
 
 /**
- * JSON-output generation. Tries Gemini's JSON mode first (most reliable),
- * falls back to Groq with permissive parsing.
+ * JSON-output generation. gpt-oss-20b has no strict JSON mode, so the schema
+ * instruction is reinforced in the system prompt and the reply is parsed
+ * permissively. Returns null when the model doesn't produce usable JSON.
  */
 export async function aiJSON<T = unknown>(prompt: string, system?: string): Promise<T | null> {
-  const attempts = [
-    { name: 'gemini-json', fn: async () => generateJSON<T>(prompt, system) },
-    ...(hasGroq() ? [{
-      name: 'groq-json-70b',
-      fn: async () => safeParseJSON<T>(await generateGroq(prompt, system, 'llama-3.3-70b-versatile')),
-    }] : []),
-  ]
-  let lastErr: any
-  for (const { name, fn } of attempts) {
-    try {
-      const out = await fn()
-      if (out !== null) {
-        console.log(`[ai] ${name} OK (json)`)
-        return out
-      }
-      console.warn(`[ai] ${name} returned unparseable JSON, trying next`)
-    } catch (err: any) {
-      console.warn(`[ai] ${name} failed: ${err?.status ?? ''} ${err?.message ?? err}`)
-      lastErr = err
-    }
-  }
-  if (lastErr) throw lastErr
-  return null
+  const jsonSystem = [
+    system,
+    'Reply with a single valid JSON value and nothing else. No markdown fences, no commentary before or after.',
+  ].filter(Boolean).join('\n\n')
+
+  const raw = await cloudflareText(prompt, jsonSystem, {
+    maxTokens: MAX_TOKENS_FOR.json,
+    // Lower than the default so structured output stays on-format.
+    temperature: 0.2,
+  })
+  return safeParseJSON<T>(raw)
 }
 
-/** Vision — Gemini only (Groq has no vision yet). */
-export async function aiVision(base64: string, mimeType: string, prompt: string): Promise<string> {
-  return geminiVision(base64, mimeType, prompt)
+/**
+ * Vision is not available: gpt-oss-20b is text-only and the Worker exposes no
+ * image route. Callers should offer a text/manual path instead of calling this.
+ */
+export async function aiVision(): Promise<never> {
+  throw new AiError('Image analysis is not supported by the current AI model.')
 }
