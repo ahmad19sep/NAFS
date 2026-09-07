@@ -50,6 +50,13 @@ export function normalizeProposal(p: PlanProposal): NormalizeResult {
 
   if (p.kind === 'habit') {
     const h = { ...p.habit! }
+    // Seen live: a duration habit with the minutes in target_value/unit
+    // ("60", "minutes") and time_target_mins missing. The intent is plain,
+    // so it is read as minutes rather than rejected.
+    if (h.type === 'duration' && !(h.time_target_mins && h.time_target_mins > 0)) {
+      const mins = minutesFrom(h.target_value, h.unit)
+      if (mins) { h.time_target_mins = mins; h.target_value = undefined; h.unit = undefined }
+    }
     if (h.type === 'duration' && !(h.time_target_mins && h.time_target_mins > 0)) {
       return { ok: false, error: 'The AI did not say how many minutes. Try including a time.' }
     }
@@ -70,6 +77,15 @@ export function normalizeProposal(p: PlanProposal): NormalizeResult {
   }
 
   return { ok: true, proposal: p }
+}
+
+/** A number with a time unit, as minutes; null when the unit is not a time. */
+export function minutesFrom(value: number | undefined, unit: string | undefined): number | null {
+  if (!value || value <= 0) return null
+  const u = (unit ?? '').trim().toLowerCase()
+  if (/^(min|mins|minute|minutes|m)$/.test(u)) return Math.round(value)
+  if (/^(h|hr|hrs|hour|hours)$/.test(u)) return Math.round(value * 60)
+  return null
 }
 
 const DAY_LABEL: Record<string, string> = {
@@ -108,6 +124,68 @@ export function describeProposal(p: PlanProposal): string {
   const parts = [`${c.duration_days} days`, `${c.frequency} check-in`]
   if (c.requires_photo) parts.push('photo proof')
   return parts.join(' · ')
+}
+
+/**
+ * A way out of a slip: "I've been scrolling three hours a night" becomes a
+ * first move for today, a habit that fills the gap, and maybe a short
+ * challenge. Each step is an ordinary proposal and is confirmed one by one.
+ */
+export interface RecoveryPlan {
+  problem: string
+  approach: string
+  steps: PlanProposal[]
+}
+
+export type RecoveryResult =
+  | { ok: true; plan: RecoveryPlan; dropped: number }
+  | { ok: false; error: string }
+
+const MAX_STEPS = 4
+
+/**
+ * Every step goes through normalizeProposal. A step that fails is dropped
+ * rather than failing the whole plan — one bad item should not cost the user
+ * the three good ones — and the count is returned so the UI can say so. At
+ * most one challenge: two fixed-length commitments for one slip is a burden,
+ * not a plan.
+ */
+export function normalizeRecovery(r: RecoveryPlan): RecoveryResult {
+  if (!r || !Array.isArray(r.steps)) {
+    return { ok: false, error: 'The AI returned an incomplete plan. Try rephrasing.' }
+  }
+
+  const steps: PlanProposal[] = []
+  let dropped = 0
+  let hasChallenge = false
+
+  for (const s of r.steps) {
+    const n = normalizeProposal(s)
+    if (!n.ok) { dropped++; continue }
+    if (n.proposal.kind === 'challenge') {
+      if (hasChallenge) { dropped++; continue }
+      hasChallenge = true
+    }
+    steps.push(n.proposal)
+    if (steps.length === MAX_STEPS) break
+  }
+
+  if (steps.length === 0) {
+    return {
+      ok: false,
+      error: 'The AI could not turn that into concrete steps. Add a detail — when it happens, or what you used to do instead.',
+    }
+  }
+
+  return {
+    ok: true,
+    plan: {
+      problem: (r.problem ?? '').trim(),
+      approach: (r.approach ?? '').trim(),
+      steps,
+    },
+    dropped,
+  }
 }
 
 export interface CreateRequest {

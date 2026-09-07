@@ -180,7 +180,14 @@ export async function aiStructured<T>(
       )
     } catch (err) {
       const failure = classify(err)
-      // A dead or refusing provider will not be fixed by asking again.
+      // A reasoning model that runs out of budget mid-thought returns nothing
+      // at all, and its thinking length varies run to run — so one more try
+      // often fits where the first did not. Anything else (a dead or
+      // refusing provider) will not be fixed by asking again.
+      if (err instanceof AiError && /empty response/i.test(err.message) && attempt < MAX_ATTEMPTS) {
+        last = { code: 'unavailable', message: failure.message }
+        continue
+      }
       return { ok: false, ...failure, attempts: attempt }
     }
 

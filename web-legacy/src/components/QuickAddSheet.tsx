@@ -19,10 +19,14 @@ function newRequestId(): string {
 }
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 import { useDeenEnabled } from '@/hooks/useDeenEnabled'
+import OvercomePanel from '@/components/OvercomePanel'
+import type { QuickAddIntent } from '@/lib/quick-add'
 
 interface Props {
   open: boolean
   onClose: () => void
+  /** Where to start when opened from a card or the coach; null for the + button. */
+  initial?: QuickAddIntent | null
 }
 
 const CREATE_ACTIONS: { href: string; icon: LucideIcon; label: string }[] = [
@@ -49,7 +53,7 @@ interface QuickHabit {
   done: boolean
 }
 
-export default function QuickAddSheet({ open, onClose }: Props) {
+export default function QuickAddSheet({ open, onClose, initial = null }: Props) {
   useBodyScrollLock(open)
   const deenEnabled = useDeenEnabled()
   const router = useRouter()
@@ -82,10 +86,10 @@ export default function QuickAddSheet({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return
-    setMode('log'); setJustLogged(null); setError(null)
+    setMode(initial?.mode ?? 'log'); setJustLogged(null); setError(null)
     setHabits(null)
     load()
-  }, [open, load])
+  }, [open, load, initial])
 
   if (!open) return null
 
@@ -262,7 +266,7 @@ export default function QuickAddSheet({ open, onClose }: Props) {
             </div>
           </>
         ) : (
-          <PlanPanel onClose={onClose} />
+          <PlanPanel onClose={onClose} initialPlanMode={initial?.planMode} initialIntent={initial?.intent} />
         )}
       </div>
     </div>
@@ -277,9 +281,16 @@ export default function QuickAddSheet({ open, onClose }: Props) {
 // and that goes through the same /api/tasks, /api/habits or /api/challenges
 // route a manual entry uses. The proposal card shows the kind, the exact
 // numbers, and the model's reason, so what gets added is never a surprise.
-function PlanPanel({ onClose }: { onClose: () => void }) {
+function PlanPanel({ onClose, initialPlanMode, initialIntent }: {
+  onClose: () => void
+  initialPlanMode?: 'plan' | 'overcome'
+  initialIntent?: string
+}) {
   const router = useRouter()
-  const [intent, setIntent] = useState('')
+  // Two jobs: plan something you want to do, or plan a way out of something
+  // you have slipped into. The second lives in OvercomePanel.
+  const [planMode, setPlanMode] = useState<'plan' | 'overcome'>(initialPlanMode ?? 'plan')
+  const [intent, setIntent] = useState(initialPlanMode === 'overcome' ? '' : (initialIntent ?? ''))
   const [busy, setBusy] = useState<'plan' | 'add' | null>(null)
   const [proposal, setProposal] = useState<PlanProposal | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -343,7 +354,19 @@ function PlanPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="px-5 pb-4 space-y-3">
-      {added ? (
+      <div className="grid grid-cols-2 gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
+        {([['plan', 'Do something'], ['overcome', 'Get out of something']] as const).map(([m, label]) => (
+          <button key={m} onClick={() => setPlanMode(m)} disabled={!!busy}
+            className={cn('rounded-lg py-1.5 text-[11px] font-semibold transition-all',
+              planMode === m ? 'bg-gold/15 text-gold' : 'text-muted-foreground hover:text-foreground')}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {planMode === 'overcome' ? (
+        <OvercomePanel onClose={onClose} initialIntent={initialIntent} />
+      ) : added ? (
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
           <p className="text-sm font-semibold text-emerald-300 flex items-center gap-1.5">
             <Check size={14} /> Added as a {added.label}

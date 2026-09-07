@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Home, BarChart3, Sparkles, User, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import QuickAddSheet from './QuickAddSheet'
+import { QUICK_ADD_EVENT, type QuickAddIntent } from '@/lib/quick-add'
 
 const TABS = [
   { href: '/dashboard', icon: Home,       label: 'Home' },
@@ -18,6 +19,18 @@ const TABS = [
 export default function BottomNav() {
   const pathname = usePathname()
   const [quickAddOpen, setQuickAddOpen] = useState(false)
+  // Set when a card or the coach opens the sheet with a starting point;
+  // cleared when the + button opens it plain.
+  const [quickAddInitial, setQuickAddInitial] = useState<QuickAddIntent | null>(null)
+
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      setQuickAddInitial((e as CustomEvent<QuickAddIntent>).detail ?? null)
+      setQuickAddOpen(true)
+    }
+    window.addEventListener(QUICK_ADD_EVENT, onOpen)
+    return () => window.removeEventListener(QUICK_ADD_EVENT, onOpen)
+  }, [])
 
   return (
     <>
@@ -39,7 +52,7 @@ export default function BottomNav() {
                 <button
                   key="add"
                   aria-label="Quick add"
-                  onClick={() => setQuickAddOpen(true)}
+                  onClick={() => { setQuickAddInitial(null); setQuickAddOpen(true) }}
                   className="relative -mt-7 flex flex-col items-center px-1"
                 >
                   <div className="flex h-14 w-14 items-center justify-center rounded-[20px]
@@ -77,7 +90,7 @@ export default function BottomNav() {
         </div>
       </nav>
 
-      <QuickAddSheet open={quickAddOpen} onClose={() => setQuickAddOpen(false)} />
+      <QuickAddSheet open={quickAddOpen} initial={quickAddInitial} onClose={() => setQuickAddOpen(false)} />
     </>
   )
 }

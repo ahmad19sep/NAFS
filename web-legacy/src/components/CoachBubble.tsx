@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Sparkles, X, Send, Loader2, ExternalLink } from 'lucide-react'
+import { Sparkles, X, Send, Loader2, ExternalLink, LifeBuoy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
+import { openQuickAdd } from '@/lib/quick-add'
 
 /**
  * The coach, reachable from anywhere.
@@ -149,6 +150,14 @@ export default function CoachBubble() {
                   <p className="mt-1 text-xs text-muted-foreground max-w-[260px] mx-auto leading-relaxed">
                     Why did I miss Fajr this week? What should I fix first? Where am I actually improving?
                   </p>
+                  {/* Slipped into something? That is a plan, not a chat — hand it
+                      to the planner, which proposes steps you confirm one by one. */}
+                  <button
+                    onClick={() => { setOpen(false); openQuickAdd({ mode: 'plan', planMode: 'overcome' }) }}
+                    className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-gold/30 bg-gold/10
+                               px-3.5 py-1.5 text-[11px] font-semibold text-gold hover:bg-gold/15 transition-all active:scale-95">
+                    <LifeBuoy size={12} /> I&apos;ve slipped into something — plan a way out
+                  </button>
                 </div>
               )}
               {messages.map((m, i) => (

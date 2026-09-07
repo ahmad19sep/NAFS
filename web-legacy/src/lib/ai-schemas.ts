@@ -180,6 +180,22 @@ export const PLAN_SCHEMA: Schema = {
   },
 }
 
+/**
+ * `/api/ai/plan` in overcome mode — a small plan out of a slip. One to four
+ * steps, each the same shape as a single plan item, so each one goes through
+ * the same normaliser and the same create route.
+ */
+export const RECOVERY_SCHEMA: Schema = {
+  kind: 'object',
+  fields: {
+    // The slip restated in one plain line, so the user can see it was understood.
+    problem: { kind: 'string', minLength: 5, maxLength: 200 },
+    // The idea behind the plan. The only prose the model writes here.
+    approach: { kind: 'string', minLength: 20, maxLength: 500 },
+    steps: { kind: 'array', minItems: 1, maxItems: 4, of: PLAN_SCHEMA },
+  },
+}
+
 /** Maps a structured-AI failure to the HTTP status a route should return. */
 export function statusForAiFailure(code: string): number {
   if (code === 'rate_limited') return 429

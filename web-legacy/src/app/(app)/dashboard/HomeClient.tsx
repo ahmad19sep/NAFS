@@ -15,6 +15,7 @@ import { moodFor, pickQuote } from '@/lib/quotes'
 import { findRepeatedMisses, describeMiss } from '@/lib/misses'
 import { latestBySubject, subjectFor, type CoachNote } from '@/lib/coach-notes'
 import CoachNoteInput from '@/components/CoachNoteInput'
+import { openQuickAdd } from '@/lib/quick-add'
 import { type CustomMetric } from '@/lib/health'
 import { PRAYERS } from '@/lib/scoring'
 import type { Habit, HabitLog, Weekday } from '@/types'
@@ -445,10 +446,22 @@ export default function HomeClient({
           <p className="mt-2.5 text-[11px] text-muted-foreground">
             Only what you recorded. Days with nothing logged aren&apos;t counted against you.
           </p>
-          <Link href="/coach"
-            className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-orange-300 hover:text-orange-200">
-            Ask the coach why <ChevronRight size={12} />
-          </Link>
+          <div className="mt-2 flex items-center gap-4">
+            <Link href="/coach"
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-orange-300 hover:text-orange-200">
+              Ask the coach why <ChevronRight size={12} />
+            </Link>
+            {/* Opens the AI planner in "get out of something" mode with these
+                misses as the starting text; the user edits, then confirms. */}
+            <button
+              onClick={() => openQuickAdd({
+                mode: 'plan', planMode: 'overcome',
+                intent: `I keep missing: ${misses.slice(0, 3).map(describeMiss).join('; ')}`,
+              })}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-gold hover:text-gold/80">
+              Plan a way out <ChevronRight size={12} />
+            </button>
+          </div>
         </div>
       )}
 

@@ -89,6 +89,15 @@ a silently broken feature.
 
 ## Token budgets — read this before changing them
 
+> **The Worker has its own ceiling, and it wins.** The Worker clamps
+> `max_tokens` with `Math.min(requested, CEILING)`. The first version shipped
+> with a ceiling of **1000**. Probed live on 2026-09-07, the deployed Worker
+> returned `completion_tokens: 1000` and an empty reply for requests of 2000
+> and 3000 — so every budget below is effectively 1000 until the Worker's
+> ceiling is raised to 2000. A reasoning model that hits the ceiling
+> mid-thought returns nothing, not a shorter answer. `aiStructured` makes one
+> extra attempt on an empty reply for exactly this reason.
+
 `gpt-oss-20b` is a **reasoning model**. It spends completion tokens thinking
 before it emits a message, and the Worker only ever returns the final message.
 If the budget runs out mid-reasoning you get an **empty reply, not a short one** —
@@ -200,7 +209,7 @@ the coach and calls no model.
 | `ai/habit-starter` | `aiStructured` | suggested habits |
 | `ai/challenge-starter` | `aiStructured` | suggested challenge tactics |
 | `ai/health-recommend` | `aiStructured` | health plan, goals and habits |
-| `ai/plan` | `aiStructured` | turns "work 12 hours a day for 30 days" into a proposed task, habit or challenge — **proposes only**; the user confirms, and creation goes through the normal routes |
+| `ai/plan` | `aiStructured` | mode `plan`: turns "work 12 hours a day for 30 days" into a proposed task, habit or challenge. Mode `overcome`: turns "I've been scrolling 3 hours a night" into a small way out — a first move for today, a habit to fill the gap, maybe a short challenge — grounded in existing habits, repeated misses, measured causes, screen time, sleep and coach memory. Both **propose only**; the user ticks what to add, and each step is created through the normal route with its own request id |
 | `cron/daily-report` | `aiText('verdict')` | nightly verdict, delivered by push |
 | `screentime/analyze` | `aiText('verdict')` | verdict on the screen-time numbers you entered |
 
