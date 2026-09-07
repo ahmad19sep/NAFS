@@ -10,8 +10,8 @@
 // ./cloudflare-ai.
 
 import {
-  cloudflareChat, cloudflareText, cloudflareVision, safeParseJSON,
-  AiError, type ChatMessage, type AiOptions,
+  cloudflareChat, cloudflareText, safeParseJSON,
+  type ChatMessage, type AiOptions,
 } from './cloudflare-ai'
 
 export { AiError, safeParseJSON, hasCloudflareAi } from './cloudflare-ai'
@@ -75,12 +75,6 @@ export async function aiJSON<T = unknown>(prompt: string, system?: string): Prom
   return safeParseJSON<T>(raw)
 }
 
-/**
- * Image reading. gpt-oss-20b is text-only, so this goes to a separate vision
- * route on the same Worker. That route is optional — when it isn't deployed the
- * Worker answers 404 and this throws, so every caller must offer a manual path
- * rather than treating vision as guaranteed.
- */
-export async function aiVision(base64: string, prompt: string): Promise<string> {
-  return cloudflareVision(base64, prompt)
-}
+// There is no image input. gpt-oss-20b is text-only, and the vision models
+// available on Workers AI were tried and rejected — see docs/AI.md. Features
+// that would want an image ask the user for the numbers instead.

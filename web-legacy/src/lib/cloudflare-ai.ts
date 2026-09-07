@@ -16,17 +16,6 @@ export const CLOUDFLARE_AI_MODEL = '@cf/openai/gpt-oss-20b'
 export const CLOUDFLARE_AI_URL =
   process.env.CLOUDFLARE_AI_URL || 'https://my-gpt-api.ahmadwork665.workers.dev/chat'
 
-/**
- * Optional second route on the same Worker, running a vision model
- * (gpt-oss-20b is text-only). Absent until that route is deployed, in which
- * case the Worker answers 404 and callers fall back to manual entry.
- */
-export const CLOUDFLARE_VISION_URL =
-  process.env.CLOUDFLARE_VISION_URL || CLOUDFLARE_AI_URL.replace(/\/chat$/, '/vision')
-
-/** Vision needs a bigger budget: the image eats context before reasoning starts. */
-const VISION_MAX_TOKENS = 2000
-const VISION_TIMEOUT_MS = 60_000
 
 // gpt-oss-20b burns completion tokens on hidden reasoning before it produces a
 // message, so a small budget yields an empty reply rather than a short one.
@@ -148,64 +137,6 @@ export async function cloudflareText(
   if (system) messages.push({ role: 'system', content: system })
   messages.push({ role: 'user', content: prompt })
   return cloudflareChat(messages, opts)
-}
-
-/**
- * Send an image to the Worker's vision route. Throws AiError when that route
- * isn't deployed (404), so callers can fall back to asking the user directly.
- */
-export async function cloudflareVision(
-  base64: string,
-  prompt: string,
-  opts: AiOptions = {},
-): Promise<string> {
-  const key = getKey()
-  if (!key) throw new AiError('Cloudflare AI key is not configured. Set CLOUDFLARE_APP_KEY.')
-
-  const timeout = new AbortController()
-  const timer = setTimeout(() => timeout.abort(), VISION_TIMEOUT_MS)
-  const onCallerAbort = () => timeout.abort()
-  opts.signal?.addEventListener('abort', onCallerAbort)
-
-  let res: Response
-  try {
-    res = await fetch(CLOUDFLARE_VISION_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        image: base64,
-        prompt,
-        max_tokens: opts.maxTokens ?? VISION_MAX_TOKENS,
-      }),
-      signal: timeout.signal,
-    })
-  } catch {
-    if (opts.signal?.aborted) throw new AiError('The AI request was cancelled.')
-    if (timeout.signal.aborted) throw new AiError('The image request timed out. Please try again.')
-    throw new AiError('Could not connect to the AI service.')
-  } finally {
-    clearTimeout(timer)
-    opts.signal?.removeEventListener('abort', onCallerAbort)
-  }
-
-  if (res.status === 404) {
-    throw new AiError('Image reading is not available on this deployment.', 404)
-  }
-  if (!res.ok) throw new AiError(messageForStatus(res.status), res.status)
-
-  let data: { response?: unknown }
-  try {
-    data = await res.json()
-  } catch {
-    throw new AiError('Received an invalid response from the AI service.')
-  }
-
-  const text = typeof data.response === 'string' ? data.response.trim() : ''
-  if (!text) throw new AiError('The AI service could not read the image.')
-  return text
 }
 
 /**

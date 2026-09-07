@@ -28,7 +28,8 @@ that touches the network or the key.
 | `aiText(task, prompt, system?)` | one-shot generation | `string` |
 | `aiChat(messages, opts?)` | multi-turn conversation | `string` |
 | `aiJSON<T>(prompt, system?)` | structured output | `T \| null` |
-| `aiVision(base64, prompt)` | reading an image | `string` — **throws** if the vision route isn't deployed |
+
+There is deliberately **no image input** — see [Why there is no vision](#why-there-is-no-vision).
 
 `aiJSON` returns `null` rather than throwing when the reply isn't parseable JSON.
 Callers must handle that — a `null` is a silent feature failure otherwise.
@@ -72,13 +73,34 @@ realistic prompt before lowering any of these.
 
 ---
 
+## Why there is no vision
+
+`gpt-oss-20b` is text-only, so image reading would need a second Worker route
+running a vision model. That was built and abandoned. Recorded here so it isn't
+rebuilt from scratch:
+
+- A `/vision` route was deployed calling `@cf/meta/llama-3.2-11b-vision-instruct`
+  with `{ image: bytes, prompt, max_tokens }`. Every call returned **500**. That
+  shape is llava's documented input, not llama-3.2-vision's, which expects a
+  messages array — so at minimum the contract was wrong.
+- Rather than keep guessing at contracts, the feature was dropped. The models
+  available are small (7B–11B), and reading exact app names and durations off a
+  dark-mode phone screenshot is essentially OCR — their weakest task. A
+  confidently wrong `14m` is worse than no number at all, because it silently
+  corrupts the history the coach reasons over.
+
+So screen time is **typed in**, and the screenshot is kept only as a visual record.
+If you revisit this, verify the model's input contract against Cloudflare's current
+docs first, then measure accuracy on real screenshots before trusting any of it.
+
+---
+
 ## Configuration
 
 | Name | Secret? | Where | Purpose |
 |---|---|---|---|
 | `CLOUDFLARE_APP_KEY` | **yes** | Vercel env vars, `.env.local` | Bearer token the Worker checks |
 | `CLOUDFLARE_AI_URL` | no | optional override | defaults to the deployed Worker `/chat` |
-| `CLOUDFLARE_VISION_URL` | no | optional override | defaults to the same Worker's `/vision` |
 | `APP_KEY` | **yes** | Cloudflare Worker secret | must equal `CLOUDFLARE_APP_KEY` |
 
 The key is server-side only, and has to be: the daily and weekly report crons run
@@ -111,7 +133,7 @@ A missing key throws before any request is made.
 
 ## Every AI feature today
 
-14 call sites across 13 routes.
+One call site in each of 14 routes.
 
 | Route | Call | What it produces |
 |---|---|---|
@@ -128,7 +150,7 @@ A missing key throws before any request is made.
 | `ai/health-recommend` | `aiJSON` | health plan, goals and habits |
 | `cron/daily-report` | `aiText('verdict')` | emailed daily summary |
 | `cron/weekly-report` | `aiText('verdict')` | emailed weekly summary |
-| `screentime/analyze` | `aiVision` + `aiText('verdict')` | reads a screen-time screenshot, or summarises manually entered numbers |
+| `screentime/analyze` | `aiText('verdict')` | verdict on the screen-time numbers you entered |
 
 ---
 
@@ -198,20 +220,13 @@ second provider behind — the four functions wouldn't change.
 use `'verdict'` (1500). Either point the crons at `bulk` to trim scheduled spend, or
 delete the branch.
 
-### 8. Screenshot reading accuracy is unproven
-**Medium value · needs measurement**
+### 8. Screen time still has to be typed in
+**Low value · large effort**
 
-`gpt-oss-20b` is text-only, so image reading goes to a **second, optional Worker
-route** (`/vision`) running `@cf/meta/llama-3.2-11b-vision-instruct`. The app side
-is wired: `aiVision(base64, prompt)` posts to `CLOUDFLARE_VISION_URL`, and when
-that route isn't deployed the Worker answers 404, `aiVision` throws, and screentime
-falls back to manual entry.
-
-What is *not* established is whether an 11B vision model reads a Digital Wellbeing
-or iOS Screen Time screenshot accurately — exact app names and durations are a hard
-OCR-ish task, and a plausible-but-wrong number is worse than no number. Measure
-against real screenshots before trusting it; `@cf/llava-hf/llava-1.5-7b-hf` is the
-alternative. Manual entry stays a first-class path either way.
+Reading the numbers off a screenshot would remove the only manual data entry left
+in the app, but it needs a vision model — see [Why there is no vision](#why-there-is-no-vision)
+for what was tried. Revisit only if a stronger vision model becomes available on
+Workers AI, and measure accuracy against real screenshots before trusting it.
 
 ### 9. No caching or streaming
 **Low value · medium effort**

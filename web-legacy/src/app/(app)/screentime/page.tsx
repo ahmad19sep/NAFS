@@ -74,38 +74,24 @@ export default function ScreentimePage() {
       }
     } catch {}
 
-    // 2. Try to read the screenshot. Needs a vision model behind the Worker;
-    //    when there isn't one the route answers 415 and we ask for numbers.
-    let aiData: { total_mins: number; apps: AppUsage[]; summary: string } | null = null
-    let readFailed = false
-    try {
-      const base64 = await toBase64(file)
-      const res = await fetch('/api/screentime/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ base64, mimeType: file.type || 'image/jpeg' }),
-      })
-      const r = await res.json().catch(() => ({}))
-      if (res.ok && !r.error && r.apps?.length > 0) aiData = r
-      else readFailed = true
-    } catch {
-      readFailed = true
-    }
-
-    // 3. Save regardless — the screenshot itself is still worth keeping.
+    // 2. Keep the screenshot as the visual record, preserving any numbers
+    //    already entered for today. Reading the image automatically was tried
+    //    and dropped — small vision models misread the durations, and a
+    //    confident wrong number is worse than none. You type the numbers.
     await supabase.from('screentime_logs').upsert({
       user_id: user.id,
       date: today,
-      total_mins: aiData?.total_mins ?? 0,
-      apps: aiData?.apps ?? [],
+      total_mins: todayLog?.total_mins ?? 0,
+      apps: todayLog?.apps ?? [],
       screenshot_url: screenshotUrl,
-      ai_summary: aiData?.summary ?? null,
+      ai_summary: todayLog?.ai_summary ?? null,
     }, { onConflict: 'user_id,date' })
 
     await load()
     setSaving(false)
-    if (readFailed) {
-      setNotice("Screenshot saved, but it couldn't be read automatically. Add your numbers below.")
+
+    if (!todayLog?.total_mins) {
+      setNotice('Screenshot saved. Now add the numbers below and the coach will read them.')
       setShowManual(true)
     }
   }
@@ -153,15 +139,6 @@ export default function ScreentimePage() {
     setSaving(false)
   }
 
-  function toBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const r = new FileReader()
-      r.onload = () => resolve((r.result as string).split(',')[1])
-      r.onerror = reject
-      r.readAsDataURL(file)
-    })
-  }
-
   const todayLog = logs.find((l) => l.date === today)
   const displayLog = selectedLog ?? todayLog
 
@@ -180,22 +157,18 @@ export default function ScreentimePage() {
         </p>
       </div>
 
-      {/* Upload */}
+      {/* Attaching a screenshot is optional — the numbers below are the data */}
       <button onClick={() => fileRef.current?.click()} disabled={saving}
-        className="flex w-full items-center gap-4 rounded-2xl border-2 border-dashed
-                   border-primary/40 bg-primary/5 p-5 transition-all
-                   hover:border-primary hover:bg-primary/10 active:scale-95 disabled:opacity-60">
-        <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-primary/20">
-          {saving
-            ? <div className="h-5 w-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-            : <Upload size={22} className="text-primary" />}
-        </div>
-        <div className="text-left">
-          <p className="font-semibold text-foreground">
-            {saving ? 'Saving…' : todayLog ? "Update today's screenshot" : "Upload today's screenshot"}
+        className="flex w-full items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3
+                   text-left transition-all hover:bg-white/10 active:scale-95 disabled:opacity-60">
+        {saving
+          ? <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          : <Upload size={16} className="text-muted-foreground flex-shrink-0" />}
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">
+            {saving ? 'Saving…' : todayLog?.screenshot_url ? 'Replace screenshot' : 'Attach screenshot'}
           </p>
-          <p className="text-xs text-muted-foreground mt-0.5">iPhone: Settings → Screen Time → screenshot</p>
-          <p className="text-xs text-muted-foreground">Android: Digital Wellbeing → screenshot</p>
+          <p className="text-[11px] text-muted-foreground">optional · kept as your visual record</p>
         </div>
       </button>
       {/*
@@ -217,10 +190,20 @@ export default function ScreentimePage() {
       {/* Manual entry */}
       {!showManual ? (
         <button onClick={() => setShowManual(true)}
-          className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/10
-                     bg-white/5 py-3 text-sm font-semibold text-muted-foreground
-                     hover:text-foreground hover:bg-white/10 transition-all active:scale-95">
-          <Pencil size={13} /> Enter screen time manually
+          className="flex w-full items-center gap-4 rounded-2xl border-2 border-dashed
+                     border-primary/40 bg-primary/5 p-5 transition-all
+                     hover:border-primary hover:bg-primary/10 active:scale-95">
+          <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-primary/20">
+            <Pencil size={20} className="text-primary" />
+          </div>
+          <div className="text-left">
+            <p className="font-semibold text-foreground">
+              {todayLog?.total_mins ? "Update today's screen time" : "Add today's screen time"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Total plus your top apps — the coach gives a verdict
+            </p>
+          </div>
         </button>
       ) : (
         <div className="nafs-card p-4 space-y-3">
