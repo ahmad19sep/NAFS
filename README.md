@@ -3,7 +3,7 @@
 A personal accountability app: habits, tasks, goals, health, Islamic practice, and an AI coach.
 
 **Platforms:** Android & iOS (native, via Expo)  
-**Stack:** Expo SDK 52 · expo-router · NativeWind · Supabase · Gemini AI
+**Stack:** Expo SDK 52 · expo-router · NativeWind · Supabase · Cloudflare Workers AI
 
 ---
 
@@ -51,7 +51,7 @@ NAFS/
 | Layer | Where it runs | What it does |
 |---|---|---|
 | **Native app** (this repo root) | Android / iOS via Expo | UI, local auth, direct Supabase queries |
-| **Web backend** (`web-legacy/`) | Vercel | AI routes (Gemini/Groq), email reports, push cron |
+| **Web backend** (`web-legacy/`) | Vercel | AI routes (Cloudflare Worker), email reports, push cron |
 
 The app calls Supabase directly for all data reads/writes, and calls `EXPO_PUBLIC_API_BASE_URL/api/...` for AI features that need server-side API keys.
 
@@ -213,7 +213,7 @@ EXPO_PUBLIC_API_BASE_URL=http://192.168.x.x:3000
 
 | Decision | Current choice | Alternative |
 |---|---|---|
-| AI provider | Google Gemini + Groq fallback (server-side) | Direct Gemini SDK in app (exposes key) |
+| AI provider | Cloudflare Worker → Workers AI, `@cf/openai/gpt-oss-20b` (server-side, single provider, no fallback) — see [docs/AI.md](docs/AI.md) | Add a second provider behind `lib/ai.ts` for fallback |
 | Backend | Next.js on Vercel (web-legacy/) | Supabase Edge Functions |
 | Auth | Email + password | Add Google OAuth via expo-auth-session |
 | Push notifications | Web Push (web-legacy backend) | expo-notifications (native, better UX) |
@@ -228,6 +228,6 @@ The `web-legacy/` folder is the original Next.js app. It is still the **live web
 ```
 web-legacy/
 ├── src/app/api/         # 27 API routes (AI, notifications, cron, email)
-├── src/lib/             # AI providers (Gemini, Groq), email (Resend)
+├── src/lib/             # ai.ts + cloudflare-ai.ts (AI), email (Resend)
 └── package.json         # Web app dependencies (Next.js 14)
 ```

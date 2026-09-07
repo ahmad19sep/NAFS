@@ -1,8 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { aiText, AiError, hasCloudflareAi } from '@/lib/ai'
+import { aiText, aiVision, safeParseJSON, AiError, hasCloudflareAi } from '@/lib/ai'
 
 export const maxDuration = 60
+
+const VISION_PROMPT = `This is a phone screen time screenshot (iPhone Screen Time or Android Digital Wellbeing).
+Read every app name and its exact time shown.
+
+Return ONLY valid JSON, no markdown:
+{
+  "total_mins": <integer, whole day total in minutes>,
+  "apps": [
+    { "app": "App Name", "minutes": <integer>, "category": "social|entertainment|productivity|communication|learning|other" }
+  ],
+  "summary": "<2-3 sentence honest verdict: what was wasted vs productive, which app dominated, one recommendation>"
+}
+
+Convert every duration to whole minutes, so "1h 20m" becomes 80.
+If this is NOT a screen time screenshot: {"error": "Not a screen time screenshot"}`
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,7 +30,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
-    const { manualData } = body
+    const { base64, manualData } = body
 
     // --- Manual entry path (no vision needed) ---
     if (manualData) {
@@ -38,11 +53,42 @@ Give an honest analysis.`
       })
     }
 
-    // Screenshot reading is gone: gpt-oss-20b is text-only, so there is no
-    // vision model behind the Worker to send an image to.
+    // --- Screenshot path. Needs the Worker's optional /vision route; without
+    //     it aiVision throws 404 and the client falls back to manual entry.
+    if (!base64) return NextResponse.json({ error: 'No image data' }, { status: 400 })
+
+    const text = await aiVision(base64, VISION_PROMPT)
+    const parsed = safeParseJSON<{
+      total_mins?: number
+      apps?: { app: string; minutes: number; category?: string }[]
+      summary?: string
+      error?: string
+    }>(text)
+
+    if (!parsed) {
+      return NextResponse.json({
+        error: 'Could not read the screenshot. Enter your screen time manually.',
+      }, { status: 422 })
+    }
+    if (parsed.error) return NextResponse.json({ error: parsed.error }, { status: 422 })
+
+    // A reply with no apps is a failed read, not an empty day.
+    const apps = (parsed.apps ?? []).filter((a) => a?.app && Number(a.minutes) > 0)
+    if (apps.length === 0) {
+      return NextResponse.json({
+        error: 'No apps could be read from the screenshot. Enter your screen time manually.',
+      }, { status: 422 })
+    }
+
     return NextResponse.json({
-      error: 'Screenshot reading is no longer available. Enter your screen time manually.',
-    }, { status: 415 })
+      total_mins: parsed.total_mins ?? apps.reduce((s, a) => s + Number(a.minutes), 0),
+      apps: apps.map((a) => ({
+        app: a.app,
+        minutes: Number(a.minutes),
+        category: a.category ?? guessCategory(a.app),
+      })),
+      summary: parsed.summary ?? '',
+    })
   } catch (err: unknown) {
     if (err instanceof AiError) {
       return NextResponse.json({ error: err.message }, { status: err.status ?? 502 })
@@ -51,7 +97,6 @@ Give an honest analysis.`
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function guessCategory(app: string): string {
   const name = app.toLowerCase()
   if (/instagram|tiktok|twitter|snapchat|facebook|x\.com/.test(name)) return 'social'

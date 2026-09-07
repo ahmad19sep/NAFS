@@ -10,7 +10,7 @@
 // ./cloudflare-ai.
 
 import {
-  cloudflareChat, cloudflareText, safeParseJSON,
+  cloudflareChat, cloudflareText, cloudflareVision, safeParseJSON,
   AiError, type ChatMessage, type AiOptions,
 } from './cloudflare-ai'
 
@@ -76,9 +76,11 @@ export async function aiJSON<T = unknown>(prompt: string, system?: string): Prom
 }
 
 /**
- * Vision is not available: gpt-oss-20b is text-only and the Worker exposes no
- * image route. Callers should offer a text/manual path instead of calling this.
+ * Image reading. gpt-oss-20b is text-only, so this goes to a separate vision
+ * route on the same Worker. That route is optional — when it isn't deployed the
+ * Worker answers 404 and this throws, so every caller must offer a manual path
+ * rather than treating vision as guaranteed.
  */
-export async function aiVision(): Promise<never> {
-  throw new AiError('Image analysis is not supported by the current AI model.')
+export async function aiVision(base64: string, prompt: string): Promise<string> {
+  return cloudflareVision(base64, prompt)
 }

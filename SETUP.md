@@ -66,7 +66,7 @@ Add `CRON_SECRET=<any-random-string>` to your Vercel env vars.
 ## Architecture
 - Next.js 14 App Router + TypeScript
 - Supabase (Postgres + Auth + Storage)
-- Gemini 2.0 Flash (free tier)
+- Cloudflare Workers AI — `@cf/openai/gpt-oss-20b` (see [docs/AI.md](docs/AI.md))
 - PWA (works on iOS 16.4+ as native app)
 - Vercel (free hosting + cron)
 - Total monthly cost: $0
