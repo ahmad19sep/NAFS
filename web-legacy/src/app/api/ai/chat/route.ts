@@ -4,6 +4,9 @@ import { aiChat, AiError } from '@/lib/ai'
 import { buildHealthDigest } from '@/lib/health-digest'
 import { ageFromBirthDate } from '@/lib/utils'
 import { findRepeatedMisses, describeMiss } from '@/lib/misses'
+import { findCorrelates, describeCorrelate } from '@/lib/correlates'
+import { buildCoachMemory, memoryIsEmpty } from '@/lib/coach-notes'
+import { totalSleepMinutes } from '@/lib/health'
 import { ASK_ASCEND_SYSTEM } from '@/lib/ai-prompts'
 
 // Ask Ascend — the coach answers from the user's REAL data across every
@@ -22,6 +25,9 @@ export async function POST(req: NextRequest) {
     thirtyAgo.setDate(thirtyAgo.getDate() - 29)
     const start = thirtyAgo.toISOString().split('T')[0]
     const today = new Date().toISOString().split('T')[0]
+    const ninetyAgo = new Date()
+    ninetyAgo.setDate(ninetyAgo.getDate() - 89)
+    const memoryStart = ninetyAgo.toISOString().split('T')[0]
 
     const results = await Promise.allSettled([
       supabase.from('users').select('name, about_me, deen_enabled, height_cm, weight_kg, created_at').eq('id', user.id).maybeSingle(),
@@ -37,6 +43,9 @@ export async function POST(req: NextRequest) {
       supabase.from('dreams').select('statement, dream_date, total_hours_required').eq('user_id', user.id).maybeSingle(),
       supabase.from('daily_logs').select('date, weighted_hours_today, todays_pull_days').eq('user_id', user.id).gte('date', start),
       supabase.from('screentime_logs').select('date, total_mins, apps').eq('user_id', user.id).gte('date', start),
+      // The coach's memory: what the user told it, in their words. Newest first.
+      supabase.from('coach_notes').select('kind, subject, content, date').eq('user_id', user.id)
+        .gte('date', memoryStart).order('created_at', { ascending: false }).limit(200),
     ])
     const data = (i: number): any =>
       results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
@@ -52,6 +61,7 @@ export async function POST(req: NextRequest) {
     const dream      = data(8)
     const dreamLogs  = data(9) ?? []
     const screenLogs = data(10) ?? []
+    const notes      = data(11) ?? []
 
     const deenOn = (profile?.deen_enabled ?? true) as boolean
 
@@ -110,6 +120,33 @@ export async function POST(req: NextRequest) {
       top_apps: topApps,
     } : undefined
 
+    // What keeps not happening, and what was different on those days.
+    // Deterministic. Unrecorded is never counted; a day without a sleep or
+    // screen value is unknown, not zero.
+    const repeated = findRepeatedMisses({ today, habits, habitLogs, prayerLogs, deenEnabled: deenOn })
+    const sleepMinutesByDate: Record<string, number> = {}
+    for (const l of healthLogs) {
+      const sessions = Array.isArray(l.sleep_sessions) ? l.sleep_sessions : []
+      const mins = sessions.length ? totalSleepMinutes(sessions)
+        : l.sleep_hours != null ? Number(l.sleep_hours) * 60 : null
+      if (mins != null && mins > 0) sleepMinutesByDate[l.date] = mins
+    }
+    const screenMinutesByDate: Record<string, number> = {}
+    for (const s of screenDays) screenMinutesByDate[s.date] = Number(s.total_mins)
+    const possibleCauses = findCorrelates({ misses: repeated, sleepMinutesByDate, screenMinutesByDate })
+      .map(describeCorrelate)
+
+    // The coach's memory, with habit ids turned back into names for the model.
+    const PRAYER_NAMES: Record<string, string> =
+      { fajr: 'Fajr', dhuhr: 'Dhuhr', asr: 'Asr', maghrib: 'Maghrib', isha: 'Isha' }
+    const habitNames = new Map<string, string>(habits.map((h: any) => [h.id, h.name]))
+    const coachMemory = buildCoachMemory(notes, {
+      labelFor: (s) => {
+        const [kind, id] = s.split(':')
+        return kind === 'prayer' ? (PRAYER_NAMES[id] ?? id) : (habitNames.get(id) ?? s)
+      },
+    })
+
     const context = {
       user: {
         name: profile?.name || 'the user',
@@ -125,12 +162,11 @@ export async function POST(req: NextRequest) {
         habit_completions_by_date: habitDoneByDate,
         ...(prayerSummary ? { prayers: prayerSummary } : {}),
         tasks: { total: tasks.length, completed: tasksDone },
-        // Deterministic, from the records: what keeps not happening. The
-        // system prompt tells the coach to name these plainly and ask one
-        // question about what got in the way. Unrecorded is never counted.
-        repeated_misses: findRepeatedMisses({
-          today, habits, habitLogs, prayerLogs, deenEnabled: deenOn,
-        }).map(describeMiss),
+        // The system prompt tells the coach to name these plainly, offer a
+        // measured cause as a possibility if there is one, and otherwise ask
+        // one question and remember the answer.
+        repeated_misses: repeated.map(describeMiss),
+        ...(possibleCauses.length ? { possible_causes: possibleCauses } : {}),
         health: {
           days_logged: healthLogs.length,
           sleep: {
@@ -168,6 +204,9 @@ export async function POST(req: NextRequest) {
         hours_done_last_30d: Math.round(dreamHours * 10) / 10,
         total_hours_target: dream.total_hours_required,
       } : 'Not set yet',
+      // What they told the coach before, in their own words. Absent until
+      // they have said something, so the model is never handed empty shapes.
+      ...(memoryIsEmpty(coachMemory) ? {} : { coach_memory: coachMemory }),
     }
 
     const contextPrompt =

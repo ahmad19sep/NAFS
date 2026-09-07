@@ -12,6 +12,9 @@ export default async function DashboardPage() {
   const thirtyAgo = new Date()
   thirtyAgo.setDate(thirtyAgo.getDate() - 29)
   const thirtyAgoStr = thirtyAgo.toISOString().split('T')[0]
+  const ninetyAgo = new Date()
+  ninetyAgo.setDate(ninetyAgo.getDate() - 89)
+  const ninetyAgoStr = ninetyAgo.toISOString().split('T')[0]
 
   // Use allSettled so a single slow/failing query doesn't kill the whole page
   const results = await Promise.allSettled([
@@ -31,6 +34,10 @@ export default async function DashboardPage() {
     supabase.from('health_logs').select('date').eq('user_id', user.id).limit(5000),
     supabase.from('prayer_logs').select('date').eq('user_id', user.id).limit(5000),
     supabase.from('habit_logs').select('date').eq('user_id', user.id).limit(5000),
+    // What the user told the coach, so a repeated miss can show what they
+    // said last time. Newest first; ninety days is plenty for "last time".
+    supabase.from('coach_notes').select('id, kind, subject, content, date').eq('user_id', user.id)
+      .gte('date', ninetyAgoStr).order('created_at', { ascending: false }).limit(200),
   ])
   const data = (i: number): any =>
     results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
@@ -49,6 +56,7 @@ export default async function DashboardPage() {
   // Level: distinct days on which anything at all was recorded. Derived here
   // on every load rather than stored, so it is always current.
   const lifetimeDays = countDaysLogged(data(10), data(11), data(12))
+  const coachNotes = data(13) ?? []
 
   const todayPrayerLog = (prayerLogs30 ?? []).find((p: any) => p.date === today) ?? null
   const todayTasks = (tasks30 ?? []).filter((t: any) => t.period_date === today)
@@ -80,6 +88,7 @@ export default async function DashboardPage() {
       healthLogs30={healthLogs30 ?? []}
       today={today}
       lifetimeDays={lifetimeDays}
+      coachNotes={coachNotes}
     />
   )
 }

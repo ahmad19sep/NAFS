@@ -30,6 +30,9 @@ export interface RepeatedMiss {
   /** Days it could have been done — scheduled and active for habits, recorded for prayers. */
   of: number
   windowDays: number
+  /** The days behind the counts, so a cause can be looked for. */
+  missedDates: string[]
+  doneDates: string[]
 }
 
 export interface MissInput {
@@ -64,9 +67,9 @@ export function findRepeatedMisses(input: MissInput): RepeatedMiss[] {
   const windowDays = input.windowDays ?? 7
   const threshold = input.threshold ?? 3
 
-  // Yesterday back to (yesterday - windowDays + 1). Today is in progress.
+  // The windowDays before today, oldest first. Today is in progress.
   const days: string[] = []
-  for (let i = 1; i <= windowDays; i++) days.push(shift(input.today, -i))
+  for (let i = windowDays; i >= 1; i--) days.push(shift(input.today, -i))
 
   // Days the user was demonstrably active: anything logged at all.
   const activeDays = new Set<string>()
@@ -85,16 +88,20 @@ export function findRepeatedMisses(input: MissInput): RepeatedMiss[] {
   for (const h of input.habits) {
     if (h.is_paused) continue
     const logs = logsByHabit.get(h.id) ?? new Map<string, StreakLog>()
-    let of = 0
-    let missed = 0
+    const missedDates: string[] = []
+    const doneDates: string[] = []
     for (const day of days) {
       if (!isScheduledOn(h, day)) continue
       if (!activeDays.has(day)) continue // forgot the app, not skipped this
-      of++
-      if (!isComplete(h, logs.get(day))) missed++
+      if (isComplete(h, logs.get(day))) doneDates.push(day)
+      else missedDates.push(day)
     }
-    if (of > 0 && missed >= threshold) {
-      out.push({ kind: 'habit', id: h.id, label: h.name, emoji: h.emoji || '🔁', missed, of, windowDays })
+    const of = missedDates.length + doneDates.length
+    if (of > 0 && missedDates.length >= threshold) {
+      out.push({
+        kind: 'habit', id: h.id, label: h.name, emoji: h.emoji || '🔁',
+        missed: missedDates.length, of, windowDays, missedDates, doneDates,
+      })
     }
   }
 
@@ -102,18 +109,22 @@ export function findRepeatedMisses(input: MissInput): RepeatedMiss[] {
   if (input.deenEnabled) {
     const byDate = new Map(input.prayerLogs.map((p) => [p.date, p]))
     for (const pr of PRAYERS) {
-      let of = 0
-      let missed = 0
+      const missedDates: string[] = []
+      const doneDates: string[] = []
       for (const day of days) {
         const row = byDate.get(day)
         if (!row) continue // no row: unknown, never a miss
         const v = row[pr.key]
         if (v == null) continue
-        of++
-        if (Number(v) === 0) missed++
+        if (Number(v) === 0) missedDates.push(day)
+        else doneDates.push(day)
       }
-      if (of > 0 && missed >= threshold) {
-        out.push({ kind: 'prayer', id: pr.key, label: pr.label, emoji: pr.emoji, missed, of, windowDays })
+      const of = missedDates.length + doneDates.length
+      if (of > 0 && missedDates.length >= threshold) {
+        out.push({
+          kind: 'prayer', id: pr.key, label: pr.label, emoji: pr.emoji,
+          missed: missedDates.length, of, windowDays, missedDates, doneDates,
+        })
       }
     }
   }

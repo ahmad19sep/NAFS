@@ -14,6 +14,8 @@ import { BADGES, TIER_COLORS, type BadgeDef } from '@/lib/badges'
 import { levelFor } from '@/lib/levels'
 import { enablePush, pushSupported } from '@/lib/push'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
+import LifeNotes from '@/components/LifeNotes'
+import type { CoachNote } from '@/lib/coach-notes'
 
 interface DayScore { date: string; pct: number; earned: number; max: number }
 interface Props {
@@ -23,9 +25,11 @@ interface Props {
   /** Distinct days with anything recorded, all time. Drives the level.
    *  Named apart from the 30-day `daysLogged` the stats card computes below. */
   lifetimeDays: number
+  /** Answers to the coach's life questions, newest first. */
+  lifeNotes: CoachNote[]
 }
 
-export default function ProfileClient({ profile, dailyScores, earnedBadges, lifetimeDays }: Props) {
+export default function ProfileClient({ profile, dailyScores, earnedBadges, lifetimeDays, lifeNotes }: Props) {
   const router = useRouter()
   const supabase = createClient()
 
@@ -535,6 +539,11 @@ export default function ProfileClient({ profile, dailyScores, earnedBadges, life
           </div>
         </div>
       )}
+
+      {/* THE COACH'S LIFE QUESTIONS — kept in the user's words, read with their data */}
+      <div className="mb-6">
+        <LifeNotes notes={lifeNotes} />
+      </div>
 
       {/* ACCOUNT */}
       <Section title="Account">

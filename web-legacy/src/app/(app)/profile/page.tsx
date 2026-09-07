@@ -109,6 +109,9 @@ export default async function ProfilePage() {
     // habits still gets credit for showing up. Appended last so the indices
     // above stay put. Payload is tiny even at thousands of rows.
     supabase.from('habit_logs').select('date').eq('user_id', user.id).limit(5000),
+    // The coach's life questions: latest answers, in the user's words.
+    supabase.from('coach_notes').select('id, kind, subject, content, date').eq('user_id', user.id)
+      .eq('kind', 'life').order('created_at', { ascending: false }).limit(50),
   ])
   const data = (i: number): any =>
     results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
@@ -126,6 +129,7 @@ export default async function ProfilePage() {
   const healthLogsAll       = data(11)
   const goals               = data(12)
   const habitDatesAll       = data(13)
+  const lifeNotes           = data(14) ?? []
 
   // Daily score arrays for the stats card
   const habitsHist     = computeHabitsHistory((habits ?? []) as Habit[], (habitLogs30 ?? []) as HabitLog[], today)
@@ -227,5 +231,5 @@ export default async function ProfilePage() {
   // stored, so it cannot drift the way habits.current_streak did.
   const daysLogged = countDaysLogged(prayerLogsAll, healthLogsAll, habitDatesAll)
 
-  return <ProfileClient profile={profile} dailyScores={dailyScores} earnedBadges={newBadges} lifetimeDays={daysLogged} />
+  return <ProfileClient profile={profile} dailyScores={dailyScores} earnedBadges={newBadges} lifetimeDays={daysLogged} lifeNotes={lifeNotes} />
 }

@@ -13,6 +13,8 @@ import { selectNextUp } from '@/lib/next-up'
 import { levelFor } from '@/lib/levels'
 import { moodFor, pickQuote } from '@/lib/quotes'
 import { findRepeatedMisses, describeMiss } from '@/lib/misses'
+import { latestBySubject, subjectFor, type CoachNote } from '@/lib/coach-notes'
+import CoachNoteInput from '@/components/CoachNoteInput'
 import { type CustomMetric } from '@/lib/health'
 import { PRAYERS } from '@/lib/scoring'
 import type { Habit, HabitLog, Weekday } from '@/types'
@@ -59,6 +61,8 @@ interface Props {
   today: string
   /** Distinct days with anything recorded, all time. Drives the level chip. */
   lifetimeDays: number
+  /** What the user told the coach, last 90 days, newest first. */
+  coachNotes: CoachNote[]
 }
 
 function getGreeting(name: string) {
@@ -83,7 +87,7 @@ export default function HomeClient({
   profile, habits, habitLogs, habitLogs30, prayerLog, prayerLogs30,
   challenges, allChallenges, challengeCheckins30,
   todayTasks, tasks30, goals, aiReports,
-  healthLog, healthLogs30, today, lifetimeDays,
+  healthLog, healthLogs30, today, lifetimeDays, coachNotes,
 }: Props) {
 
   // ---- Today's per-feature stats ----
@@ -186,6 +190,11 @@ export default function HomeClient({
     prayerLogs: prayerLogs30 as any,
     deenEnabled: deenOn,
   }), [today, habits, habitLogs30, prayerLogs30, deenOn])
+
+  // What they said last time about each of these, so they — and the coach —
+  // can see when the reason is the same one again.
+  const lastReasons = useMemo(() => latestBySubject(coachNotes, 'miss_reason'), [coachNotes])
+  const todayBadDayNote = coachNotes.find((n) => n.kind === 'low_score' && n.date === today) ?? null
 
   // ---- 30-day history (for sparkline + delta vs yesterday) ----
   const habitsHistory     = useMemo(() => computeHabitsHistory(habits as Habit[], habitLogs30 as HabitLog[], today), [habits, habitLogs30, today])
@@ -346,6 +355,21 @@ export default function HomeClient({
         <div className="anim-up rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
           <p className="text-sm text-foreground leading-relaxed italic">“{quote.text}”</p>
           <p className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">— {quote.source}</p>
+          {/* On a rough day, ask what is going on — once — and keep the answer
+              for the coach. Never asked on a day with nothing logged yet. */}
+          {mood === 'struggling' && (
+            <div className="mt-2 border-t border-white/10 pt-2">
+              {todayBadDayNote ? (
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  You told the coach: <span className="italic text-foreground/85">“{todayBadDayNote.content}”</span>
+                </p>
+              ) : (
+                <CoachNoteInput kind="low_score" subject={null}
+                  prompt="Rough day? Tell the coach what's going on"
+                  placeholder="What's getting in the way today? What are you thinking?" />
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -399,13 +423,24 @@ export default function HomeClient({
             <p className="text-sm font-semibold text-orange-300">Patterns worth a look</p>
             <p className="text-[11px] text-muted-foreground">last 7 days</p>
           </div>
-          <div className="space-y-1.5">
-            {misses.slice(0, 3).map((m) => (
-              <div key={`${m.kind}-${m.id}`} className="flex items-center gap-2 text-sm">
-                <span>{m.emoji}</span>
-                <span className="flex-1 text-foreground">{describeMiss(m)}</span>
-              </div>
-            ))}
+          <div className="space-y-3">
+            {misses.slice(0, 3).map((m) => {
+              const subject = subjectFor(m)
+              return (
+                <div key={subject} className="text-sm">
+                  <div className="flex items-center gap-2">
+                    <span>{m.emoji}</span>
+                    <span className="flex-1 text-foreground">{describeMiss(m)}</span>
+                  </div>
+                  {/* Why? — saved in their words; shown back next time it repeats. */}
+                  <div className="pl-7">
+                    <CoachNoteInput kind="miss_reason" subject={subject} tone="orange"
+                      previous={lastReasons.get(subject) ?? null}
+                      prompt="Why? Tell the coach" placeholder="What got in the way?" />
+                  </div>
+                </div>
+              )
+            })}
           </div>
           <p className="mt-2.5 text-[11px] text-muted-foreground">
             Only what you recorded. Days with nothing logged aren&apos;t counted against you.

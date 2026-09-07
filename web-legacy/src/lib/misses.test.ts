@@ -126,9 +126,18 @@ describe('shape and wording', () => {
   })
 
   it('describes a miss with its denominator and the right verb', () => {
-    expect(describeMiss({ kind: 'prayer', id: 'fajr', label: 'Fajr', emoji: '🌅', missed: 4, of: 7, windowDays: 7 }))
+    const dates = { missedDates: [], doneDates: [] }
+    expect(describeMiss({ kind: 'prayer', id: 'fajr', label: 'Fajr', emoji: '🌅', missed: 4, of: 7, windowDays: 7, ...dates }))
       .toBe('Fajr recorded missed 4 of the last 7 recorded days')
-    expect(describeMiss({ kind: 'habit', id: 'h1', label: 'Reading', emoji: '📖', missed: 3, of: 5, windowDays: 7 }))
+    expect(describeMiss({ kind: 'habit', id: 'h1', label: 'Reading', emoji: '📖', missed: 3, of: 5, windowDays: 7, ...dates }))
       .toBe('Reading not done 3 of the last 5 active days')
+  })
+
+  it('returns the days behind the counts', () => {
+    const r = findRepeatedMisses(base({
+      prayerLogs: days.map((d, i) => prayerRow(d, i < 4 ? 0 : 1)),
+    }))
+    expect(r[0].missedDates).toEqual(days.slice(0, 4))
+    expect(r[0].doneDates).toEqual(days.slice(4))
   })
 })
