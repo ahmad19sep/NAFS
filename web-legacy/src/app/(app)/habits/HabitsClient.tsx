@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import type { Habit, HabitLog, HabitType, ScheduleKind, Weekday } from '@/types'
 import HistoryTeaserCard from '@/components/HistoryTeaserCard'
 import { computeHabitsHistory } from '@/lib/history'
+import { currentStreak } from '@/lib/streak'
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock'
 
 // ---------- helpers ----------
@@ -281,7 +282,7 @@ export default function HabitsClient({ userId, habits, logs, today }: Props) {
       {/* Habit cards */}
       <div className="space-y-3">
         {visible.map((h) => (
-          <HabitCard key={h.id} habit={h} log={logFor(h.id)}
+          <HabitCard key={h.id} habit={h} log={logFor(h.id)} allLogs={logs} today={today}
             menuOpen={menuOpenId === h.id}
             onMenuToggle={(e) => { e.stopPropagation(); setMenuOpenId(menuOpenId === h.id ? null : h.id) }}
             onEdit={() => { setMenuOpenId(null); setFormOpen(habitToForm(h)) }}
@@ -312,9 +313,11 @@ export default function HabitsClient({ userId, habits, logs, today }: Props) {
 // ============================================================
 // HABIT CARD
 // ============================================================
-function HabitCard({ habit, log, onLog, onEdit, onDelete, onPause, menuOpen, onMenuToggle, onDismissAi, onGenerateAi, generatingAi, onAddRelated }: {
+function HabitCard({ habit, log, allLogs, today, onLog, onEdit, onDelete, onPause, menuOpen, onMenuToggle, onDismissAi, onGenerateAi, generatingAi, onAddRelated }: {
   habit: Habit
   log: HabitLog | undefined
+  allLogs: HabitLog[]
+  today: string
   onLog: (p: Partial<{ completed: boolean; value: number; duration_mins: number; notes: string | null; subject_delta: number }>) => void
   onEdit: () => void
   onDelete: () => void
@@ -328,6 +331,15 @@ function HabitCard({ habit, log, onLog, onEdit, onDelete, onPause, menuOpen, onM
 }) {
   const scheduled = isScheduledToday(habit)
   const done = isCompletedToday(habit, log)
+
+  // Computed from the logs rather than read from habits.current_streak. That
+  // column is only recalculated when something is logged, so after a missed day
+  // it keeps showing the old streak until the next log silently corrects it.
+  const liveStreak = currentStreak(
+    habit as any,
+    allLogs.filter((l) => l.habit_id === habit.id) as any,
+    today,
+  )
 
   return (
     <div className={cn(
@@ -356,8 +368,8 @@ function HabitCard({ habit, log, onLog, onEdit, onDelete, onPause, menuOpen, onM
             <span className="text-xs font-bold text-emerald-400 flex items-center gap-1">
               <Check size={12} /> done
             </span>
-          ) : habit.current_streak > 0 ? (
-            <span className="text-xs font-bold text-orange-400">🔥 {habit.current_streak}d</span>
+          ) : liveStreak > 0 ? (
+            <span className="text-xs font-bold text-orange-400">🔥 {liveStreak}d</span>
           ) : null}
           {/* Kebab */}
           <div className="relative">
