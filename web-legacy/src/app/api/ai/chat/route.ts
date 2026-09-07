@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { aiChat, AiError } from '@/lib/ai'
 import { buildHealthDigest } from '@/lib/health-digest'
 import { ageFromBirthDate } from '@/lib/utils'
+import { findRepeatedMisses, describeMiss } from '@/lib/misses'
 import { ASK_ASCEND_SYSTEM } from '@/lib/ai-prompts'
 
 // Ask Ascend — the coach answers from the user's REAL data across every
@@ -24,8 +25,10 @@ export async function POST(req: NextRequest) {
 
     const results = await Promise.allSettled([
       supabase.from('users').select('name, about_me, deen_enabled, height_cm, weight_kg, created_at').eq('id', user.id).maybeSingle(),
-      supabase.from('habits').select('name, emoji, type, target_value, current_streak, longest_streak').eq('user_id', user.id).eq('is_active', true),
-      supabase.from('habit_logs').select('habit_id, date, completed').eq('user_id', user.id).gte('date', start),
+      // id and schedule fields are needed to detect repeated misses; value and
+      // duration so a counter or duration habit only counts when its target was met.
+      supabase.from('habits').select('id, name, emoji, type, target_value, time_target_mins, is_paused, schedule_kind, schedule_days, current_streak, longest_streak').eq('user_id', user.id).eq('is_active', true),
+      supabase.from('habit_logs').select('habit_id, date, completed, value, duration_mins').eq('user_id', user.id).gte('date', start),
       supabase.from('prayer_logs').select('date, fajr, dhuhr, asr, maghrib, isha').eq('user_id', user.id).gte('date', start),
       supabase.from('tasks').select('title, status, period_date, type').eq('user_id', user.id).gte('period_date', start),
       supabase.from('health_logs').select('date, sleep_sessions, sleep_hours, meals, water_glasses, steps, exercise_done, exercise_minutes, weight_kg').eq('user_id', user.id).gte('date', start),
@@ -122,6 +125,12 @@ export async function POST(req: NextRequest) {
         habit_completions_by_date: habitDoneByDate,
         ...(prayerSummary ? { prayers: prayerSummary } : {}),
         tasks: { total: tasks.length, completed: tasksDone },
+        // Deterministic, from the records: what keeps not happening. The
+        // system prompt tells the coach to name these plainly and ask one
+        // question about what got in the way. Unrecorded is never counted.
+        repeated_misses: findRepeatedMisses({
+          today, habits, habitLogs, prayerLogs, deenEnabled: deenOn,
+        }).map(describeMiss),
         health: {
           days_logged: healthLogs.length,
           sleep: {

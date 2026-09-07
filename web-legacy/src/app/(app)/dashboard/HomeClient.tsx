@@ -11,6 +11,8 @@ import { cn, scoreColor } from '@/lib/utils'
 import { healthProgress } from '@/lib/health-progress'
 import { selectNextUp } from '@/lib/next-up'
 import { levelFor } from '@/lib/levels'
+import { moodFor, pickQuote } from '@/lib/quotes'
+import { findRepeatedMisses, describeMiss } from '@/lib/misses'
 import { type CustomMetric } from '@/lib/health'
 import { PRAYERS } from '@/lib/scoring'
 import type { Habit, HabitLog, Weekday } from '@/types'
@@ -169,6 +171,22 @@ export default function HomeClient({
     (tasksTotal - tasksDone) + (habitsTotal - habitsDone)
     + (deenOn ? Math.max(0, 5 - prayerValues.filter((v) => v > 0).length) : 0)
 
+  // ---- A line for the day, chosen by how the day is going ----
+  // Curated, never generated: a misquoted ayah is worse than no quote. A day
+  // with nothing logged yet gets a steady line, not a verdict.
+  const mood = moodFor({ score: noEngagement ? null : overallScore, nothingLoggedYet: noEngagement })
+  const quote = pickQuote(mood, deenOn, today)
+
+  // ---- Patterns worth a look: what keeps not happening ----
+  // Deterministic, from the records. Unrecorded is never counted as missed.
+  const misses = useMemo(() => findRepeatedMisses({
+    today,
+    habits: habits as any,
+    habitLogs: habitLogs30 as any,
+    prayerLogs: prayerLogs30 as any,
+    deenEnabled: deenOn,
+  }), [today, habits, habitLogs30, prayerLogs30, deenOn])
+
   // ---- 30-day history (for sparkline + delta vs yesterday) ----
   const habitsHistory     = useMemo(() => computeHabitsHistory(habits as Habit[], habitLogs30 as HabitLog[], today), [habits, habitLogs30, today])
   const deenHistory       = useMemo(() => deenOn ? computeDeenHistory(prayerLogs30, today) : [], [deenOn, prayerLogs30, today])
@@ -321,6 +339,16 @@ export default function HomeClient({
         </div>
       </div>
 
+      {/* ───────────── A line for the day ─────────────
+          Quiet, one line, holds still for the day. Faith mode picks Quran and
+          hadith from a curated list; otherwise stoic. */}
+      {quote && (
+        <div className="anim-up rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
+          <p className="text-sm text-foreground leading-relaxed italic">“{quote.text}”</p>
+          <p className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">— {quote.source}</p>
+        </div>
+      )}
+
       {/* ───────────── Next up ─────────────
           What is actually left today, above the navigation grid. Each row goes
           straight to the control that can record it, so acting on it is one
@@ -356,6 +384,36 @@ export default function HomeClient({
           <p className="mt-1 text-[11px] text-muted-foreground">
             Nothing left scheduled. Anything else today is a bonus.
           </p>
+        </div>
+      )}
+
+      {/* ───────────── Patterns worth a look ─────────────
+          Things that keep not happening, with the counts. This names the
+          pattern and points at the coach, who is prompted to ask what got in
+          the way and turn the answer into tasks. It does not punish: the only
+          consequence in this app is one the user sets on themselves (a sadqa
+          pledge on a challenge). */}
+      {misses.length > 0 && (
+        <div className="anim-up rounded-2xl border border-orange-500/25 bg-orange-500/[0.06] p-4">
+          <div className="flex items-baseline justify-between mb-2">
+            <p className="text-sm font-semibold text-orange-300">Patterns worth a look</p>
+            <p className="text-[11px] text-muted-foreground">last 7 days</p>
+          </div>
+          <div className="space-y-1.5">
+            {misses.slice(0, 3).map((m) => (
+              <div key={`${m.kind}-${m.id}`} className="flex items-center gap-2 text-sm">
+                <span>{m.emoji}</span>
+                <span className="flex-1 text-foreground">{describeMiss(m)}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2.5 text-[11px] text-muted-foreground">
+            Only what you recorded. Days with nothing logged aren&apos;t counted against you.
+          </p>
+          <Link href="/coach"
+            className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-orange-300 hover:text-orange-200">
+            Ask the coach why <ChevronRight size={12} />
+          </Link>
         </div>
       )}
 
