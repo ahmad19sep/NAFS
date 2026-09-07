@@ -97,7 +97,7 @@ Reproduced by fixture **D13**.
 
 ## Test harness
 
-`vitest` (one devDependency, native TypeScript) with `npm test`. 82 tests:
+`vitest` (one devDependency, native TypeScript) with `npm test`. 91 tests:
 
 | Fixture | Covers |
 |---|---|
@@ -114,7 +114,7 @@ than inventing one mid-refactor.
 
 ```bash
 cd web-legacy
-npm test           # 82 tests
+npm test           # 91 tests
 npx tsc --noEmit   # clean
 npm run build      # compiles
 ```
@@ -216,12 +216,27 @@ implement is duplicated as an executable specification in
 [`habit-progress.ts`](../web-legacy/src/lib/habit-progress.ts). Change one,
 change both — the alternative is an untested rule living only in a migration.
 
+### Fixed: completing a task was destructive on retry
+
+`/api/tasks/[id]/toggle` read the stored status and flipped it. A lost
+response followed by a client retry flipped the task back, silently undoing
+what the user had just done; a fast double-tap did the same.
+
+The client now sends the state it wants rather than asking for a flip, so
+repeating the request is harmless. When the task is already in that state the
+route returns it unchanged instead of rewriting, so a replay cannot move
+`completed_at` and make an old task look freshly done. The flip survives only
+as a fallback for a client that sends no body. Pinned by
+[`task-status.test.ts`](../web-legacy/src/lib/task-status.test.ts), including a
+test asserting the old double-flip behaviour is the bug.
+
 ### Still open in LOG-01
 
 - **No request identifiers.** The blueprint wants each user intent to carry a
   stable id, unique per owner in durable storage, so a retry is recognised
-  rather than re-executed. Subject habits are idempotent by their delta design,
-  but nothing else is.
+  rather than re-executed. Subject habits and task completion are now
+  idempotent by design, but creation still is not: a double-submitted task
+  creates two rows, guarded only by a disabled button in the client.
 - **Absolute writes have no revision check.** The health page upserts water,
   steps and the rest from client state, so two devices silently overwrite each
   other. The blueprint asks for a version check on absolute edits.

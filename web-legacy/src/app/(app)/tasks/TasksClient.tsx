@@ -140,9 +140,28 @@ export default function TasksClient({ tasks, today }: Props) {
     router.refresh()
   }
 
-  async function toggleTask(id: string) {
-    await fetch(`/api/tasks/${id}/toggle`, { method: 'POST' })
-    router.refresh()
+  // Sends the state we want rather than asking the server to flip, so a retry
+  // after a lost response cannot undo the task the user just completed.
+  // In-flight ids are held so a double-tap is one request, not two.
+  const [pending, setPending] = useState<Set<string>>(new Set())
+
+  async function toggleTask(t: Task) {
+    if (pending.has(t.id)) return
+    setPending((p) => new Set(p).add(t.id))
+    try {
+      await fetch(`/api/tasks/${t.id}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completed: t.status !== 'completed' }),
+      })
+      router.refresh()
+    } finally {
+      setPending((p) => {
+        const next = new Set(p)
+        next.delete(t.id)
+        return next
+      })
+    }
   }
   async function deleteTask(id: string) {
     if (!confirm('Delete this task?')) return
@@ -295,7 +314,7 @@ export default function TasksClient({ tasks, today }: Props) {
         <div className="space-y-2">
           <p className="section-header">{periodLabel(tab, currentAnchor, today)}</p>
           {currentTasks.map((t) => (
-            <TaskRow key={t.id} task={t} today={today} onToggle={() => toggleTask(t.id)}
+            <TaskRow key={t.id} task={t} today={today} onToggle={() => toggleTask(t)}
               onEdit={() => openEdit(t)} onDelete={() => deleteTask(t.id)} />
           ))}
         </div>
@@ -308,7 +327,7 @@ export default function TasksClient({ tasks, today }: Props) {
             {periodLabel(tab, prevAnchor, today)} · grace window
           </p>
           {graceTasks.map((t) => (
-            <TaskRow key={t.id} task={t} today={today} onToggle={() => toggleTask(t.id)}
+            <TaskRow key={t.id} task={t} today={today} onToggle={() => toggleTask(t)}
               onEdit={() => openEdit(t)} onDelete={() => deleteTask(t.id)} />
           ))}
         </div>
