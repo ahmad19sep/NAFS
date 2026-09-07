@@ -2,7 +2,14 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import webpush from 'web-push'
 
-// Sends a test push to the signed-in user's own device.
+/**
+ * Sends a test push to the signed-in user's own device.
+ *
+ * This route existed only under the repo-root `src/` — outside the Next.js app
+ * Vercel builds — so Settings' "Send a test notification" called a path that
+ * had never been deployed and always failed. Moved here, into the app that
+ * actually ships.
+ */
 export async function POST() {
   try {
     const supabase = createClient()
