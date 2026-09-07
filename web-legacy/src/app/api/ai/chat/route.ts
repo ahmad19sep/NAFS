@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { aiChat, AiError } from '@/lib/ai'
+import { buildHealthDigest } from '@/lib/health-digest'
 import { ASK_ASCEND_SYSTEM } from '@/lib/ai-prompts'
 
 // Ask Ascend — the coach answers from the user's REAL data across every
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
       supabase.from('habit_logs').select('habit_id, date, completed').eq('user_id', user.id).gte('date', start),
       supabase.from('prayer_logs').select('date, fajr, dhuhr, asr, maghrib, isha').eq('user_id', user.id).gte('date', start),
       supabase.from('tasks').select('title, status, period_date, type').eq('user_id', user.id).gte('period_date', start),
-      supabase.from('health_logs').select('date, sleep_hours, water_glasses, exercise_done, steps').eq('user_id', user.id).gte('date', start),
+      supabase.from('health_logs').select('date, sleep_sessions, sleep_hours, meals, water_glasses, steps, exercise_done, exercise_minutes, weight_kg').eq('user_id', user.id).gte('date', start),
       supabase.from('goals').select('title, progress_pct, deadline, goal_milestones(title, done)').eq('user_id', user.id),
       supabase.from('challenges').select('title, current_streak, duration_days, status').eq('user_id', user.id),
       supabase.from('dreams').select('statement, dream_date, total_hours_required').eq('user_id', user.id).maybeSingle(),
@@ -74,9 +75,16 @@ export async function POST(req: NextRequest) {
     })() : undefined
 
     const tasksDone = tasks.filter((t: any) => t.status === 'completed').length
-    const sleepVals = healthLogs.map((h: any) => Number(h.sleep_hours ?? 0)).filter((v: number) => v > 0)
-    const avgSleep = sleepVals.length ? (sleepVals.reduce((s: number, v: number) => s + v, 0) / sleepVals.length).toFixed(1) : null
-    const exerciseDays = healthLogs.filter((h: any) => h.exercise_done).length
+
+    // The same digest health-recommend uses: real sleep sessions and meals,
+    // each metric carrying its own observed count, absent staying null. It
+    // replaces a bare avg_sleep_hours that said nothing about coverage and
+    // never saw what the user actually ate.
+    const healthDigest = buildHealthDigest(healthLogs, {
+      startDate: start,
+      endDate: today,
+      eligibleDays: 30,
+    })
 
     const dreamHours = dreamLogs.reduce((s: number, l: any) => s + Number(l.weighted_hours_today ?? 0), 0)
 
@@ -111,7 +119,28 @@ export async function POST(req: NextRequest) {
         habit_completions_by_date: habitDoneByDate,
         ...(prayerSummary ? { prayers: prayerSummary } : {}),
         tasks: { total: tasks.length, completed: tasksDone },
-        health: { days_logged: healthLogs.length, avg_sleep_hours: avgSleep, exercise_days: exerciseDays },
+        health: {
+          days_logged: healthLogs.length,
+          sleep: {
+            avg_minutes_per_recorded_night: healthDigest.sleep.meanMinutes,
+            recorded_nights: healthDigest.sleep.recordedNights,
+            of_days: healthDigest.sleep.eligibleNights,
+            shortest_minutes: healthDigest.sleep.shortestMinutes,
+            longest_minutes: healthDigest.sleep.longestMinutes,
+            nights_including_a_nap: healthDigest.sleep.nightsWithNaps,
+          },
+          meals: {
+            meals_recorded: healthDigest.meals.recordedMeals,
+            days_with_any_meal: healthDigest.meals.daysWithAnyMeal,
+            of_days: healthDigest.meals.eligibleDays,
+            foods_by_type: healthDigest.meals.categoryCounts,
+          },
+          exercise_days: healthDigest.exercise.daysExercised,
+          water_avg_glasses: healthDigest.water.meanGlasses,
+          steps_avg: healthDigest.steps.meanSteps,
+          // Stated so the coach cannot read an unrecorded day as a zero.
+          not_known: healthDigest.limitations,
+        },
         ...(screenSummary ? { phone_screen_time: screenSummary } : {}),
       },
       goals: goals.map((g: any) => ({

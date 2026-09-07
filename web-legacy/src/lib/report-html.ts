@@ -13,6 +13,11 @@
 //             carries an icon and a word, so colour never encodes alone.
 
 import { prettyDate, type ReportData, type AreaComparison, type Severity } from '@/lib/report'
+import { FOOD_CATEGORIES } from '@/lib/food'
+
+/** Readable names for the food category ids the digest counts. */
+const FOOD_CATEGORY_LABELS: Record<string, string> =
+  Object.fromEntries(FOOD_CATEGORIES.map((c) => [c.id, c.label]))
 
 const NAVY = '#0B1A2B'
 const TEAL = '#0F4C5C'
@@ -320,10 +325,18 @@ export function reportToHtml(d: ReportData, opts: { autoPrint?: boolean } = {}):
     </table>`
 
   const h = d.health
+  const sd = h.sleep_detail
+  const hm = (mins: number | null) =>
+    mins == null ? '—' : `${Math.floor(mins / 60)}h ${String(Math.round(mins % 60)).padStart(2, '0')}m`
+
   const health = h.days_logged === 0 ? '' : `
     <div class="tiles">
       ${[
-        ['Avg sleep', h.avg_sleep == null ? '—' : `${h.avg_sleep}h`, `${h.days_logged} days logged`],
+        // Sleep leads with the coverage behind it: an average over 3 nights is
+        // not an average over the period, and the report must not imply it is.
+        ['Avg sleep', hm(sd.avg_minutes), `${sd.recorded_nights} of ${sd.eligible_nights} nights recorded`],
+        ['Meals', h.meals.days_with_any_meal === 0 ? '—' : String(h.meals.recorded_meals),
+          `across ${h.meals.days_with_any_meal} of ${h.meals.eligible_days} days`],
         ['Avg steps', h.avg_steps == null ? '—' : Math.round(h.avg_steps).toLocaleString(), `${h.total_steps.toLocaleString()} total`],
         ['Exercise', `${h.exercise_days}d`, `${h.exercise_minutes} min total`],
         ['Avg water', h.avg_water == null ? '—' : String(h.avg_water), 'glasses/day'],
@@ -337,6 +350,38 @@ export function reportToHtml(d: ReportData, opts: { autoPrint?: boolean } = {}):
           ${sub ? `<div class="tile-sub">${esc(sub)}</div>` : ''}
         </div>`).join('')}
     </div>
+    ${sd.recorded_nights === 0 ? '' : `
+      <p class="note">
+        Sleep ranged ${hm(sd.shortest_minutes)} to ${hm(sd.longest_minutes)}${
+          sd.nights_with_naps > 0
+            ? ` · ${sd.nights_with_naps} night${sd.nights_with_naps === 1 ? '' : 's'} included a nap or split sleep`
+            : ''}${
+          sd.recorded_nights < sd.eligible_nights
+            ? ` · the other ${sd.eligible_nights - sd.recorded_nights} day${sd.eligible_nights - sd.recorded_nights === 1 ? '' : 's'} are unrecorded, not zero`
+            : ''}
+      </p>`}
+    ${h.meals.top_categories.length === 0 ? '' : `
+      <h3>What you ate</h3>
+      <table>
+        <thead><tr><th>Food type</th><th class="num">Times</th><th class="w-32">Share</th></tr></thead>
+        <tbody>
+          ${(() => {
+            const total = h.meals.top_categories.reduce((s, c) => s + c.count, 0)
+            return h.meals.top_categories.slice(0, 8).map((c) => {
+              const share = Math.round((c.count / total) * 100)
+              return `<tr><td><strong>${esc(FOOD_CATEGORY_LABELS[c.category] ?? c.category)}</strong></td>
+                <td class="num">${c.count}</td>
+                <td>${meter(share)}<span class="pct">${share}%</span></td></tr>`
+            }).join('')
+          })()}
+        </tbody>
+      </table>
+      <p class="note">
+        ${h.meals.avg_per_recorded_day ?? '—'} meals on a day you recorded any${
+          h.meals.unknown_foods > 0
+            ? ` · ${h.meals.unknown_foods} food${h.meals.unknown_foods === 1 ? '' : 's'} typed by hand, so their type is unknown`
+            : ''}
+      </p>`}
     ${h.metrics.length === 0 ? '' : `
       <h3>Your custom metrics</h3>
       <table>

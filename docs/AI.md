@@ -202,14 +202,17 @@ a `limitations` list states what is unknown so the model cannot fill the gaps.
 Verified live: the model now opens with "recorded sleep on 3 of 14 nights with an
 average of 6h 5m" and closes with "the remaining days are unknown, not zero".
 
-### ~~2. Nothing analyses meals or nutrition~~ — PARTLY DONE (AI-02)
+### ~~2. Nothing analyses meals or nutrition~~ — DONE (AI-02)
 
 The digest counts meals actually eaten (an empty meal slot is not a meal) and
 groups foods by the [menu categories](../web-legacy/src/lib/food.ts), so the model
 reasons over `fastfood 2, rice 1` rather than food names. Hand-typed foods count
 as `unknownFoods` instead of being guessed at.
 
-Still to do: meals do not appear in the daily/weekly reports or the coach context.
+All three consumers now share it: `health-recommend`, the coach's context, and
+the printable report, which gained a "What you ate" table and states sleep as
+`7h 30m over 2 of 7 nights recorded` rather than a bare average. One definition,
+so the three surfaces cannot disagree about the same week.
 
 ### ~~3. `aiJSON` gives up after one bad reply~~ — DONE (AI-01)
 
@@ -218,6 +221,11 @@ Still to do: meals do not appear in the daily/weekly reports or the coach contex
 
 
 ### 4. The coach re-sends a 30-day data dump every message
+**Partly improved**
+
+The health slice is now the digest rather than raw rows, so it is both smaller
+and coverage-aware. The rest — habits, prayers, tasks, goals, challenges, dream,
+screen time — is still serialised in full on every turn.
 **Medium value · medium effort**
 
 [`ai/chat`](../web-legacy/src/app/api/ai/chat/route.ts) serialises habits, prayers,

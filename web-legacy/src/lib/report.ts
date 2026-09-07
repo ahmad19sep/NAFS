@@ -13,6 +13,8 @@ import { isMetricDone, type CustomMetric } from '@/lib/health'
 import type { Habit, HabitLog } from '@/types'
 import type { Task, TaskType, TaskPriority } from '@/lib/tasks'
 
+import { buildHealthDigest } from './health-digest'
+
 export type ReportPeriod = 'weekly' | 'monthly'
 
 /**
@@ -191,6 +193,24 @@ export interface HealthSummary {
   weight_end: number | null
   weight_change: number | null
   metrics: MetricStat[]
+  /** Sleep and meals, each with the coverage behind the figure. */
+  sleep_detail: {
+    avg_minutes: number | null
+    recorded_nights: number
+    eligible_nights: number
+    shortest_minutes: number | null
+    longest_minutes: number | null
+    nights_with_naps: number
+  }
+  meals: {
+    recorded_meals: number
+    days_with_any_meal: number
+    eligible_days: number
+    avg_per_recorded_day: number | null
+    /** Food counts by menu category, biggest first. */
+    top_categories: { category: string; count: number }[]
+    unknown_foods: number
+  }
 }
 
 export type AreaKey =
@@ -615,6 +635,35 @@ function computePeriod(input: ReportInput, start: string, end: string): PeriodSt
         done, days: withValue.length, pct: pct(done, withValue.length) ?? 0,
       }
     }).filter((m) => m.days > 0),
+
+    // Reuses the digest so the report, the coach and the health plan all
+    // describe sleep and meals the same way — including how many days each
+    // figure actually covers.
+    ...(() => {
+      const d = buildHealthDigest(healthRows, {
+        startDate: start, endDate: end, eligibleDays: elapsed.length,
+      })
+      return {
+        sleep_detail: {
+          avg_minutes: d.sleep.meanMinutes,
+          recorded_nights: d.sleep.recordedNights,
+          eligible_nights: d.sleep.eligibleNights,
+          shortest_minutes: d.sleep.shortestMinutes,
+          longest_minutes: d.sleep.longestMinutes,
+          nights_with_naps: d.sleep.nightsWithNaps,
+        },
+        meals: {
+          recorded_meals: d.meals.recordedMeals,
+          days_with_any_meal: d.meals.daysWithAnyMeal,
+          eligible_days: d.meals.eligibleDays,
+          avg_per_recorded_day: d.meals.meanMealsPerRecordedDay,
+          top_categories: Object.entries(d.meals.categoryCounts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([category, count]) => ({ category, count })),
+          unknown_foods: d.meals.unknownFoods,
+        },
+      }
+    })(),
   }
 
   const weekdayAvgs = WEEKDAYS.map((w) => {

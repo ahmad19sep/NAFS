@@ -51,7 +51,7 @@ function tasksFor(date: string, done: number, total: number) {
   }))
 }
 
-function makeInput(tasks: ReturnType<typeof tasksFor>): ReportInput {
+function makeInput(tasks: ReturnType<typeof tasksFor>, healthLogs: any[] = []): ReportInput {
   return {
     period: 'weekly',
     offset: 0,
@@ -64,7 +64,7 @@ function makeInput(tasks: ReturnType<typeof tasksFor>): ReportInput {
     habitLogs: [],
     prayerLogs: [],
     tasks,
-    healthLogs: [],
+    healthLogs,
     quranLogs: [],
     checkins: [],
     challenges: [],
@@ -74,8 +74,8 @@ function makeInput(tasks: ReturnType<typeof tasksFor>): ReportInput {
   }
 }
 
-function report(tasks: ReturnType<typeof tasksFor>): ReportData {
-  return buildReport(makeInput(tasks))
+function report(tasks: ReturnType<typeof tasksFor>, healthLogs: any[] = []): ReportData {
+  return buildReport(makeInput(tasks, healthLogs))
 }
 
 /** Everything the report says in prose, where an over-claim would surface. */
@@ -236,5 +236,63 @@ describe('D13 — a single observation is not a weekday pattern', () => {
     const sunday = monthly.weekday_avgs.find((w) => w.weekday === 'Sun')
     expect(sunday?.days).toBeGreaterThanOrEqual(4)
     expect(claimText(monthly)).toMatch(/reliably|sundays/)
+  })
+})
+
+describe('the report carries sleep and meals with their coverage', () => {
+  // Two recorded days out of seven — the case where a bare average lies.
+  const healthLogs = [
+    {
+      date: '2026-08-31',
+      sleep_sessions: [{ id: 's1', start: '23:00', end: '06:30' }], // 7h30
+      meals: [
+        { id: 'm1', key: 'breakfast', label: 'Breakfast', emoji: '🌅',
+          items: [{ id: 'f1', name: 'Paratha', emoji: '🥞' }, { id: 'f2', name: 'Chai', emoji: '☕' }] },
+        { id: 'm2', key: 'lunch', label: 'Lunch', emoji: '☀️',
+          items: [{ id: 'f3', name: 'Burger', emoji: '🍔' }] },
+        { id: 'm3', key: 'dinner', label: 'Dinner', emoji: '🌙', items: [] },
+      ],
+    },
+    {
+      date: '2026-09-01',
+      sleep_sessions: [
+        { id: 's2', start: '00:30', end: '05:30' }, // 5h
+        { id: 's3', start: '14:00', end: '14:30' }, // nap
+      ],
+      meals: [],
+    },
+  ]
+
+  const r = report(D01_DAYS.flatMap((d) => tasksFor(d.date, d.done, d.total)), healthLogs)
+
+  it('reports sleep in minutes with the nights behind it', () => {
+    // (450 + 330) / 2 = 390
+    expect(r.health.sleep_detail.avg_minutes).toBe(390)
+    expect(r.health.sleep_detail.recorded_nights).toBe(2)
+    expect(r.health.sleep_detail.eligible_nights).toBe(7)
+    expect(r.health.sleep_detail.nights_with_naps).toBe(1)
+  })
+
+  it('counts only meals holding food, and states the days behind it', () => {
+    // Breakfast and lunch on day one; the empty dinner slot is not a meal.
+    expect(r.health.meals.recorded_meals).toBe(2)
+    expect(r.health.meals.days_with_any_meal).toBe(1)
+    expect(r.health.meals.eligible_days).toBe(7)
+  })
+
+  it('groups foods by type rather than listing names', () => {
+    const byCat = Object.fromEntries(
+      r.health.meals.top_categories.map((c) => [c.category, c.count]),
+    )
+    expect(byCat.bread).toBe(1)     // Paratha
+    expect(byCat.drink).toBe(1)     // Chai
+    expect(byCat.fastfood).toBe(1)  // Burger
+  })
+
+  it('never implies the average covers the whole period', () => {
+    expect(r.health.sleep_detail.recorded_nights).toBeLessThan(
+      r.health.sleep_detail.eligible_nights,
+    )
+    expect(r.health.meals.days_with_any_meal).toBeLessThan(r.health.meals.eligible_days)
   })
 })
