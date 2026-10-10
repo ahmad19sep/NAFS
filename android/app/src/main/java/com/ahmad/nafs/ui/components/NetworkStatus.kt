@@ -4,8 +4,6 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -13,8 +11,9 @@ import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
 
+/** Whether the device has a validated internet connection, updated live. Starts optimistic. */
 @Composable
-fun NetworkStatus() {
+fun isOnline(): Boolean {
     val context = LocalContext.current
     val online by produceState(true, context) {
         val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -36,5 +35,5 @@ fun NetworkStatus() {
             awaitClose { manager.unregisterNetworkCallback(callback) }
         }.collect { value = it }
     }
-    if (!online) Text("Offline · saved records remain available", color = MaterialTheme.colorScheme.secondary)
+    return online
 }

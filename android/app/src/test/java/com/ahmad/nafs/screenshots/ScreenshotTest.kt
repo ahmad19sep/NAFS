@@ -2,22 +2,25 @@ package com.ahmad.nafs.screenshots
 
 import android.app.Application
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.runtime.Composable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.Modifier
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ahmad.nafs.core.auth.SignUpGender
 import com.ahmad.nafs.core.preferences.ThemeMode
-import com.ahmad.nafs.core.profile.UserProfile
 import com.ahmad.nafs.ui.LibraryScreen
+import com.ahmad.nafs.ui.NafsBottomBar
 import com.ahmad.nafs.ui.QuickAddContent
 import com.ahmad.nafs.ui.auth.AuthMode
 import com.ahmad.nafs.ui.auth.AuthScreen
 import com.ahmad.nafs.ui.auth.AuthUiState
-import com.ahmad.nafs.ui.theme.NafsTheme
-import com.github.takahirom.roborazzi.captureRoboImage
+import com.ahmad.nafs.ui.components.NafsLoadingState
+import com.ahmad.nafs.ui.dashboard.DashboardActions
+import com.ahmad.nafs.ui.dashboard.DashboardScreen
+import com.ahmad.nafs.ui.dashboard.DashboardUiState
+import com.ahmad.nafs.ui.profile.ProfileActions
+import com.ahmad.nafs.ui.profile.ProfileScreen
+import com.ahmad.nafs.ui.profile.ProfileUiState
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
@@ -33,23 +36,11 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [34], qualifiers = "w393dp-h852dp-xhdpi", application = Application::class)
 class ScreenshotTest {
 
-    private fun shot(name: String, content: @Composable () -> Unit) {
-        listOf(ThemeMode.DARK to "dark", ThemeMode.LIGHT to "light").forEach { (mode, suffix) ->
-            captureRoboImage("build/outputs/roborazzi/${name}_$suffix.png") {
-                NafsTheme(mode) {
-                    Surface(color = MaterialTheme.colorScheme.background) {
-                        Box(Modifier.fillMaxSize()) { content() }
-                    }
-                }
-            }
-        }
-    }
-
-    @Test fun authSignIn() = shot("01_auth_signin") {
+    @Test fun authSignIn() = captureScreen("01_auth_signin") {
         AuthScreen(AuthUiState(email = "ahmad@example.com", password = "secret12"), {}, {}, {}, {}, {}, {}, {}, showGoogle = true)
     }
 
-    @Test fun authSignUp() = shot("02_auth_signup") {
+    @Test fun authSignUp() = captureScreen("02_auth_signup") {
         AuthScreen(
             AuthUiState(mode = AuthMode.SIGN_UP, name = "Ahmad Siddique", gender = SignUpGender.MALE, email = "ahmad@example.com",
                 errorMessage = "Password must be at least 6 characters."),
@@ -57,18 +48,34 @@ class ScreenshotTest {
         )
     }
 
-    @Test fun authForgot() = shot("03_auth_forgot") {
+    @Test fun authForgot() = captureScreen("03_auth_forgot") {
         AuthScreen(AuthUiState(mode = AuthMode.FORGOT_PASSWORD, email = "ahmad@example.com"), {}, {}, {}, {}, {}, {}, {})
     }
 
-    @Test fun explore() = shot("10_explore") { LibraryScreen(sampleProfile, onBack = {}) {} }
+    private val dashboardState = DashboardUiState(
+        userId = SampleData.USER, timezone = "Asia/Karachi", today = SampleData.today,
+        tasks = SampleData.tasks, habits = SampleData.habits, habitLogs = SampleData.habitLogs, goals = SampleData.goals,
+        isLoading = false,
+    )
 
-    @Test fun quickAdd() = shot("11_quick_add") { QuickAddContent {} }
-
-    companion object {
-        val sampleProfile = UserProfile(
-            userId = "user-1", name = "Ahmad Siddique", email = "ahmad@example.com", timezone = "Asia/Karachi",
-            avatarUrl = null, onboardingComplete = true, deenEnabled = true,
-        )
+    @Test fun home() = captureScreen("04_home") {
+        Column {
+            Box(Modifier.weight(1f)) { DashboardScreen(SampleData.profile, dashboardState, DashboardActions()) }
+            NafsBottomBar(currentRoute = "dashboard", onSelect = {}, onQuickAdd = {})
+        }
     }
+
+    @Test fun homeEmpty() = captureScreen("05_home_empty") {
+        DashboardScreen(SampleData.profile.copy(deenEnabled = false), DashboardUiState(isLoading = false, today = SampleData.today), DashboardActions())
+    }
+
+    @Test fun loading() = captureScreen("06_loading") { NafsLoadingState(Modifier.statusBarsPadding()) }
+
+    @Test fun profile() = captureScreen("07_profile") {
+        ProfileScreen(SampleData.profile, ThemeMode.SYSTEM, ProfileUiState(deviceTimezone = "Asia/Karachi"), ProfileActions(onBack = {}), notifications = {})
+    }
+
+    @Test fun explore() = captureScreen("10_explore") { LibraryScreen(SampleData.profile, onBack = {}) {} }
+
+    @Test fun quickAdd() = captureScreen("11_quick_add") { QuickAddContent {} }
 }

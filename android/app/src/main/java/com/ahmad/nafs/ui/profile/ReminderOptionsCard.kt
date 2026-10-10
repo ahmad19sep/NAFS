@@ -8,10 +8,26 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Autorenew
+import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.MailOutline
+import androidx.compose.material.icons.rounded.NightsStay
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.TaskAlt
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -24,6 +40,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import com.ahmad.nafs.ui.components.NafsBanner
+import com.ahmad.nafs.ui.components.NafsBannerKind
+import com.ahmad.nafs.ui.components.NafsCard
+import com.ahmad.nafs.ui.components.NafsChoiceChip
+import com.ahmad.nafs.ui.components.NafsDivider
+import com.ahmad.nafs.ui.components.NafsListRow
+import com.ahmad.nafs.ui.components.NafsSecondaryButton
+import com.ahmad.nafs.ui.theme.Nafs
 import com.ahmad.nafs.core.deen.PrayerAutoLocate
 import com.ahmad.nafs.core.deen.PrayerLocateResult
 import com.ahmad.nafs.core.deen.PrayerLocation
@@ -136,46 +160,79 @@ fun ReminderOptionsCard(profile: UserProfile, onOpenPrayerTimes: () -> Unit, vie
             .onFailure { message = "Reminder settings could not be saved. Retry." }
     }
     val clock = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
-    Card { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Reminders on this Android device", style = MaterialTheme.typography.titleMedium)
-        ReminderSwitch("Tasks · 30 minutes before the due time", options.tasks) { update(options.copy(tasks = it)) }
-        ReminderSwitch("Unfinished scheduled habits", options.habits) { update(options.copy(habits = it)) }
-        ReminderSwitch("Letters ready to revisit", options.letters) { update(options.copy(letters = it)) }
+    val anyTimed = options.tasks || options.prayers && profile.deenEnabled || options.daily || options.weekly
+    val c = Nafs.colors
+    NafsCard(contentPadding = PaddingValues(vertical = 6.dp)) {
+        ReminderSwitch("Tasks", "30 minutes before each due time", Icons.Rounded.TaskAlt, c.tasks, options.tasks) { update(options.copy(tasks = it)) }
+        NafsDivider()
+        ReminderSwitch("Habits", "Nudges for unfinished scheduled habits", Icons.Rounded.Autorenew, c.habits, options.habits) { update(options.copy(habits = it)) }
+        NafsDivider()
+        ReminderSwitch("Letters", "When a future-self letter is ready", Icons.Rounded.MailOutline, c.coach, options.letters) { update(options.copy(letters = it)) }
         if (profile.deenEnabled) {
-            ReminderSwitch("Prayer times · when each prayer begins", options.prayers) { update(options.copy(prayers = it)) }
-            if (options.prayers) Text(when {
-                locating -> "Finding prayer times for your area…"
-                prayerSource != null -> "Using prayer times for $prayerSource."
-                else -> "Prayer alerts need your area. Allow location, or choose a city in Prayer times."
-            }, style = MaterialTheme.typography.bodySmall)
-            if (options.prayers && !locating) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (prayerSource == null) OutlinedButton(onClick = {
-                    if (viewModel.hasLocationPermission()) viewModel.locate(profile) { message = it }
-                    else locationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
-                }) { Text("Use my location") }
-                TextButton(onClick = onOpenPrayerTimes) { Text("Prayer times") }
+            NafsDivider()
+            ReminderSwitch("Prayer times", "When each prayer begins", Icons.Rounded.NightsStay, c.deen, options.prayers) { update(options.copy(prayers = it)) }
+            if (options.prayers) Column(Modifier.padding(start = 68.dp, end = 16.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(when {
+                    locating -> "Finding prayer times for your area…"
+                    prayerSource != null -> "Using prayer times for $prayerSource."
+                    else -> "Prayer alerts need your area. Allow location, or choose a city in Prayer times."
+                }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!locating) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (prayerSource == null) NafsChoiceChip("Use my location", selected = false, onClick = {
+                        if (viewModel.hasLocationPermission()) viewModel.locate(profile) { message = it }
+                        else locationPermission.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                    })
+                    NafsChoiceChip("Prayer times", selected = false, onClick = onOpenPrayerTimes)
+                }
             }
         }
-        ReminderSwitch("End-of-day summary · ${ScheduledReminderRules.dailySummaryTime.format(clock)}", options.daily) { update(options.copy(daily = it)) }
-        ReminderSwitch("Weekly report · Sundays ${ScheduledReminderRules.weeklyReportTime.format(clock)}", options.weekly) { update(options.copy(weekly = it)) }
-        if ((options.tasks || options.prayers && profile.deenEnabled || options.daily || options.weekly) && !exact && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Text("Android may deliver these several minutes late. Allow alarms for NAFS to receive them on time.", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = {
-                runCatching { context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, "package:${context.packageName}".toUri())) }
-                    .onFailure { message = "Open Android settings → Apps → NAFS → Alarms & reminders." }
-            }) { Text("Allow on-time alarms") }
+        NafsDivider()
+        ReminderSwitch("End-of-day summary", "Every day at ${ScheduledReminderRules.dailySummaryTime.format(clock)}", Icons.Rounded.Bedtime, c.reflect,
+            options.daily) { update(options.copy(daily = it)) }
+        NafsDivider()
+        ReminderSwitch("Weekly report", "Sundays at ${ScheduledReminderRules.weeklyReportTime.format(clock)}", Icons.Rounded.CalendarMonth, c.gold,
+            options.weekly) { update(options.copy(weekly = it)) }
+
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (anyTimed && !exact && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                NafsBanner(
+                    "Android may deliver reminders several minutes late. Allow alarms for NAFS to get them on time.",
+                    kind = NafsBannerKind.WARNING,
+                    actionLabel = "Allow",
+                    onAction = {
+                        runCatching { context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, "package:${context.packageName}".toUri())) }
+                            .onFailure { message = "Open Android settings → Apps → NAFS → Alarms & reminders." }
+                    },
+                )
+            }
+            if (anyTimed) ReminderDeliveryNotes()
+            message?.let { NafsBanner(it, kind = NafsBannerKind.INFO, onDismiss = { message = null }) }
+            NafsSecondaryButton(
+                "Send a test notification",
+                icon = Icons.Rounded.NotificationsActive,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    message = if (LocalReminderNotifications.show(context, "nafs-test", "NAFS test notification", "Reminders are available on this device.", "profile"))
+                        "Test notification sent." else "Allow notifications in Android settings, then retry."
+                },
+            )
+            Text(
+                "Times follow your account timezone (${profile.timezone}). Habit and letter reminders are checked several times a day when " +
+                    "you're online. Battery settings can delay delivery.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
-        if (options.tasks || options.prayers && profile.deenEnabled || options.daily || options.weekly) ReminderDeliveryNotes()
-        Text("Times follow your account timezone (${profile.timezone}). Habit and letter reminders are checked several times daily when connected. Android battery settings can delay delivery.", style = MaterialTheme.typography.bodySmall)
-        OutlinedButton(onClick = { message = if (LocalReminderNotifications.show(context, "nafs-test", "NAFS test notification", "Reminders are available on this device.", "profile")) "Test notification sent." else "Allow notifications in Android settings, then retry." }) { Text("Send test notification") }
-        message?.let { Text(it) }
-    } }
+    }
 }
 
 @Composable
-private fun ReminderSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Switch(checked, onChange, Modifier.semantics { contentDescription = label })
-        Text(label)
-    }
+private fun ReminderSwitch(label: String, detail: String, icon: ImageVector, tint: Color, checked: Boolean, onChange: (Boolean) -> Unit) {
+    NafsListRow(
+        title = label,
+        subtitle = detail,
+        icon = icon,
+        tint = tint,
+        trailing = { Switch(checked, onChange, Modifier.semantics { contentDescription = "$label · $detail" }) },
+    )
 }

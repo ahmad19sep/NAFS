@@ -10,17 +10,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AccessTime
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.NotificationsActive
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
+import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -38,8 +32,14 @@ import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import java.time.ZoneId
+import com.ahmad.nafs.ui.components.NafsCard
+import com.ahmad.nafs.ui.components.NafsIconBadge
+import com.ahmad.nafs.ui.components.NafsPill
+import com.ahmad.nafs.ui.components.NafsPrimaryButton
+import com.ahmad.nafs.ui.components.NafsSecondaryButton
+import com.ahmad.nafs.ui.theme.Nafs
 
+/** Whether Android will show NAFS notifications, with the one-tap fix when it won't. */
 @Composable
 fun NotificationSettingsCard() {
     val context = LocalContext.current
@@ -63,91 +63,45 @@ fun NotificationSettingsCard() {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    IntegrationCard(
-        icon = { Icon(Icons.Rounded.NotificationsActive, contentDescription = null) },
-        title = "Notifications",
-        status = if (enabled) "Enabled" else "Needs attention",
-        description = if (enabled) {
-            "Task reminders can alert you before daily due times. Timing is battery-friendly and may vary slightly."
+    val openSystemSettings = {
+        val settingsIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            }
         } else {
-            "Enable notifications so task reminders can reach you when the app is closed."
-        },
-    ) {
-        if (!enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Button(onClick = { permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }) {
-                Text("Allow notifications")
-            }
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri())
         }
-        OutlinedButton(onClick = {
-            val settingsIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                }
-            } else {
-                Intent(
-                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    "package:${context.packageName}".toUri(),
+        context.startActivity(settingsIntent)
+    }
+
+    NafsCard {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                NafsIconBadge(
+                    if (enabled) Icons.Rounded.NotificationsActive else Icons.Rounded.NotificationsOff,
+                    if (enabled) Nafs.colors.success else Nafs.colors.warning,
                 )
-            }
-            context.startActivity(settingsIntent)
-        }) { Text("System settings") }
-    }
-}
-
-@Composable
-fun TimezoneSettingsCard(
-    accountTimezone: String,
-    message: String?,
-    onUseDeviceTimezone: () -> Unit,
-    onDismissMessage: () -> Unit,
-) {
-    val deviceTimezone = ZoneId.systemDefault().id
-    IntegrationCard(
-        icon = { Icon(Icons.Rounded.AccessTime, contentDescription = null) },
-        title = "Daily timezone",
-        status = accountTimezone,
-        description = "Daily records, streaks, and reminders use your account timezone. Your device currently uses $deviceTimezone.",
-    ) {
-        if (accountTimezone != deviceTimezone) {
-            Button(onClick = onUseDeviceTimezone) { Text("Use device timezone") }
-        }
-    }
-    message?.let {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-            onClick = onDismissMessage,
-        ) {
-            Text(it, Modifier.fillMaxWidth().padding(12.dp), style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
-private fun IntegrationCard(
-    icon: @Composable () -> Unit,
-    title: String,
-    status: String,
-    description: String,
-    actions: @Composable () -> Unit,
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-    ) {
-        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                icon()
-                Column(Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium)
-                    Text(status, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Notifications", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (enabled) "Reminders can reach you even when NAFS is closed."
+                        else "Turn notifications on so reminders reach you when NAFS is closed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
+                if (enabled) NafsPill("On", color = Nafs.colors.success, icon = Icons.Rounded.CheckCircle)
             }
-            Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = { actions() })
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (!enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    NafsPrimaryButton(
+                        "Allow notifications",
+                        onClick = { permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                NafsSecondaryButton("System settings", onClick = openSystemSettings, modifier = Modifier.weight(1f))
+            }
         }
     }
 }

@@ -2,10 +2,12 @@ package com.ahmad.nafs.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -107,8 +109,8 @@ fun LibraryScreen(profile: UserProfile, onBack: (() -> Unit)? = null, onNavigate
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     NafsEyebrow(title, Modifier.padding(start = 4.dp))
                     items.chunked(2).forEach { pair ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            pair.forEach { item -> ExploreTile(item, Modifier.weight(1f)) { onNavigate(item.route) } }
+                        Row(Modifier.height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            pair.forEach { item -> ExploreTile(item, Modifier.weight(1f).fillMaxHeight()) { onNavigate(item.route) } }
                             if (pair.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
