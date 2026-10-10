@@ -6,23 +6,39 @@ import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import com.ahmad.nafs.ui.components.NafsChoiceChip
+import com.ahmad.nafs.ui.theme.Nafs
 
 /**
  * Some phone makers stop apps from starting in the background unless the user allows it, which silently
@@ -60,6 +76,10 @@ object ReminderDelivery {
     }
 }
 
+/**
+ * A compact warning block inside the reminders card, styled like a warning banner, with chip actions. Renders
+ * nothing once reminders can be delivered reliably on this phone.
+ */
 @Composable
 fun ReminderDeliveryNotes() {
     val context = LocalContext.current
@@ -72,20 +92,36 @@ fun ReminderDeliveryNotes() {
     }
     val showAutostart = ReminderDelivery.needsAutostart() && !autostartConfirmed
     if (!showAutostart && !batteryRestricted) return
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Reliable delivery", style = MaterialTheme.typography.titleSmall)
-        if (showAutostart) {
-            Text("On this phone, allow Autostart for NAFS so reminders come back after a restart or an app update.",
-                style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { ReminderDelivery.openAutostart(context) }) { Text("Open Autostart") }
-                TextButton(onClick = { ReminderDelivery.confirmAutostart(context); autostartConfirmed = true }) { Text("I've allowed it") }
+    val colors = Nafs.colors
+    Surface(
+        Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        color = colors.warningContainer,
+        contentColor = colors.onWarningContainer,
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Rounded.NotificationsActive, contentDescription = null, modifier = Modifier.size(20.dp))
+                Text("Reliable delivery", style = MaterialTheme.typography.titleSmall, modifier = Modifier.semantics { heading() })
             }
-        }
-        if (batteryRestricted) {
-            Text("Battery optimization can delay reminders while NAFS is closed. Set NAFS to unrestricted for on-time alerts.",
-                style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = { ReminderDelivery.openBatterySettings(context) }) { Text("Battery settings") }
+            if (showAutostart) {
+                Text("On this phone, allow Autostart for NAFS so reminders come back after a restart or an app update.",
+                    style = MaterialTheme.typography.bodySmall)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NafsChoiceChip("Open Autostart", selected = false, onClick = { ReminderDelivery.openAutostart(context) })
+                    NafsChoiceChip("I've allowed it", selected = false, onClick = {
+                        ReminderDelivery.confirmAutostart(context); autostartConfirmed = true
+                    })
+                }
+            }
+            if (showAutostart && batteryRestricted) {
+                Box(Modifier.fillMaxWidth().padding(vertical = 2.dp).height(1.dp).background(colors.onWarningContainer.copy(alpha = 0.12f)))
+            }
+            if (batteryRestricted) {
+                Text("Battery optimization can delay reminders while NAFS is closed. Set NAFS to unrestricted for on-time alerts.",
+                    style = MaterialTheme.typography.bodySmall)
+                NafsChoiceChip("Battery settings", selected = false, onClick = { ReminderDelivery.openBatterySettings(context) })
+            }
         }
     }
 }
