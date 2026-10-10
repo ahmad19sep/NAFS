@@ -31,7 +31,7 @@ import org.robolectric.annotation.GraphicsMode
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w393dp-h852dp-xhdpi", application = Application::class)
-class DeenCheckInOnboardingScreenshotTest {
+class DeenCheckInOnboardingScreenshotTest : ScreenshotTestBase() {
 
     // ─── Deen ────────────────────────────────────────────────────────────────
 

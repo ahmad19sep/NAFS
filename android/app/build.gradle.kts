@@ -113,6 +113,11 @@ kotlin {
     }
 }
 
+// A hung test (for example an animation that never idles) fails the build instead of stalling CI.
+tasks.withType<Test>().configureEach {
+    timeout.set(java.time.Duration.ofMinutes(15))
+}
+
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
     arg("room.generateKotlin", "true")

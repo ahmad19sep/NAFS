@@ -21,23 +21,42 @@ import com.ahmad.nafs.domain.habits.ScheduleKind
 import com.ahmad.nafs.domain.tasks.TaskCompletionStatus
 import com.ahmad.nafs.domain.tasks.TaskPeriodType
 import com.ahmad.nafs.ui.theme.NafsTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onRoot
 import com.github.takahirom.roborazzi.captureRoboImage
+import org.junit.Rule
 import java.time.DayOfWeek
 import java.time.LocalDate
 
 /**
- * Renders [content] in dark and light themes to `build/outputs/roborazzi/<name>_dark|light.png`.
- * Test classes using it need `@RunWith(AndroidJUnit4::class)`, `@GraphicsMode(NATIVE)` and
+ * Base for screenshot tests: renders [captureScreen] content in dark and light themes to
+ * `build/outputs/roborazzi/<name>_dark|light.png`.
+ *
+ * It goes through the Compose test rule rather than Roborazzi's activity capture: the rule cancels
+ * endless animations (spinners, typing dots), which would otherwise keep the screen from ever idling.
+ * Subclasses still carry `@RunWith(AndroidJUnit4::class)`, `@GraphicsMode(NATIVE)` and
  * `@Config(sdk = [34], qualifiers = "w393dp-h852dp-xhdpi", application = Application::class)`.
  */
-internal fun captureScreen(name: String, content: @Composable () -> Unit) {
-    listOf(ThemeMode.DARK to "dark", ThemeMode.LIGHT to "light").forEach { (mode, suffix) ->
-        captureRoboImage("build/outputs/roborazzi/${name}_$suffix.png") {
+abstract class ScreenshotTestBase {
+    @get:Rule val compose = createComposeRule()
+
+    /** One call per test: the rule allows a single setContent, so both themes share it. */
+    protected fun captureScreen(name: String, content: @Composable () -> Unit) {
+        var mode by mutableStateOf(ThemeMode.DARK)
+        compose.setContent {
             NafsTheme(mode) {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     Box(Modifier.fillMaxSize()) { content() }
                 }
             }
+        }
+        listOf(ThemeMode.DARK to "dark", ThemeMode.LIGHT to "light").forEach { (theme, suffix) ->
+            mode = theme
+            compose.waitForIdle()
+            compose.onRoot().captureRoboImage("build/outputs/roborazzi/${name}_$suffix.png")
         }
     }
 }

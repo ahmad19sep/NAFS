@@ -39,7 +39,7 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 // A plain Application: the real one schedules WorkManager jobs that have no place in a render test.
 @Config(sdk = [34], qualifiers = "w393dp-h852dp-xhdpi", application = Application::class)
-class GoalsChallengesScreenshotTest {
+class GoalsChallengesScreenshotTest : ScreenshotTestBase() {
 
     // ─── Goals ───────────────────────────────────────────────────────────────
 
