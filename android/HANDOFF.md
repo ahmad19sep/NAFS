@@ -29,3 +29,87 @@ Branch: `claude/dreamy-thompson-7lahom` · Native Android app in `android/` (Kot
 ## Owner setup (Supabase)
 - Run the migrations listed in `android/RELEASE.md`.
 - Add `com.ahmad.nafs://auth/**` and `com.ahmad.nafs.debug://auth/**` to the Auth redirect URLs.
+
+## What's left (not done or not finished)
+All of the items below were started in `cf90849` and stopped partway unless marked "not started". Check each one in code before trusting it.
+
+**Habits**
+- The reminder time field in the habit editor (time picker, bell on the card). `Habit.reminderTime` exists.
+  - Check that the Supabase select/insert/update include `reminder_time` and that the Room entity and migration are complete.
+- HabitViewModel must call `HabitReminderScheduler.reconcile(user, habits, zone)` after online loads and saves.
+- Archive and restore (`is_active = false`) with Undo.
+- Heatmap history with backfill by tapping a past day.
+- Focus timer for duration habits.
+- Quick +1 for counters.
+- "x of N this week" for per-week habits.
+- Allow parallel saves of different habits.
+- Write `current_streak` / `longest_streak` back after logging.
+
+**Tasks and Home**
+- "Move to today / tomorrow" for missed tasks, with a distinct missed style.
+- Plan ahead (date picker) and an Upcoming section.
+- Sort completed tasks to the bottom.
+- Search.
+- Complete tasks and simple habits from Home.
+- Real Challenges tile on Home.
+- 12-hour time in "Next up".
+- Celebration when everything is done (`NafsCelebration`).
+- Pull-to-refresh.
+- Ignore duplicate loads.
+- Put `NextPrayerCard` and the Hijri date on Home.
+
+**Deen**
+- Hijri date (adjustable ±1 day), the next-prayer card, and a countdown to tomorrow's Fajr after Isha. Started in `core/deen/HijriDate.kt`, `NextPrayer.kt` and `ui/deen/NextPrayerCard.kt`.
+- Prayer streak, 30-day heatmap and per-prayer stats (`DeenRepository.history`).
+- Logging yesterday's prayers.
+- Qibla screen. `ui/deen/QiblaScreen.kt` exists, but the `qibla` route in `ui/NafsApp.kt` and its tile in `ui/LibraryScreen.kt` are missing.
+- Tasbih screen and its `tasbih` route — not started.
+- Default calculation method by region.
+- Counter-type extras (web parity).
+
+**Account**
+- Change password and change email.
+- Resend the confirmation email.
+- Sign-up minimum of 8 characters.
+- Searchable timezone picker, and saving the device timezone at onboarding.
+- Remove profile photo.
+- Handle the sign-out result after deleting an account.
+- "Download my data" JSON export, which needs an `exports/` path in `res/xml/share_paths.xml`.
+- AuthCallbackController on an app scope with try/finally.
+- Account group on the Profile screen.
+
+**Challenges**
+- A missed final period must not complete the challenge.
+- Auto-resolve challenges past their end date.
+- Compute the streak from check-ins.
+- Period-based restart window.
+- Check-in history with proof photos.
+- Check-in for yesterday.
+
+**Health, Check-in, Coach, Letters**
+- Water, steps and sleep goals.
+- Saving a day's weight should update `users.weight_kg`.
+- 7- and 30-day trends.
+- Editing past days.
+- Logging without a height/weight baseline.
+- Check-in draft autosave and voice dictation.
+- Coach copy, share and voice input.
+- Letter date picker.
+- The unit tests passed partway through; the screenshot tests were being updated.
+
+**Not started**
+- App lock (biometric) and hiding the app in Recents. Needs `androidx.biometric` and MainActivity extending FragmentActivity.
+- Crash reporting (Crashlytics or Sentry; needs the owner's project).
+- Private storage buckets with signed URLs for journal and challenge photos (backend).
+- An offline write queue for tasks, habit logs, prayers and check-ins. A `pending_mutations` table exists but is unused.
+- Translations (Urdu).
+- Opening cached data when a session refresh fails offline.
+- Commit the generated Room schema `app/schemas/.../15.json` once CI builds.
+
+**Notification work in `68df1ad` that needs a device test**
+- Exact alarms after a reboot.
+- Notification buttons while offline: they should retry and show "Not saved yet" if they still fail.
+- The widget's tap actions, which open via Glance `actionStartActivity` with the destination extra.
+- Habit reminders for per-week habits.
+
+Tip: if a half-done feature blocks a green build, revert that file to `68df1ad` (`git checkout 68df1ad -- <file>`) and do it again properly.
