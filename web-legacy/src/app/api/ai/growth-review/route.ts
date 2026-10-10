@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/request'
+import { ApiRouteError } from '@/lib/api-errors'
 import { aiDeep, AiError } from '@/lib/ai'
 import { buildCoachContext } from '@/lib/coach-context'
 import { buildReport, periodRange } from '@/lib/report'
@@ -26,9 +27,7 @@ const SELECT = 'id, content_md, generated_at, model_used'
  * to estimate anything.
  */
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { supabase, user } = await authenticateRequest(req)
 
   const force = req.nextUrl.searchParams.get('force') === '1'
 
@@ -81,6 +80,7 @@ export async function POST(req: NextRequest) {
       { role: 'user', content: prompt },
     ])
   } catch (err: unknown) {
+    if (err instanceof ApiRouteError) return NextResponse.json({ error: err.message, code: err.code }, { status: err.status })
     if (err instanceof AiError) {
       return NextResponse.json({ error: err.message }, { status: err.status ?? 502 })
     }

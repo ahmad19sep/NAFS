@@ -485,7 +485,7 @@ export default function HealthPage() {
 
           {setupError && (
             <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
-              <p className="font-semibold mb-1">Couldn't save</p>
+              <p className="font-semibold mb-1">Couldn&apos;t save</p>
               <p className="opacity-80">{setupError}</p>
             </div>
           )}
@@ -981,7 +981,7 @@ export default function HealthPage() {
         <div className="nafs-card p-4">
           <div className="flex items-center gap-2 mb-2">
             <Scale size={16} className="text-gold" />
-            <p className="text-sm font-semibold text-foreground">Today's weight (optional)</p>
+            <p className="text-sm font-semibold text-foreground">Today&apos;s weight (optional)</p>
             <button onClick={() => hideDefault('weight', 'Weight')}
               className="ml-auto h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-red-500/10 transition-colors"
               aria-label="Hide weight">

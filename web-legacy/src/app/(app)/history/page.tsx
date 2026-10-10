@@ -4,7 +4,7 @@ import HistoryPageClient from './HistoryClient'
 import { todayString } from '@/lib/utils'
 
 export default async function HistoryPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const user = await requireUser(supabase)
 
   const today = todayString()

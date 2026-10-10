@@ -6,7 +6,7 @@ import type { AppNote } from '@/lib/app-notes'
 export const dynamic = 'force-dynamic'
 
 export default async function ImprovePage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const user = await requireUser(supabase)
 
   // Everything, so the page can show what has been done as well as what is

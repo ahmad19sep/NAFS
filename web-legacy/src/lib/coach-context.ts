@@ -13,13 +13,13 @@
 
 import type { createClient } from '@/lib/supabase/server'
 import { buildHealthDigest } from '@/lib/health-digest'
-import { ageFromBirthDate } from '@/lib/utils'
+import { ageFromBirthDate, todayInTZ, shiftDate } from '@/lib/utils'
 import { findRepeatedMisses, describeMiss } from '@/lib/misses'
 import { findCorrelates, describeCorrelate } from '@/lib/correlates'
 import { buildCoachMemory, memoryIsEmpty } from '@/lib/coach-notes'
 import { totalSleepMinutes } from '@/lib/health'
 
-type Db = ReturnType<typeof createClient>
+type Db = Awaited<ReturnType<typeof createClient>>
 
 export interface CoachContext {
   /** The JSON handed to the model. */
@@ -29,19 +29,18 @@ export interface CoachContext {
   /** First day of the 30-day window. */
   start: string
   profile: any
+  unavailableSources: string[]
 }
 
 export async function buildCoachContext(supabase: Db, userId: string): Promise<CoachContext> {
-  const thirtyAgo = new Date()
-  thirtyAgo.setDate(thirtyAgo.getDate() - 29)
-  const start = thirtyAgo.toISOString().split('T')[0]
-  const today = new Date().toISOString().split('T')[0]
-  const ninetyAgo = new Date()
-  ninetyAgo.setDate(ninetyAgo.getDate() - 89)
-  const memoryStart = ninetyAgo.toISOString().split('T')[0]
+  const profileResult = await supabase.from('users')
+    .select('name, about_me, deen_enabled, height_cm, weight_kg, created_at, timezone').eq('id', userId).maybeSingle()
+  const today = todayInTZ(profileResult.data?.timezone || 'Asia/Karachi')
+  const start = shiftDate(today, -29)
+  const memoryStart = shiftDate(today, -89)
 
   const results = await Promise.allSettled([
-    supabase.from('users').select('name, about_me, deen_enabled, height_cm, weight_kg, created_at').eq('id', userId).maybeSingle(),
+    Promise.resolve(profileResult),
     // id and schedule fields are needed to detect repeated misses; value and
     // duration so a counter or duration habit only counts when its target was met.
     supabase.from('habits').select('id, name, emoji, type, target_value, time_target_mins, is_paused, schedule_kind, schedule_days, current_streak, longest_streak').eq('user_id', userId).eq('is_active', true),
@@ -58,8 +57,11 @@ export async function buildCoachContext(supabase: Db, userId: string): Promise<C
     supabase.from('coach_notes').select('kind, subject, content, date').eq('user_id', userId)
       .gte('date', memoryStart).order('created_at', { ascending: false }).limit(200),
   ])
+  const sources = ['profile', 'habits', 'habit_logs', 'prayers', 'tasks', 'health', 'goals', 'challenges', 'dream', 'daily_logs', 'screen_time', 'coach_memory']
+  const unavailableSources = sources.filter((_, i) => results[i].status === 'rejected' ||
+    (results[i] as PromiseFulfilledResult<any>).value?.error)
   const data = (i: number): any =>
-    results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
+    results[i].status === 'fulfilled' && !(results[i] as any).value?.error ? ((results[i] as any).value?.data ?? null) : null
 
   const profile    = data(0)
   const habits     = data(1) ?? []
@@ -74,7 +76,7 @@ export async function buildCoachContext(supabase: Db, userId: string): Promise<C
   const screenLogs = data(10) ?? []
   const notes      = data(11) ?? []
 
-  const deenOn = (profile?.deen_enabled ?? true) as boolean
+  const deenOn = profile?.deen_enabled === true
 
   // ---- Compact, number-dense summary the model can actually use ----
   const habitSummary = habits.map((h: any) => ({
@@ -157,6 +159,7 @@ export async function buildCoachContext(supabase: Db, userId: string): Promise<C
   })
 
   const context = {
+    unavailable_sources: unavailableSources,
     user: {
       name: profile?.name || 'the user',
       about: profile?.about_me ?? undefined,
@@ -218,5 +221,5 @@ export async function buildCoachContext(supabase: Db, userId: string): Promise<C
     ...(memoryIsEmpty(coachMemory) ? {} : { coach_memory: coachMemory }),
   }
 
-  return { context, deenOn, today, start, profile }
+  return { context, deenOn, today, start, profile, unavailableSources }
 }

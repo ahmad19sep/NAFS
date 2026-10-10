@@ -1,5 +1,7 @@
 'use client'
 
+import { aiModelLabel } from '@/lib/ai-model-label'
+
 import { useState } from 'react'
 import Link from 'next/link'
 import {
@@ -118,7 +120,7 @@ interface Props {
   /** The coach's written read of this period, if one has been written. */
   initialReview: ReportReview | null
   /** Which model writes it right now. From the server, so it is true. */
-  deepModel: 'anthropic' | 'cloudflare'
+  deepModel: 'gemini' | 'anthropic' | 'cloudflare'
 }
 
 export default function ReportsClient({ report: d, initialReview, deepModel }: Props) {
@@ -307,7 +309,7 @@ export default function ReportsClient({ report: d, initialReview, deepModel }: P
               <div>
                 <h2 className="text-sm font-semibold leading-tight text-foreground">The coach&apos;s read</h2>
                 <p className="text-[10px] text-muted-foreground">
-                  {deepModel === 'anthropic' ? 'Written by Claude' : 'Written by the free model'} · prints with the report
+                  Written by {aiModelLabel(review?.model_used, deepModel)} · prints with the report
                 </p>
               </div>
             </div>

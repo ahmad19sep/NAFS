@@ -353,7 +353,7 @@ export default function ChallengesClient({ challenges, userId }: Props) {
       {/* Aggregate progress */}
       <div className="nafs-card p-4">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-semibold text-foreground">Today's check-in progress</p>
+          <p className="text-sm font-semibold text-foreground">Today&apos;s check-in progress</p>
           <span className={cn('text-xl font-bold tabular-nums',
             pct === 100 && active.length > 0 ? 'text-emerald-400' : pct >= 50 ? 'text-gold' : 'text-muted-foreground'
           )}>{pct}%</span>
@@ -449,7 +449,7 @@ export default function ChallengesClient({ challenges, userId }: Props) {
             <Camera size={18} />
             <div className="flex-1">
               <p className="font-semibold text-sm">Photo proof each time</p>
-              <p className="text-[10px] opacity-70">Forces honesty. You can't fake a check-in.</p>
+              <p className="text-[10px] opacity-70">Forces honesty. You can&apos;t fake a check-in.</p>
             </div>
             <div className={cn('h-5 w-9 rounded-full transition-all',
               requiresPhoto ? 'bg-gold' : 'bg-white/15'

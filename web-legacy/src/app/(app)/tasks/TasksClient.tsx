@@ -338,7 +338,7 @@ export default function TasksClient({ tasks, today }: Props) {
               <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)}
                 className="log-input" />
               <p className="text-[10px] text-muted-foreground mt-1">
-                You'll get a push alert 1 hour before and a high-priority alert 30 min before.
+                You&apos;ll get a push alert 1 hour before and a high-priority alert 30 min before.
               </p>
             </div>
           )}

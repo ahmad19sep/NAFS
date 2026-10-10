@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/request'
+import { ApiRouteError } from '@/lib/api-errors'
 import { aiDeep, AiError } from '@/lib/ai'
 import { buildCoachContext } from '@/lib/coach-context'
 import { buildReport, periodRange, type ReportPeriod } from '@/lib/report'
 import { fetchReportRows, toReportInput } from '@/lib/report-data'
 import { summarizeReport, buildReportReviewPrompt } from '@/lib/growth'
 import { REPORT_REVIEW_SYSTEM } from '@/lib/ai-prompts'
-import { todayString } from '@/lib/utils'
+import { todayInTZ } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 // A period of records, read by a model that thinks before it writes.
@@ -27,17 +28,30 @@ const SELECT = 'id, period, start_date, content_md, model_used, generated_at'
  * Paid per call when Claude is configured, so the user starts it.
  */
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  let authentication
+  try { authentication = await authenticateRequest(req) }
+  catch (error) {
+    if (error instanceof ApiRouteError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status })
+    return NextResponse.json({ error: 'Authentication unavailable' }, { status: 503 })
+  }
+  const { supabase, user } = authentication
 
   const body = await req.json().catch(() => ({}))
   const period: ReportPeriod = body?.period === 'monthly' ? 'monthly' : 'weekly'
   const offset = Math.min(60, Math.max(0, Math.round(Number(body?.offset)) || 0))
 
-  const today = todayString()
+  const { data: profile, error: profileError } = await supabase.from("users").select("timezone,deen_enabled").eq("id", user.id).single()
+  if (profileError || !profile) return NextResponse.json({ error: "Your preferences could not be loaded.", code: "unavailable" }, { status: 503 })
+  const actualToday = todayInTZ(profile.timezone || "UTC")
+  const anchor = body?.anchorDate
+  if (anchor != null && (typeof anchor !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(anchor) || Number.isNaN(Date.parse(anchor + "T00:00:00Z")) || new Date(anchor + "T00:00:00Z").toISOString().slice(0,10) !== anchor || anchor > actualToday)) return NextResponse.json({ error: "Choose a valid report date.", code: "invalid_request" }, { status: 400 })
+  const today = anchor ?? actualToday
   const current = periodRange(period, offset, today)
   const previous = periodRange(period, offset + 1, today)
+  const { data: existing } = await supabase.from("report_reviews").select(SELECT).eq("user_id", user.id).eq("period", period).eq("start_date", current.start).maybeSingle()
+  if (existing && todayInTZ(profile.timezone || "UTC", new Date(existing.generated_at)) === actualToday) {
+    return NextResponse.json({ review: existing, saved: true, cached: true, provider: "saved", fellBack: false })
+  }
 
   // Fetched once, covering the comparison period too — the same range the
   // Reports page reads, so the review and the printout cannot disagree.
@@ -46,7 +60,7 @@ export async function POST(req: NextRequest) {
     buildCoachContext(supabase, user.id),
   ])
 
-  const report = buildReport(toReportInput(rows, { period, offset, today }))
+  const report = buildReport(toReportInput({ ...rows, profile: { ...rows.profile, deen_enabled: profile.deen_enabled } }, { period, offset, today }))
 
   if (report.days_logged === 0) {
     return NextResponse.json({

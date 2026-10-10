@@ -37,7 +37,7 @@ interface Props {
   /** The latest growth review, if one has been written. */
   growthReview: GrowthReview | null
   /** Which model the review runs on right now. */
-  deepModel: 'anthropic' | 'cloudflare'
+  deepModel: 'gemini' | 'anthropic' | 'cloudflare'
 }
 
 export default function CoachClient({ userId, reports, letters, lastConversation, growthReview, deepModel }: Props) {
@@ -47,6 +47,7 @@ export default function CoachClient({ userId, reports, letters, lastConversation
   )
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [chatError, setChatError] = useState<string | null>(null)
   const [selectedReport, setSelectedReport] = useState<Report | null>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
 
@@ -62,10 +63,10 @@ export default function CoachClient({ userId, reports, letters, lastConversation
   async function sendMessage() {
     if (!input.trim() || sending) return
     const userMessage = input.trim()
-    setInput('')
-    setSending(true)
-
     const newMessages: Message[] = [...messages, { role: 'user', content: userMessage }]
+    setInput('')
+    setChatError(null)
+    setSending(true)
     setMessages(newMessages)
 
     try {
@@ -75,27 +76,17 @@ export default function CoachClient({ userId, reports, letters, lastConversation
         body: JSON.stringify({ messages: newMessages, userId }),
       })
       const data = await res.json().catch(() => ({} as any))
-
-      if (res.ok && data.reply) {
-        setMessages([...newMessages, { role: 'assistant', content: data.reply }])
-      } else {
-        // Surface server-side error so the user sees it instead of dead silence
-        const errMsg =
-          data?.error ??
-          (res.status === 429 ? 'AI is rate-limited. Try again in a minute.'
-            : `Request failed (${res.status})`)
-        setMessages([...newMessages, {
-          role: 'assistant',
-          content: `⚠️ ${errMsg}${data?.hint ? `\n\n${data.hint}` : ''}`,
-        }])
+      if (!res.ok || typeof data.reply !== 'string' || !data.reply.trim()) {
+        throw new Error(data?.error ?? 'The coach could not answer right now.')
       }
-    } catch (err: any) {
-      setMessages([...newMessages, {
-        role: 'assistant',
-        content: `⚠️ Network error: ${err?.message ?? 'Could not reach the server.'}`,
-      }])
+      setMessages([...newMessages, { role: 'assistant', content: data.reply }])
+    } catch (error: unknown) {
+      setMessages(messages)
+      setInput(userMessage)
+      setChatError(error instanceof Error ? error.message : 'Check your connection and retry.')
+    } finally {
+      setSending(false)
     }
-    setSending(false)
   }
 
   const TABS = [
@@ -250,7 +241,7 @@ export default function CoachClient({ userId, reports, letters, lastConversation
 
             {messages.length > 0 && (
               <div className="flex justify-end">
-                <button onClick={() => setMessages([])}
+                <button disabled={sending} onClick={() => { setMessages([]); setChatError(null) }}
                   className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] text-muted-foreground/70
                              hover:text-red-400 hover:bg-red-500/10 transition-colors">
                   <Trash2 size={11} /> Clear chat
@@ -291,10 +282,13 @@ export default function CoachClient({ userId, reports, letters, lastConversation
             </div>
           )}
 
+          {chatError && <p role="alert" className="pb-3 text-sm text-amber-300">{chatError}</p>}
           <div className="flex gap-2 pb-4">
             <input
               type="text"
               value={input}
+              disabled={sending}
+              maxLength={4000}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
               placeholder="Ask about your data…"

@@ -4,7 +4,7 @@ import HabitsClient from './HabitsClient'
 import { todayString } from '@/lib/utils'
 
 export default async function HabitsPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const user = await requireUser(supabase)
 
   const today = todayString()

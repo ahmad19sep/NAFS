@@ -1,34 +1,38 @@
 // Single AI entry point for the whole app.
 //
-// Every AI feature goes through the functions below. Chat, verdicts, bulk
-// and structured calls all resolve to one provider: the Cloudflare Worker
-// running @cf/openai/gpt-oss-20b. Gemini and Groq were removed — there is no
-// general provider routing, so a failure here is a real failure and surfaces
-// as an AiError with a user-facing message.
-//
-// The one deliberate exception is aiDeep: a small number of call sites that
-// do real analysis over a month of records use Claude when ANTHROPIC_API_KEY
-// is set, and the Worker when it is not. Nothing else may route there.
-//
-// Keep this file as the only thing routes import; the transports live in
-// ./cloudflare-ai and ./anthropic-ai.
+// Gemini handles every feature when selected or when its key is configured.
+// Existing deployments retain their providers until Gemini is configured.
+// An explicit Gemini selection never falls back to a different provider.
 
 import {
-  cloudflareChat, cloudflareText, AiError,
+  cloudflareChat, cloudflareText, hasCloudflareAi, AiError,
   type ChatMessage, type AiOptions,
 } from './cloudflare-ai'
 import { anthropicChat, hasAnthropicAi, ANTHROPIC_MODEL } from './anthropic-ai'
 import { CLOUDFLARE_AI_MODEL } from './cloudflare-ai'
+import { geminiChat, geminiModel, hasGeminiAi } from './gemini-ai'
 import { parseJson, validate, type Schema } from './schema'
 
 export type { Schema } from './schema'
 
 export { AiError, safeParseJSON, hasCloudflareAi } from './cloudflare-ai'
 export type { ChatMessage, AiOptions } from './cloudflare-ai'
+export { hasGeminiAi } from './gemini-ai'
+
+export function aiProviderInfo(): { provider: 'gemini' | 'cloudflare'; model: string } {
+  const selected = process.env.AI_PROVIDER?.trim().toLowerCase()
+  if (selected && selected !== 'gemini' && selected !== 'cloudflare') throw new AiError('AI provider is not configured correctly. Check AI_PROVIDER.')
+  return selected === 'gemini' || (!selected && hasGeminiAi())
+    ? { provider: 'gemini', model: geminiModel() }
+    : { provider: 'cloudflare', model: CLOUDFLARE_AI_MODEL }
+}
+
+export function hasAi(): boolean {
+  return aiProviderInfo().provider === 'gemini' ? hasGeminiAi() : hasCloudflareAi()
+}
 
 /**
- * Kept so existing call sites read the same. It no longer picks a provider —
- * it only tunes how much output the task needs.
+ * Tunes how much output each task needs.
  */
 export type AiTask = 'chat' | 'verdict' | 'bulk' | 'json' | 'deep'
 
@@ -60,24 +64,29 @@ const MAX_TOKENS_FOR: Record<AiTask, number> = {
 
 /** Single-prompt text generation. */
 export async function aiText(task: AiTask, prompt: string, system?: string): Promise<string> {
+  if (aiProviderInfo().provider === 'gemini') return geminiChat([
+    ...(system ? [{ role: 'system' as const, content: system }] : []), { role: 'user', content: prompt },
+  ], { maxTokens: MAX_TOKENS_FOR[task] })
   return cloudflareText(prompt, system, { maxTokens: MAX_TOKENS_FOR[task] })
 }
 
 /** Multi-turn chat. History is trimmed to the recent turns before sending. */
 export async function aiChat(messages: ChatMessage[], opts: AiOptions = {}): Promise<string> {
+  if (aiProviderInfo().provider === 'gemini') return geminiChat(messages, { maxTokens: MAX_TOKENS_FOR.chat, ...opts })
   return cloudflareChat(messages, { maxTokens: MAX_TOKENS_FOR.chat, ...opts })
 }
 
-export type DeepProvider = 'anthropic' | 'cloudflare'
+export type DeepProvider = 'gemini' | 'anthropic' | 'cloudflare'
 
 /** Which model aiDeep will use right now. For the UI to say so honestly. */
 export function deepProvider(): DeepProvider {
+  if (aiProviderInfo().provider === 'gemini') return 'gemini'
   return hasAnthropicAi() ? 'anthropic' : 'cloudflare'
 }
 
 /**
- * The deep path: analysis over a month of records, where the model's quality
- * is the point. Claude when ANTHROPIC_API_KEY is set; the Worker otherwise.
+ * The deep path uses Gemini when selected. Legacy deployments use Claude
+ * when ANTHROPIC_API_KEY is set and the Worker otherwise.
  *
  * If Claude is configured but fails on the day — overloaded, rate-limited,
  * unreachable — the call falls back to the Worker rather than failing, and
@@ -101,8 +110,9 @@ export interface DeepResult {
   fellBackReason?: string
 }
 
-export async function aiDeep(messages: ChatMessage[], opts: AiOptions = {}): Promise<DeepResult> {
+export async function aiDeep(messages: ChatMessage[], opts: AiOptions & { schema?: Schema } = {}): Promise<DeepResult> {
   const o = { maxTokens: MAX_TOKENS_FOR.deep, ...opts }
+  if (aiProviderInfo().provider === 'gemini') return { text: await geminiChat(messages, o), provider: 'gemini', model: geminiModel(), fellBack: false }
   if (hasAnthropicAi()) {
     let reason: string | undefined
     try {
@@ -178,7 +188,7 @@ export function nextAttemptBudget(elapsedMs: number, attempt: number): number | 
 
 function classify(err: unknown): { code: AiFailureCode; message: string } {
   if (err instanceof AiError) {
-    if (err.status === 401) return { code: 'unauthorized', message: err.message }
+    if (err.status === 401 || err.status === 403) return { code: 'unauthorized', message: err.message }
     if (err.status === 429) return { code: 'rate_limited', message: err.message }
     if (err.message.includes('not configured')) return { code: 'not_configured', message: err.message }
     return { code: 'unavailable', message: err.message }
@@ -205,8 +215,8 @@ export async function aiStructured<T>(
   schema: Schema,
   system?: string,
   /**
-   * deep: route through aiDeep (Claude when configured) instead of the
-   * Worker. For structured output that needs real reasoning — reading a
+   * deep: route through aiDeep (Gemini, or the legacy analysis provider).
+   * For structured output that needs real reasoning — reading a
    * whole conversation and proposing a plan from it. Paid per call, so
    * only call sites that genuinely need it may pass this.
    */
@@ -236,18 +246,19 @@ export async function aiStructured<T>(
       if (opts.deep) {
         const out = await aiDeep(
           [{ role: 'system', content: jsonSystemPrompt(system) }, { role: 'user', content: body }],
-          { maxTokens: MAX_TOKENS_FOR.json, temperature: 0.2, timeoutMs: budget },
+          { maxTokens: MAX_TOKENS_FOR.json, temperature: 0.2, timeoutMs: budget, schema },
         )
         raw = out.text
         provider = out.provider
         fellBack = out.fellBack
         fellBackReason = out.fellBackReason
       } else {
-        raw = await cloudflareText(
-          body,
-          jsonSystemPrompt(system),
-          { maxTokens: MAX_TOKENS_FOR.json, temperature: 0.2, timeoutMs: budget },
-        )
+        provider = aiProviderInfo().provider
+        fellBack = false
+        raw = provider === 'gemini'
+          ? await geminiChat([{ role: 'system', content: jsonSystemPrompt(system) }, { role: 'user', content: body }],
+            { maxTokens: MAX_TOKENS_FOR.json, temperature: 0.2, timeoutMs: budget, schema })
+          : await cloudflareText(body, jsonSystemPrompt(system), { maxTokens: MAX_TOKENS_FOR.json, temperature: 0.2, timeoutMs: budget })
       }
     } catch (err) {
       const failure = classify(err)
@@ -283,6 +294,4 @@ export async function aiStructured<T>(
 
 export { isRetryable }
 
-// There is no image input. gpt-oss-20b is text-only, and the vision models
-// available on Workers AI were tried and rejected — see docs/AI.md. Features
-// that would want an image ask the user for the numbers instead.
+// Existing feature contracts accept text. Image extraction remains separate.

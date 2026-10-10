@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/request'
+import { ApiRouteError } from '@/lib/api-errors'
+import { saveAdvice } from '@/lib/advice-save'
+import { readFaithPreference, adviceSystem } from '@/lib/advice-faith'
 import { aiStructured } from '@/lib/ai'
 import { HABIT_STARTER_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
 
@@ -47,9 +50,8 @@ Rules:
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { supabase, user } = await authenticateRequest(req)
+    const faithEnabled = await readFaithPreference(supabase, user.id)
 
     const { habitId } = await req.json()
     if (!habitId) return NextResponse.json({ error: 'habitId required' }, { status: 400 })
@@ -96,7 +98,7 @@ ${habitStats || '(none — this is their first habit)'}
 OTHER CONTEXT
 ─────────────
 Usual sleep: ${profile?.usual_sleep_time?.slice(0,5) ?? '?'} – ${profile?.usual_wake_time?.slice(0,5) ?? '?'}
-Fajr prayed last 14 days: ${fajrCount}/14
+${faithEnabled ? `Fajr prayed last 14 days: ${fajrCount}/14` : ""}
 ${about.bio ? `Bio: ${about.bio}` : ''}
 ${about.occupation ? `Occupation: ${about.occupation}` : ''}
 
@@ -105,11 +107,11 @@ Now generate the starter pack as JSON. Use real patterns from their data.`
     // AI-01: the shape is checked at runtime, with one corrective retry, so a
     // malformed reply produces an explicit failure instead of a silent null.
     const result = await aiStructured<Omit<HabitStarterPack, 'generated_at'>>(
-      prompt, HABIT_STARTER_SCHEMA, SYSTEM,
+      prompt, HABIT_STARTER_SCHEMA, adviceSystem(SYSTEM, faithEnabled),
     )
 
     if (!result.ok) {
-      return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
+      return NextResponse.json({ error: result.message, code: "generation_failed" }, { status: statusForAiFailure(result.code) })
     }
 
     const stored: HabitStarterPack = {
@@ -120,11 +122,12 @@ Now generate the starter pack as JSON. Use real patterns from their data.`
       generated_at: new Date().toISOString(),
     }
 
-    await supabase.from('habits').update({ ai_starter_pack: stored }).eq('id', habitId).eq('user_id', user.id)
+    await saveAdvice(supabase, 'habits', user.id, habitId, { ai_starter_pack: stored }, req.headers.get("x-nafs-request-id"))
 
     return NextResponse.json({ starter: stored })
   } catch (err: any) {
+    if (err instanceof ApiRouteError) return NextResponse.json({ error: err.message, code: err.code }, { status: err.status })
     console.error('habit-starter error:', err)
-    return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 })
+    return NextResponse.json({ error: 'Advice is temporarily unavailable. Please retry.', code: 'unavailable' }, { status: 500 })
   }
 }

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { TrendingUp, Loader2, RefreshCw } from 'lucide-react'
 import RichText from '@/components/RichText'
 import { timeAgo } from '@/lib/utils'
+import { aiModelLabel } from '@/lib/ai-model-label'
 
 /**
  * The growth review: what you are improving at, where you lack, the pattern
@@ -26,7 +27,7 @@ export interface GrowthReview {
 interface Props {
   initial: GrowthReview | null
   /** Which model will answer right now. From the server, so it is true. */
-  deepModel: 'anthropic' | 'cloudflare'
+  deepModel: 'gemini' | 'anthropic' | 'cloudflare'
 }
 
 export default function GrowthReviewCard({ initial, deepModel }: Props) {
@@ -62,9 +63,7 @@ export default function GrowthReviewCard({ initial, deepModel }: Props) {
     }
   }
 
-  const modelLine = deepModel === 'anthropic'
-    ? 'Written by Claude · once a day'
-    : 'Written by the free model · once a day'
+  const modelLine = `Written by ${aiModelLabel(review?.model_used, deepModel)} · once a day`
 
   return (
     <div className="nafs-card p-5 mb-6">

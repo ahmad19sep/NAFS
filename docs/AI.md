@@ -1,9 +1,60 @@
 # AI in NAFS
 
-Everything the app generates — coach replies, verdicts, goal plans, starter packs,
-scheduled reports — goes through one model behind one façade, with one deliberate
-exception: the growth review, which uses Claude when a key is set. See
-[The deep path](#the-deep-path).
+All AI features use the shared [AI entry point](../web-legacy/src/lib/ai.ts). Gemini handles Coach chat, evening verdicts, recovery plans, starter packs, letter replies, growth/report reviews and text-based screen-time analysis when configured. Existing feature contracts remain text-based.
+
+## Gemini setup
+
+1. Create a key in [Google AI Studio](https://aistudio.google.com/apikey).
+2. In [Vercel project settings](https://vercel.com/ahmadwork665-8154s-projects/nafs/settings/environment-variables), add the sensitive server variable **GEMINI_API_KEY** for Production. Add **AI_PROVIDER=gemini** to select it explicitly. **GEMINI_MODEL=gemini-3.5-flash-lite** selects the model verified in production. Without an override the code also defaults to Gemini 3.5 Flash-Lite.
+3. Redeploy the backend so the new deployment receives the variables. The project root is **web-legacy**. Do not deploy a local prebuilt output containing placeholder environment values.
+4. Verify a Coach reply and recovery-plan preview with a test account. Confirm provider is **gemini**, model is the configured model, and retrying the same request does not create a second generation or write. Test a report review separately; saved reviews retain the model that originally wrote them.
+
+For local development, copy [web-legacy/.env.local.example](../web-legacy/.env.local.example) to **web-legacy/.env.local**, enter the Supabase configuration and key privately, then restart Next.js. Never put the Gemini key in Android gradle.properties, an APK, Expo public variables, NEXT_PUBLIC variables, logs or chat. Android uses authenticated backend routes and needs no Google secret.
+
+Production uses **AI_PROVIDER=gemini** and **GEMINI_MODEL=gemini-3.5-flash-lite**, with the sensitive GEMINI_API_KEY kept in Vercel. Deployment **dpl_F8ZdqGVLWWxzrDhiUngVJL7zEtWv** is Ready at [nafs-one.vercel.app](https://nafs-one.vercel.app). All ten production HTTP/authentication checks passed. The key value was not downloaded or displayed.
+
+The first selected model, Gemini 3.8 Flash, timed out during two 20-second cloud generation probes after Google accepted the key. Flash-Lite answered successfully. Live checks then passed through the actual app chat code with the Coach system prompt and its recovery-plan code with the full RECOVERY_SCHEMA, on the first attempt. These checks used synthetic text and changed no account records. On 2026-10-10 a retried Coach message on the Android app returned HTTP 200 with a saved Flash-Lite reply, the first authenticated Gemini answer. Replay of a duplicate request and the other AI routes remain to be verified with an account.
+
+## Provider selection
+
+| Server configuration | Standard features | Deep analysis |
+| --- | --- | --- |
+| AI_PROVIDER=gemini | Gemini; a missing key fails clearly | Gemini; no fallback |
+| AI_PROVIDER unset, Gemini key present | Gemini | Gemini |
+| AI_PROVIDER unset, no Gemini key | Existing Cloudflare Worker | Existing Claude when configured; otherwise Cloudflare |
+| AI_PROVIDER=cloudflare | Cloudflare | Existing Claude when configured; otherwise Cloudflare |
+
+Unknown provider names fail as configuration errors. Gemini transport failures never silently select Cloudflare or Claude. This lets the new backend deploy safely before the key is configured while making the eventual selection explicit.
+
+## Requests and validation
+
+[gemini-ai.ts](../web-legacy/src/lib/gemini-ai.ts) calls Google's stateless **generateContent** REST API. It preserves system instructions and conversation history, maps assistant messages to Google's model role, sends the key only in the x-goog-api-key header, forbids redirects and disables response caching. No Google SDK dependency is required.
+
+Both the code default and production use [Gemini 3.5 Flash-Lite](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite); [Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models) timed out in production probes. Gemini 3 models use LOW thinking; the output budget includes reasoning headroom. GEMINI_MODEL can select another available Gemini text model. Model availability and quota are determined by the Google project.
+
+Structured requests send a JSON Schema derived from the application's runtime schema. Returned data is parsed and validated locally before use. One corrective retry is allowed for malformed/schema-invalid output within the existing 50-second total budget. Authentication, quota and transport errors return explicit failures. The timeout covers both connection and response-body reading; caller cancellation is honored.
+
+Blocked, truncated, malformed and empty responses are rejected before account writes. Thinking text is excluded from returned answers. Upstream error bodies are not included in client errors. Saved verdict/letter/report metadata identifies the model actually used; Android accepts Gemini recovery plans and cached previews.
+
+See Google's [generateContent API reference](https://ai.google.dev/api/generate-content) for the wire format and generation options.
+
+## Cloud diagnostics
+
+The optional [verify-gemini.cjs](../web-legacy/scripts/verify-gemini.cjs) prebuild check runs only when NAFS_VERIFY_GEMINI=1. It uses the remote server key to check available models and synthetic generation, then invokes the real chat/recovery code. Failed checks stop the cloud build before promotion. It prints status/model/result metadata, redacts provider error messages and reads no account data. Normal builds skip Google calls. Runtime transport failures log safe model/status/reason metadata without prompts, keys or upstream bodies.
+
+## Legacy compatibility and delivery
+
+Cloudflare uses CLOUDFLARE_APP_KEY and optional CLOUDFLARE_AI_URL, with model @cf/openai/gpt-oss-20b. Claude uses ANTHROPIC_API_KEY and optional ANTHROPIC_MODEL/ANTHROPIC_WORKSPACE_ID for deep analysis. Its existing fallback reports the actual provider and reason. These settings are unnecessary for an explicit Gemini setup.
+
+Cron delivery remains disabled when CRON_SECRET is absent. Configuring Gemini does not enable scheduled notifications. Android release signing, Google OAuth and other deployment acceptance are tracked separately in [PLAN.md](../output/deployment/PLAN.md).
+
+---
+
+# Shared AI rules and the Cloudflare/Claude paths
+
+Everything below predates Gemini. It still applies: Cloudflare answers when Gemini is not selected and has no key, Claude still serves deep analysis in that configuration, and the façade, schema, prompt and coach-context rules are shared by every provider.
+
+Without Gemini the request path is:
 
 ```
 Next.js route (Vercel, server-side)
@@ -22,6 +73,7 @@ The app never calls Workers AI directly, and the browser never sees a key.
 ## The façade
 
 Routes import from [`src/lib/ai.ts`](../web-legacy/src/lib/ai.ts) and nothing else.
+[`src/lib/gemini-ai.ts`](../web-legacy/src/lib/gemini-ai.ts),
 [`src/lib/cloudflare-ai.ts`](../web-legacy/src/lib/cloudflare-ai.ts) and
 [`src/lib/anthropic-ai.ts`](../web-legacy/src/lib/anthropic-ai.ts) are the only files
 that touch the network or a key.
@@ -36,6 +88,8 @@ that touch the network or a key.
 There is deliberately **no image input** — see [Why there is no vision](#why-there-is-no-vision).
 
 ### The deep path
+
+With Gemini selected, `aiDeep` uses Gemini with no fallback (see [Provider selection](#provider-selection)); the rest of this section describes the Cloudflare configuration.
 
 `aiDeep` is the one place a second model is allowed. It exists for analysis over a
 month of records, where a stronger model is the point of the feature; today that is
@@ -92,12 +146,13 @@ failure, so callers could not tell a bad reply from an outage and a `null` becam
 a silently broken feature.
 
 **To add an AI feature:** import a function from `lib/ai.ts`. Do not import
-`cloudflare-ai.ts`, and do not add a second provider without reading
-[Improvement 6](#6-no-fallback-provider) first.
+`gemini-ai.ts`, `cloudflare-ai.ts` or `anthropic-ai.ts` directly.
 
 ---
 
 ## Token budgets — read this before changing them
+
+This section applies to the Cloudflare `gpt-oss-20b` path. Gemini 3 calls use LOW thinking with their own reasoning headroom.
 
 > **The Worker has its own ceiling, and it wins.** The Worker clamps
 > `max_tokens` with `Math.min(requested, CEILING)`. That ceiling was **1000**
@@ -142,6 +197,8 @@ realistic prompt before lowering any of these.
 
 ## Why there is no vision
 
+Screenshots are not sent to Gemini either; existing feature contracts remain text-only.
+
 `gpt-oss-20b` is text-only, so image reading would need a second Worker route
 running a vision model. That was built and abandoned. Recorded here so it isn't
 rebuilt from scratch:
@@ -166,6 +223,9 @@ docs first, then measure accuracy on real screenshots before trusting any of it.
 
 | Name | Secret? | Where | Purpose |
 |---|---|---|---|
+| `GEMINI_API_KEY` | **yes** | Vercel env vars, `web-legacy/.env.local` | enables Gemini |
+| `AI_PROVIDER` | no | Vercel env vars | `gemini` or `cloudflare`; see [Provider selection](#provider-selection) |
+| `GEMINI_MODEL` | no | optional override | defaults to `gemini-3.5-flash-lite` |
 | `CLOUDFLARE_APP_KEY` | **yes** | Vercel env vars, `.env.local` | Bearer token the Worker checks |
 | `CLOUDFLARE_AI_URL` | no | optional override | defaults to the deployed Worker `/chat` |
 | `APP_KEY` | **yes** | Cloudflare Worker secret | must equal `CLOUDFLARE_APP_KEY` |
@@ -184,7 +244,8 @@ The Worker authenticates *before* checking origin, so a server-side call with no
 ## Errors
 
 `AiError` carries a message written for the user; anything else stays generic so
-internals are never echoed to the client.
+internals are never echoed to the client. The table lists the Cloudflare messages;
+Gemini has equivalent ones in [`gemini-ai.ts`](../web-legacy/src/lib/gemini-ai.ts).
 
 | Condition | Message |
 |---|---|
@@ -419,14 +480,15 @@ streaming means a Worker change too. Don't fake it client-side.
 
 ## Verifying a change
 
-There is no test suite. After touching anything in the AI path:
+After touching anything in the AI path:
 
 ```bash
 cd web-legacy
+npm test             # Vitest suite, must pass
 npx tsc --noEmit     # must be clean
 npm run build        # must compile
 ```
 
-Then exercise the real Worker with a **realistic** prompt, not a trivial one — see
+Then exercise the configured provider with a **realistic** prompt, not a trivial one — see
 the token-budget table above for why. Never print or commit the key;
 `.env.local` is gitignored.

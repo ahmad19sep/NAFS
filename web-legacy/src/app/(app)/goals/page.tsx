@@ -4,7 +4,7 @@ import GoalsClient from './GoalsClient'
 import { todayString } from '@/lib/utils'
 
 export default async function GoalsPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const user = await requireUser(supabase)
 
   const [{ data: goals }, { data: habits }] = await Promise.all([

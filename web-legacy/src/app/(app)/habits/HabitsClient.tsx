@@ -240,7 +240,7 @@ export default function HabitsClient({ userId, habits, logs, today }: Props) {
       {/* Aggregate progress card */}
       <div className="nafs-card p-4">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-semibold text-foreground">Today's habit progress</p>
+          <p className="text-sm font-semibold text-foreground">Today&apos;s habit progress</p>
           <span className={cn('text-xl font-bold tabular-nums',
             pct >= 100 && scheduled.length > 0 ? 'text-emerald-400'
             : pct >= 50 ? 'text-gold' : 'text-muted-foreground'
@@ -409,7 +409,7 @@ function HabitCard({ habit, log, allLogs, today, onLog, onEdit, onDelete, onPaus
 
       {/* Why */}
       {habit.why && (
-        <p className="mt-2 text-[11px] text-muted-foreground/70 italic">"{habit.why}"</p>
+        <p className="mt-2 text-[11px] text-muted-foreground/70 italic">&quot;{habit.why}&quot;</p>
       )}
 
       {/* Manual AI tips trigger when none yet */}
@@ -954,7 +954,7 @@ function HabitForm({ form, onClose, onSaved, userId }: {
 
           {error && (
             <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-400">
-              <p className="font-semibold mb-1">Couldn't save</p>
+              <p className="font-semibold mb-1">Couldn&apos;t save</p>
               <p className="text-red-300/80">{error}</p>
             </div>
           )}

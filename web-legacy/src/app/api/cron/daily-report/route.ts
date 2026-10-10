@@ -42,7 +42,8 @@ async function ownedChallengeIds(supabase: any, userId: string): Promise<string[
 export async function GET(req: NextRequest) {
   // Allow either Vercel cron auth or manual trigger from settings (?test=1 with a logged-in user)
   const authHeader = req.headers.get('authorization')
-  const isCron = authHeader === `Bearer ${process.env.CRON_SECRET}`
+  const cronSecret = process.env.CRON_SECRET
+  const isCron = !!cronSecret && authHeader === `Bearer ${cronSecret}`
   const isTest = req.nextUrl.searchParams.get('test') === '1'
 
   if (!isCron && !isTest) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -60,7 +61,7 @@ export async function GET(req: NextRequest) {
   // auth.uid() = NULL, every RLS policy fails closed, and the job reports
   // success having read nothing. Scheduled runs therefore need the service
   // client — which bypasses RLS, so every query below scopes by user itself.
-  const supabase = isTest ? createClient() : createServiceClient()
+  const supabase = isTest ? await createClient() : createServiceClient()
 
   if (!supabase) {
     // Loudly, rather than the silent sent: 0 this used to return.
@@ -73,7 +74,7 @@ export async function GET(req: NextRequest) {
   let users: User[] | null = null
   if (isTest) {
     // Test mode runs as the signed-in user, under RLS, and only for them.
-    const { data: { user } } = await createClient().auth.getUser()
+    const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Test mode: sign in first' }, { status: 401 })
     const { data } = await supabase.from('users').select(COLUMNS).eq('id', user.id)
     users = data as any

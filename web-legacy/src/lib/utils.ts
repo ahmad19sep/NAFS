@@ -33,13 +33,13 @@ export function todayString(): string {
 }
 
 /** Today's date as YYYY-MM-DD in a specific IANA timezone. */
-export function todayInTZ(tz: string): string {
+export function todayInTZ(tz: string, instant: Date = new Date()): string {
   try {
     const fmt = new Intl.DateTimeFormat('en-CA', {
       timeZone: tz,
       year: 'numeric', month: '2-digit', day: '2-digit',
     })
-    const parts = fmt.formatToParts(new Date())
+    const parts = fmt.formatToParts(instant)
     const m: Record<string, string> = {}
     for (const p of parts) m[p.type] = p.value
     return `${m.year}-${m.month}-${m.day}`

@@ -3,7 +3,7 @@ import { requireUser } from '@/lib/supabase/require-user'
 import ChallengesClient from './ChallengesClient'
 
 export default async function ChallengesPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const user = await requireUser(supabase)
 
   const { data: challenges } = await supabase

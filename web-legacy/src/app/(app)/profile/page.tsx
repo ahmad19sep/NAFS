@@ -12,7 +12,7 @@ import { earnedBadgeIds, type BadgeContext } from '@/lib/badges'
 import { countDaysLogged } from '@/lib/levels'
 
 export default async function ProfilePage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const user = await requireUser(supabase)
 
   const meta = (user.user_metadata ?? {}) as Record<string, any>

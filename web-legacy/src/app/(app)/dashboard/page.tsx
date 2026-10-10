@@ -5,7 +5,7 @@ import { todayString } from '@/lib/utils'
 import { countDaysLogged } from '@/lib/levels'
 
 export default async function DashboardPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const user = await requireUser(supabase)
 
   const today = todayString()

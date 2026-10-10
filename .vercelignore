@@ -1,0 +1,11 @@
+/*
+!web-legacy
+!web-legacy/**
+web-legacy/node_modules
+web-legacy/.next
+web-legacy/out
+web-legacy/.env*
+web-legacy/.vercel
+web-legacy/coverage
+web-legacy/*.log
+web-legacy/*.tsbuildinfo

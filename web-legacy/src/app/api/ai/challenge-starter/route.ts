@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/request'
+import { ApiRouteError } from '@/lib/api-errors'
+import { saveAdvice } from '@/lib/advice-save'
+import { readFaithPreference, adviceSystem } from '@/lib/advice-faith'
 import { aiStructured } from '@/lib/ai'
 import { CHALLENGE_STARTER_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
 
@@ -39,9 +42,8 @@ Rules:
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { supabase, user } = await authenticateRequest(req)
+    const faithEnabled = await readFaithPreference(supabase, user.id)
 
     const { challengeId } = await req.json()
     if (!challengeId) return NextResponse.json({ error: 'challengeId required' }, { status: 400 })
@@ -90,11 +92,11 @@ Now generate the starter pack as JSON. Be honest about likely obstacles.`
     // AI-01: the shape is checked at runtime, with one corrective retry, so a
     // malformed reply produces an explicit failure instead of a silent null.
     const result = await aiStructured<Omit<ChallengeStarterPack, 'generated_at'>>(
-      prompt, CHALLENGE_STARTER_SCHEMA, SYSTEM,
+      prompt, CHALLENGE_STARTER_SCHEMA, adviceSystem(SYSTEM, faithEnabled),
     )
 
     if (!result.ok) {
-      return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
+      return NextResponse.json({ error: result.message, code: "generation_failed" }, { status: statusForAiFailure(result.code) })
     }
 
     const stored: ChallengeStarterPack = {
@@ -105,11 +107,12 @@ Now generate the starter pack as JSON. Be honest about likely obstacles.`
       generated_at: new Date().toISOString(),
     }
 
-    await supabase.from('challenges').update({ ai_starter_pack: stored }).eq('id', challengeId).eq('user_id', user.id)
+    await saveAdvice(supabase, 'challenges', user.id, challengeId, { ai_starter_pack: stored }, req.headers.get("x-nafs-request-id"))
 
     return NextResponse.json({ starter: stored })
   } catch (err: any) {
+    if (err instanceof ApiRouteError) return NextResponse.json({ error: err.message, code: err.code }, { status: err.status })
     console.error('challenge-starter error:', err)
-    return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 })
+    return NextResponse.json({ error: 'Advice is temporarily unavailable. Please retry.', code: 'unavailable' }, { status: 500 })
   }
 }

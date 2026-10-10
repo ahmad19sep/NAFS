@@ -3,8 +3,8 @@ import { createClient } from '@/lib/supabase/server'
 
 const ALLOWED_FIELDS = ['title', 'note', 'priority', 'due_time'] as const
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient()
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -17,7 +17,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { data, error } = await supabase
     .from('tasks').update(update)
-    .eq('id', params.id).eq('user_id', user.id)
+    .eq('id', (await params).id).eq('user_id', user.id)
     .select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ task: data })
@@ -34,22 +34,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
  * Falls back to a hard delete when the migration has not been run, so deleting
  * keeps working; only the undo is unavailable.
  */
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient()
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { error } = await supabase
     .from('tasks')
     .update({ deleted_at: new Date().toISOString() })
-    .eq('id', params.id).eq('user_id', user.id)
+    .eq('id', (await params).id).eq('user_id', user.id)
 
   if (error) {
     const missingColumn = /deleted_at|column .* does not exist/i.test(error.message)
     if (!missingColumn) {
       return NextResponse.json({ error: 'Could not delete the task.' }, { status: 500 })
     }
-    await supabase.from('tasks').delete().eq('id', params.id).eq('user_id', user.id)
+    await supabase.from('tasks').delete().eq('id', (await params).id).eq('user_id', user.id)
     return NextResponse.json({ ok: true, undoable: false })
   }
 
