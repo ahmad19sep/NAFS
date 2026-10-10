@@ -41,7 +41,15 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-37 build-tools;36.0.0 platform-tools'
+          packages: 'platform-tools build-tools;36.0.0'
+
+      # compileSdk 37 can sit outside the default SDK channel; whatever is
+      # still missing here, the Android Gradle Plugin downloads itself.
+      - name: Android SDK platform 37
+        run: |
+          sdkmanager --list 2>/dev/null | grep -E "platforms;android-3[67]" || true
+          sdkmanager "platforms;android-37.0" || sdkmanager "platforms;android-37" \
+            || sdkmanager --channel=1 "platforms;android-37" || true
 
       - uses: gradle/actions/setup-gradle@v4
 
