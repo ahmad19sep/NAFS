@@ -4,9 +4,10 @@ import com.ahmad.nafs.core.database.CachedChallengeCheckInEntity
 import com.ahmad.nafs.core.database.CachedChallengeDao
 import com.ahmad.nafs.core.database.CachedChallengeEntity
 import com.ahmad.nafs.core.network.SupabaseClientProvider
-import com.ahmad.nafs.domain.challenges.ChallengeCadence
 import com.ahmad.nafs.domain.challenges.ChallengeFrequency
+import com.ahmad.nafs.domain.challenges.ChallengePeriodStatus
 import com.ahmad.nafs.domain.challenges.ChallengeStatus
+import com.ahmad.nafs.domain.challenges.unitName
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.serialization.json.buildJsonObject
@@ -31,19 +32,20 @@ class SupabaseChallengeRepository @Inject constructor(
         val dto = requireClient().postgrest.rpc("native_restart_challenge", buildJsonObject {
             put("p_id", challenge.id); put("p_expected_count", challenge.restartCount); put("p_date", date.toString())
         }).decodeAs<ChallengeDto>()
-        val saved = dto.toModel(fetchCheckIns(dto.id).map(ChallengeCheckInDto::toModel))
+        // The restart date is the account's today, so it is also the day to judge the new attempt on.
+        val saved = dto.toModel(fetchCheckIns(dto.id).map(ChallengeCheckInDto::toModel)).reconciled(date)
         cache.replaceChallenge(userId, saved.toEntity(), saved.checkIns.map { it.toEntity(userId) })
         ChallengeActionResult.Success(saved)
     } catch (cancel: CancellationException) { throw cancel }
     catch (_: Exception) { ChallengeActionResult.Failure("Restart could not be confirmed. Reload before retrying. Existing check-ins are retained.") }
-    override suspend fun load(userId: String): ChallengeLoadResult = try {
+    override suspend fun load(userId: String, today: LocalDate): ChallengeLoadResult = try {
         val challengeDtos = requireClient().from("challenges").select(CHALLENGE_COLUMNS) {
             filter { eq("user_id", userId) }
         }.decodeList<ChallengeDto>()
         val checkInDtos = requireClient().from("challenge_checkins")
             .select(CHECK_IN_COLUMNS)
             .decodeList<ChallengeCheckInDto>()
-        val challenges = assembleChallenges(challengeDtos, checkInDtos)
+        val challenges = assembleChallenges(challengeDtos, checkInDtos).map { syncProgress(it, today) }
         cache.replaceForUser(
             userId,
             challenges.map(Challenge::toEntity),
@@ -56,7 +58,7 @@ class SupabaseChallengeRepository @Inject constructor(
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (_: Exception) {
-        loadCached(userId)
+        loadCached(userId, today)
     }
 
     override suspend fun create(intent: SaveChallengeIntent): ChallengeActionResult {
@@ -113,76 +115,61 @@ class SupabaseChallengeRepository @Inject constructor(
         userId: String,
         challengeId: String,
         date: LocalDate,
+        today: LocalDate,
         completed: Boolean,
         evidence: ChallengeEvidence?,
         sadqaPaid: Boolean,
-    ): ChallengeActionResult = challengeAction {
-        val current = fetchChallenge(userId, challengeId)
-            ?: return@challengeAction ChallengeActionResult.Failure(
-                "That challenge is no longer available.",
-            )
-        if (current.status != ChallengeStatus.ACTIVE) {
-            return@challengeAction ChallengeActionResult.Failure("This challenge is already complete.")
+    ): ChallengeActionResult {
+        val fetched = try {
+            fetchChallenge(userId, challengeId)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            return ChallengeActionResult.Failure(CHECK_IN_NOT_SAVED)
         }
-        if (completed && current.requiresPhoto && evidence == null) {
-            return@challengeAction ChallengeActionResult.Failure(
-                "Choose a proof photo before marking this challenge done.",
-            )
-        }
-        if (date.isBefore(current.startDate)) {
-            return@challengeAction ChallengeActionResult.Failure("A check-in cannot predate the challenge.")
-        }
+        val current = fetched ?: return ChallengeActionResult.Failure("That challenge is no longer available.")
+        checkInError(current, date, today, completed, evidence)?.let { return ChallengeActionResult.Failure(it) }
 
         val photoUrl = if (completed && evidence != null) {
-            uploadEvidence(userId, challengeId, date, evidence)
+            try {
+                uploadEvidence(userId, challengeId, date, evidence)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Exception) {
+                return ChallengeActionResult.Failure(
+                    "The proof photo didn't upload, so the check-in wasn't saved. Check your connection and try again.",
+                )
+            }
         } else {
             null
         }
-        requireClient().from("challenge_checkins").upsert(
-            ChallengeCheckInUpsertDto(
-                challengeId = challengeId,
-                date = date.toString(),
-                completed = completed,
-                photoUrl = photoUrl,
-                sadqaPaid = !completed && current.sadqaAmount != null && sadqaPaid,
-            ),
-        ) {
-            onConflict = "challenge_id,date"
-        }
-        val checkIns = fetchCheckIns(challengeId).map(ChallengeCheckInDto::toModel)
-        val streak = ChallengeCadence.periodStreak(
-            current.frequency,
-            current.startDate,
-            checkIns.filter { !it.date.isBefore(current.startDate) }.map(ChallengeCheckIn::dated),
-            date,
-        )
-        val completedChallenge = ChallengeCadence.unitsElapsed(
-            current.frequency,
-            current.startDate,
-            date,
-        ) >= ChallengeCadence.totalUnits(current.frequency, current.durationDays)
-        requireClient().from("challenges").update(
-            ChallengeProgressDto(
-                currentStreak = streak,
-                longestStreak = maxOf(current.longestStreak, streak),
-                status = if (completedChallenge) "completed" else "active",
-            ),
-        ) {
-            filter {
-                eq("id", challengeId)
-                eq("user_id", userId)
+        val recordedSadqa = !completed && current.sadqaAmount != null && sadqaPaid
+        try {
+            requireClient().from("challenge_checkins").upsert(
+                ChallengeCheckInUpsertDto(
+                    challengeId = challengeId,
+                    date = date.toString(),
+                    completed = completed,
+                    photoUrl = photoUrl,
+                    sadqaPaid = recordedSadqa,
+                ),
+            ) {
+                onConflict = "challenge_id,date"
             }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            return ChallengeActionResult.Failure(CHECK_IN_NOT_SAVED)
         }
-        val challenge = fetchChallenge(userId, challengeId)
-            ?: return@challengeAction ChallengeActionResult.Failure(
-                "Check-in saved, but the challenge could not be reloaded.",
-            )
-        cache.replaceChallenge(
-            userId,
-            challenge.toEntity(),
-            challenge.checkIns.map { it.toEntity(userId) },
-        )
-        ChallengeActionResult.Success(challenge)
+
+        // The check-in is saved. What follows is best effort, so a dropped connection can't report it as a failure:
+        // the status and streaks are derived from the check-ins and the next load writes them again.
+        val checkIns = reloadCheckIns(challengeId)
+            ?: current.checkIns.withLocalRow(challengeId, date, completed, photoUrl, recordedSadqa)
+        val saved = current.copy(checkIns = checkIns.sortedByDescending(ChallengeCheckIn::date)).reconciled(today)
+        bestEffort { if (progressChanged(current, saved)) writeProgress(current, saved) }
+        bestEffort { cache.replaceChallenge(userId, saved.toEntity(), saved.checkIns.map { it.toEntity(userId) }) }
+        return ChallengeActionResult.Success(saved)
     }
 
     override suspend fun setSadqaPaid(
@@ -190,6 +177,7 @@ class SupabaseChallengeRepository @Inject constructor(
         challengeId: String,
         date: LocalDate,
         paid: Boolean,
+        today: LocalDate,
     ): ChallengeActionResult = challengeAction {
         val current = fetchChallenge(userId, challengeId)
             ?: return@challengeAction ChallengeActionResult.Failure(
@@ -200,25 +188,41 @@ class SupabaseChallengeRepository @Inject constructor(
                 "This challenge has no sadqa pledge.",
             )
         }
-        val checkIn = current.checkIns.firstOrNull { it.date == date && !it.completed }
-            ?: return@challengeAction ChallengeActionResult.Failure(
-                "Record a missed check-in before updating sadqa.",
-            )
-        requireClient().from("challenge_checkins").update(SadqaPaidDto(paid)) {
-            filter {
-                eq("id", checkIn.id)
-                eq("challenge_id", challengeId)
+        val miss = current.currentCheckIns().firstOrNull { it.date == date && !it.completed }
+        val local = if (miss != null) {
+            requireClient().from("challenge_checkins").update(SadqaPaidDto(paid)) {
+                filter {
+                    eq("id", miss.id)
+                    eq("challenge_id", challengeId)
+                }
             }
-        }
-        val challenge = fetchChallenge(userId, challengeId)
-            ?: return@challengeAction ChallengeActionResult.Failure(
-                "Sadqa status saved, but the challenge could not be reloaded.",
+            current.checkIns.map { if (it.id == miss.id) it.copy(sadqaPaid = paid) else it }
+        } else {
+            val period = current.timeline(today).periodOn(date)
+            if (period == null || period.status != ChallengePeriodStatus.MISSED || period.missRecorded) {
+                return@challengeAction ChallengeActionResult.Failure(
+                    "Record a missed check-in before updating sadqa.",
+                )
+            }
+            // The period closed without any check-in. Record the miss so the sadqa has a row to live on; a miss
+            // changes no streak or status. Insert, not upsert, so a completion saved meanwhile is never overwritten.
+            requireClient().from("challenge_checkins").insert(
+                ChallengeCheckInUpsertDto(
+                    challengeId = challengeId,
+                    date = date.toString(),
+                    completed = false,
+                    photoUrl = null,
+                    sadqaPaid = paid,
+                ),
             )
-        cache.replaceChallenge(
-            userId,
-            challenge.toEntity(),
-            challenge.checkIns.map { it.toEntity(userId) },
-        )
+            current.checkIns.withLocalRow(challengeId, date, completed = false, photoUrl = null, sadqaPaid = paid)
+        }
+        // Saved: reload for the real row ids, but never report the saved change as a failure.
+        val challenge = (reloadCheckIns(challengeId) ?: local)
+            .let { rows -> current.copy(checkIns = rows.sortedByDescending(ChallengeCheckIn::date)).reconciled(today) }
+        bestEffort {
+            cache.replaceChallenge(userId, challenge.toEntity(), challenge.checkIns.map { it.toEntity(userId) })
+        }
         ChallengeActionResult.Success(challenge)
     }
 
@@ -293,14 +297,15 @@ class SupabaseChallengeRepository @Inject constructor(
         return bucket.publicUrl(path)
     }
 
-    private suspend fun loadCached(userId: String): ChallengeLoadResult = try {
+    private suspend fun loadCached(userId: String, today: LocalDate): ChallengeLoadResult = try {
         if (cache.getMetadata(userId) == null) {
             ChallengeLoadResult.Failure("Unable to load challenges. Check your connection and try again.")
         } else {
             val checkIns = cache.getCheckIns(userId).map(CachedChallengeCheckInEntity::toModel)
             val byChallenge = checkIns.groupBy(ChallengeCheckIn::challengeId)
+            // Offline nothing is written back; the cached rows are reconciled for display only.
             val challenges = cache.getChallenges(userId).map {
-                it.toModel(byChallenge[it.id].orEmpty())
+                it.toModel(byChallenge[it.id].orEmpty()).reconciled(today)
             }
             ChallengeLoadResult.Success(challenges, isOffline = true)
         }
@@ -308,6 +313,55 @@ class SupabaseChallengeRepository @Inject constructor(
         throw cancellation
     } catch (_: Exception) {
         ChallengeLoadResult.Failure("Unable to load challenges. Check your connection and try again.")
+    }
+
+    /**
+     * [stored] as its check-ins say it stands on [today]. When that differs from the row, the corrected status and
+     * streaks are written back best effort: the reconciled values come from the check-ins themselves, so they are what
+     * the app shows either way, and a failed write is simply retried on the next load.
+     */
+    private suspend fun syncProgress(stored: Challenge, today: LocalDate): Challenge {
+        val reconciled = stored.reconciled(today)
+        if (reconciled !== stored) bestEffort { writeProgress(stored, reconciled) }
+        return reconciled
+    }
+
+    /** Writes derived progress, but only onto the attempt it was computed from: a restart or status change made
+     *  elsewhere in the meantime wins. */
+    private suspend fun writeProgress(stored: Challenge, target: Challenge) {
+        requireClient().from("challenges").update(
+            ChallengeProgressDto(
+                currentStreak = target.currentStreak,
+                longestStreak = target.longestStreak,
+                status = target.status.wireName(),
+            ),
+        ) {
+            filter {
+                eq("id", stored.id)
+                eq("user_id", stored.userId)
+                eq("status", stored.status.wireName())
+                eq("restart_count", stored.restartCount.toString())
+                eq("start_date", stored.startDate.toString())
+            }
+        }
+    }
+
+    private suspend fun reloadCheckIns(challengeId: String): List<ChallengeCheckIn>? = try {
+        fetchCheckIns(challengeId).map(ChallengeCheckInDto::toModel)
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        null
+    }
+
+    private suspend fun bestEffort(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            // Derived data only; the next load reconciles it again.
+        }
     }
 
     private suspend fun challengeAction(
@@ -326,6 +380,7 @@ class SupabaseChallengeRepository @Inject constructor(
 
     private companion object {
         const val CHALLENGE_PHOTOS_BUCKET = "challenge-photos"
+        const val CHECK_IN_NOT_SAVED = "The check-in was not saved. Check your connection and try again."
         val CHALLENGE_COLUMNS = Columns.list(
             "id", "user_id", "title", "emoji", "description", "frequency", "duration_days",
             "start_date", "requires_photo", "sadqa_amount", "sadqa_currency", "current_streak",
@@ -578,3 +633,62 @@ private fun challengeFrequency(value: String): ChallengeFrequency =
 private fun challengeStatus(value: String): ChallengeStatus =
     runCatching { ChallengeStatus.valueOf(value.uppercase()) }
         .getOrDefault(ChallengeStatus.ACTIVE)
+
+private fun ChallengeStatus.wireName(): String = name.lowercase()
+
+private fun progressChanged(stored: Challenge, target: Challenge): Boolean =
+    stored.status != target.status ||
+        stored.currentStreak != target.currentStreak ||
+        stored.longestStreak != target.longestStreak
+
+/**
+ * Why a check-in dated [date] can't be saved on [today], or null when it can. The rules live in
+ * [com.ahmad.nafs.domain.challenges.ChallengeTimeline]; this only words them.
+ */
+internal fun checkInError(
+    challenge: Challenge,
+    date: LocalDate,
+    today: LocalDate,
+    completed: Boolean,
+    evidence: ChallengeEvidence?,
+): String? {
+    val timeline = challenge.timeline(today)
+    val status = if (challenge.status == ChallengeStatus.ACTIVE) timeline.outcome else challenge.status
+    val unit = challenge.frequency.unitName()
+    return when {
+        status == ChallengeStatus.COMPLETED -> "This challenge is already complete."
+        status == ChallengeStatus.FAILED -> "This attempt has ended. Start a new attempt to keep checking in."
+        completed && challenge.requiresPhoto && evidence == null -> "Choose a proof photo before marking this challenge done."
+        date.isBefore(challenge.startDate) -> "A check-in cannot predate the challenge."
+        date.isAfter(today) -> "A check-in can't be dated in the future."
+        !timeline.canCheckIn(date) -> if (challenge.frequency == ChallengeFrequency.DAILY) {
+            "That day has closed. Daily check-ins stay open for today and yesterday only."
+        } else {
+            "That $unit has closed. Only the current $unit can be checked in."
+        }
+        !completed && timeline.periodOn(date)?.status == ChallengePeriodStatus.DONE ->
+            "This $unit is already checked in as done."
+        else -> null
+    }
+}
+
+/** [this] with the check-in for [date] replaced by a locally built row, for when a reload after saving fails. */
+private fun List<ChallengeCheckIn>.withLocalRow(
+    challengeId: String,
+    date: LocalDate,
+    completed: Boolean,
+    photoUrl: String?,
+    sadqaPaid: Boolean,
+): List<ChallengeCheckIn> {
+    val existing = firstOrNull { it.date == date }
+    val row = ChallengeCheckIn(
+        id = existing?.id ?: "local-$challengeId-$date",
+        challengeId = challengeId,
+        date = date,
+        completed = completed,
+        photoUrl = photoUrl,
+        sadqaPaid = sadqaPaid,
+        createdAt = existing?.createdAt.orEmpty(),
+    )
+    return filterNot { it.date == date } + row
+}

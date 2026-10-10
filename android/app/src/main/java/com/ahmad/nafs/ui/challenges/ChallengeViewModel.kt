@@ -19,9 +19,12 @@ import java.time.LocalDate
 import java.time.ZoneOffset
 import java.util.UUID
 import javax.inject.Inject
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -29,7 +32,7 @@ data class ChallengeEditorDraft(
     val challengeId: String? = null,
     val requestId: String? = null,
     val title: String = "",
-    val emoji: String = "\uD83C\uDFAF",
+    val emoji: String = "🎯",
     val description: String = "",
     val frequency: ChallengeFrequency = ChallengeFrequency.DAILY,
     val durationDays: String = "30",
@@ -38,11 +41,24 @@ data class ChallengeEditorDraft(
     val sadqaCurrency: String = "PKR",
 )
 
+/** A check-in waiting for confirmation. [date] is today, or yesterday for a daily challenge's grace day. */
 data class ChallengeCheckInRequest(
     val challenge: Challenge,
     val completed: Boolean,
+    val date: LocalDate,
     val sadqaPaid: Boolean = false,
 )
+
+/** A completion that needs a proof photo from the system picker. */
+data class ChallengePhotoRequest(val challengeId: String, val date: LocalDate)
+
+/** A proof photo opened full size. */
+data class ChallengePhotoView(val url: String, val label: String)
+
+sealed interface ChallengeUiEvent {
+    /** A completion was confirmed by the server. */
+    data object CheckInDone : ChallengeUiEvent
+}
 
 data class ChallengeUiState(
     val userId: String? = null,
@@ -59,9 +75,14 @@ data class ChallengeUiState(
     val editorError: String? = null,
     val isSaving: Boolean = false,
     val pendingChallengeIds: Set<String> = emptySet(),
-    val photoPickerChallengeId: String? = null,
+    val photoRequest: ChallengePhotoRequest? = null,
     val checkInRequest: ChallengeCheckInRequest? = null,
     val deleteCandidate: Challenge? = null,
+    /** Cards whose check-in history is open. */
+    val expandedChallengeIds: Set<String> = emptySet(),
+    val photoViewer: ChallengePhotoView? = null,
+    /** A challenge the last check-in completed; it has left the Active list, so a banner points to it. */
+    val completedNoticeId: String? = null,
 )
 
 @HiltViewModel
@@ -71,6 +92,9 @@ class ChallengeViewModel @Inject constructor(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(ChallengeUiState())
     val uiState: StateFlow<ChallengeUiState> = _uiState.asStateFlow()
+
+    private val eventChannel = Channel<ChallengeUiEvent>(capacity = Channel.BUFFERED)
+    val events: Flow<ChallengeUiEvent> = eventChannel.receiveAsFlow()
 
     fun initialize(userId: String, timezone: String) {
         if (_uiState.value.userId == userId && _uiState.value.timezone == timezone) return
@@ -84,7 +108,7 @@ class ChallengeViewModel @Inject constructor(
         val state = _uiState.value
         val userId = state.userId ?: return
         if (state.isRefreshing) return
-        val today = runCatching { AccountDate.today(state.timezone) }.getOrElse { state.today }
+        val today = accountToday(state)
         _uiState.update {
             it.copy(
                 today = today,
@@ -95,7 +119,7 @@ class ChallengeViewModel @Inject constructor(
             )
         }
         viewModelScope.launch {
-            when (val result = repository.load(userId)) {
+            when (val result = repository.load(userId, today)) {
                 is ChallengeLoadResult.Success -> _uiState.update {
                     it.copy(
                         challenges = result.challenges.sortedByDescending(Challenge::createdAt),
@@ -111,7 +135,23 @@ class ChallengeViewModel @Inject constructor(
         }
     }
 
-    fun selectStatus(status: ChallengeStatus?) = _uiState.update { it.copy(selectedStatus = status) }
+    fun selectStatus(status: ChallengeStatus?) = _uiState.update { it.copy(selectedStatus = status, completedNoticeId = null) }
+
+    fun toggleHistory(challengeId: String) = _uiState.update {
+        it.copy(
+            expandedChallengeIds = if (challengeId in it.expandedChallengeIds) {
+                it.expandedChallengeIds - challengeId
+            } else {
+                it.expandedChallengeIds + challengeId
+            },
+        )
+    }
+
+    fun openPhoto(url: String, label: String) = _uiState.update { it.copy(photoViewer = ChallengePhotoView(url, label)) }
+
+    fun closePhoto() = _uiState.update { it.copy(photoViewer = null) }
+
+    fun dismissCompletedNotice() = _uiState.update { it.copy(completedNoticeId = null) }
 
     fun openCreate() = _uiState.update {
         it.copy(editor = ChallengeEditorDraft(), editorError = null)
@@ -207,7 +247,8 @@ class ChallengeViewModel @Inject constructor(
             when (result) {
                 is ChallengeActionResult.Success -> _uiState.update {
                     it.copy(
-                        challenges = result.challenge?.let(it.challenges::upsert)
+                        // A new cadence or duration can change how the attempt stands, so judge it again.
+                        challenges = result.challenge?.reconciled(it.today)?.let(it.challenges::upsert)
                             ?.sortedByDescending(Challenge::createdAt) ?: it.challenges,
                         isSaving = false,
                         isOffline = false,
@@ -222,13 +263,14 @@ class ChallengeViewModel @Inject constructor(
         }
     }
 
-    fun requestCheckIn(challenge: Challenge, completed: Boolean) {
+    /** Starts a check-in for [date]: today, or yesterday while a daily challenge's grace day is open. */
+    fun requestCheckIn(challenge: Challenge, completed: Boolean, date: LocalDate) {
         if (challenge.id in _uiState.value.pendingChallengeIds) return
         if (completed && challenge.requiresPhoto) {
-            _uiState.update { it.copy(photoPickerChallengeId = challenge.id, actionError = null) }
+            _uiState.update { it.copy(photoRequest = ChallengePhotoRequest(challenge.id, date), actionError = null) }
             return
         }
-        _uiState.update { it.copy(checkInRequest = ChallengeCheckInRequest(challenge, completed)) }
+        _uiState.update { it.copy(checkInRequest = ChallengeCheckInRequest(challenge, completed, date)) }
     }
 
     fun cancelCheckIn() = _uiState.update { it.copy(checkInRequest = null) }
@@ -237,16 +279,17 @@ class ChallengeViewModel @Inject constructor(
         it.copy(checkInRequest = it.checkInRequest?.copy(sadqaPaid = value))
     }
 
-    fun cancelPhotoPicker() = _uiState.update { it.copy(photoPickerChallengeId = null) }
+    fun cancelPhotoPicker() = _uiState.update { it.copy(photoRequest = null) }
 
     fun submitPhotoEvidence(uri: Uri) {
         val state = _uiState.value
         val userId = state.userId ?: return
-        val challengeId = state.photoPickerChallengeId ?: return
+        val request = state.photoRequest ?: return
+        val challengeId = request.challengeId
         if (challengeId in state.pendingChallengeIds) return
         _uiState.update {
             it.copy(
-                photoPickerChallengeId = null,
+                photoRequest = null,
                 pendingChallengeIds = it.pendingChallengeIds + challengeId,
                 actionError = null,
             )
@@ -255,22 +298,15 @@ class ChallengeViewModel @Inject constructor(
             when (val read = evidenceReader.read(uri)) {
                 is ChallengeEvidenceReadResult.Failure -> mutationFailed(challengeId, read.message)
                 is ChallengeEvidenceReadResult.Success -> {
-                    when (
-                        val result = repository.checkIn(
-                            userId = userId,
-                            challengeId = challengeId,
-                            date = state.today,
-                            completed = true,
-                            evidence = read.evidence,
-                        )
-                    ) {
-                        is ChallengeActionResult.Success -> {
-                            mutationSucceeded(challengeId, result.challenge)
-                        }
-                        is ChallengeActionResult.Failure -> {
-                            mutationFailed(challengeId, result.message)
-                        }
-                    }
+                    val result = repository.checkIn(
+                        userId = userId,
+                        challengeId = challengeId,
+                        date = request.date,
+                        today = accountToday(_uiState.value),
+                        completed = true,
+                        evidence = read.evidence,
+                    )
+                    checkInFinished(challengeId, completed = true, result = result)
                 }
             }
         }
@@ -290,18 +326,15 @@ class ChallengeViewModel @Inject constructor(
             )
         }
         viewModelScope.launch {
-            when (
-                val result = repository.checkIn(
-                    userId,
-                    challengeId,
-                    state.today,
-                    request.completed,
-                    sadqaPaid = request.sadqaPaid,
-                )
-            ) {
-                is ChallengeActionResult.Success -> mutationSucceeded(challengeId, result.challenge)
-                is ChallengeActionResult.Failure -> mutationFailed(challengeId, result.message)
-            }
+            val result = repository.checkIn(
+                userId = userId,
+                challengeId = challengeId,
+                date = request.date,
+                today = accountToday(state),
+                completed = request.completed,
+                sadqaPaid = request.sadqaPaid,
+            )
+            checkInFinished(challengeId, completed = request.completed, result = result)
         }
     }
 
@@ -316,7 +349,7 @@ class ChallengeViewModel @Inject constructor(
             )
         }
         viewModelScope.launch {
-            when (val result = repository.setSadqaPaid(userId, challenge.id, date, paid)) {
+            when (val result = repository.setSadqaPaid(userId, challenge.id, date, paid, accountToday(state))) {
                 is ChallengeActionResult.Success -> mutationSucceeded(challenge.id, result.challenge)
                 is ChallengeActionResult.Failure -> mutationFailed(challenge.id, result.message)
             }
@@ -361,6 +394,8 @@ class ChallengeViewModel @Inject constructor(
                     it.copy(
                         challenges = it.challenges.filterNot { item -> item.id == challenge.id },
                         pendingChallengeIds = it.pendingChallengeIds - challenge.id,
+                        expandedChallengeIds = it.expandedChallengeIds - challenge.id,
+                        completedNoticeId = it.completedNoticeId.takeUnless { id -> id == challenge.id },
                         isOffline = false,
                     )
                 }
@@ -370,6 +405,19 @@ class ChallengeViewModel @Inject constructor(
     }
 
     fun dismissError() = _uiState.update { it.copy(actionError = null, loadError = null) }
+
+    private fun checkInFinished(challengeId: String, completed: Boolean, result: ChallengeActionResult) {
+        when (result) {
+            is ChallengeActionResult.Success -> {
+                val before = _uiState.value.challenges.firstOrNull { it.id == challengeId }?.status
+                val justCompleted = result.challenge?.status == ChallengeStatus.COMPLETED && before != ChallengeStatus.COMPLETED
+                mutationSucceeded(challengeId, result.challenge)
+                if (justCompleted) _uiState.update { it.copy(completedNoticeId = challengeId) }
+                if (completed) eventChannel.trySend(ChallengeUiEvent.CheckInDone)
+            }
+            is ChallengeActionResult.Failure -> mutationFailed(challengeId, result.message)
+        }
+    }
 
     private fun updateEditor(transform: ChallengeEditorDraft.() -> ChallengeEditorDraft) {
         _uiState.update {
@@ -400,14 +448,27 @@ class ChallengeViewModel @Inject constructor(
             actionError = message,
         )
     }
+
+    /** The account's today right now; check-in windows are judged on it, not on a possibly stale screen date. */
+    private fun accountToday(state: ChallengeUiState): LocalDate =
+        runCatching { AccountDate.today(state.timezone) }.getOrElse { state.today }
 }
 
-fun ChallengeUiState.visibleChallenges(): List<Challenge> = selectedStatus?.let { status ->
-    challenges.filter { it.status == status }
-} ?: challenges
+/**
+ * The challenges for the selected filter. "Active" also keeps attempts that ended unfinished, so an ended challenge
+ * never silently disappears from the default view; they sort after the running ones until restarted or deleted.
+ */
+fun ChallengeUiState.visibleChallenges(): List<Challenge> = when (selectedStatus) {
+    null -> challenges
+    ChallengeStatus.ACTIVE -> challenges
+        .filter { it.status != ChallengeStatus.COMPLETED }
+        .sortedBy { it.status == ChallengeStatus.FAILED }
+    else -> challenges.filter { it.status == selectedStatus }
+}
 
+/** Replaces the challenge in place (so a card doesn't jump after a check-in), or adds it. */
 private fun List<Challenge>.upsert(challenge: Challenge): List<Challenge> =
-    filterNot { it.id == challenge.id } + challenge
+    if (any { it.id == challenge.id }) map { if (it.id == challenge.id) challenge else it } else this + challenge
 
 private fun formatAmount(value: Double): String =
     if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()

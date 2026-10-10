@@ -2,10 +2,12 @@ package com.ahmad.nafs.core.auth
 
 import com.ahmad.nafs.core.network.SupabaseClientProvider
 import com.ahmad.nafs.BuildConfig
+import io.github.jan.supabase.auth.OtpType
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.exception.AuthErrorCode
 import io.github.jan.supabase.auth.exception.AuthRestException
+import io.github.jan.supabase.auth.exception.AuthWeakPasswordException
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.status.SessionStatus
 import javax.inject.Inject
@@ -57,6 +59,11 @@ class SupabaseAuthRepository @Inject constructor(
         requireClient().auth.resetPasswordForEmail(email, redirectUrl = "${BuildConfig.APPLICATION_ID}://auth/reset")
     }
 
+    override suspend fun resendSignUpConfirmation(email: String): AuthActionResult = authAction {
+        // Like sign-up, the new link comes back to this app (PKCE), where AuthCallbackController finishes it.
+        requireClient().auth.resendEmail(OtpType.Email.SIGNUP, email)
+    }
+
     override suspend fun retrySession(): AuthActionResult = authAction {
         requireClient().auth.refreshCurrentSession()
     }
@@ -70,6 +77,15 @@ class SupabaseAuthRepository @Inject constructor(
         requireClient().auth.signOut()
     }
 
+    override suspend fun clearLocalSession(): AuthActionResult = try {
+        requireClient().auth.clearSession()
+        AuthActionResult.Success
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        AuthActionResult.Failure("NAFS couldn't sign this phone out.")
+    }
+
     private fun requireClient() = checkNotNull(clientProvider.client) {
         "Supabase is not configured."
     }
@@ -80,9 +96,9 @@ class SupabaseAuthRepository @Inject constructor(
     } catch (cancellation: CancellationException) {
         throw cancellation
     } catch (error: AuthRestException) {
-        AuthActionResult.Failure(error.toUserMessage())
+        AuthActionResult.Failure(error.toUserMessage(), error.toFailureReason())
     } catch (_: Exception) {
-        AuthActionResult.Failure("Unable to reach NAFS. Check your connection and try again.")
+        AuthActionResult.Failure(AuthErrorMessages.OFFLINE, AuthFailureReason.NETWORK)
     }
 
     private fun mapSessionStatus(status: SessionStatus): SessionState = when (status) {
@@ -97,16 +113,24 @@ class SupabaseAuthRepository @Inject constructor(
         is SessionStatus.RefreshFailure -> SessionState.RefreshFailed
     }
 
-    private fun AuthRestException.toUserMessage(): String = when (errorCode) {
+    private fun AuthRestException.toFailureReason(): AuthFailureReason = when {
+        errorCode == AuthErrorCode.EmailNotConfirmed -> AuthFailureReason.EMAIL_NOT_CONFIRMED
+        AuthErrorMessages.isRateLimit(this) -> AuthFailureReason.RATE_LIMITED
+        else -> AuthFailureReason.OTHER
+    }
+
+    private fun AuthRestException.toUserMessage(): String = if (this is AuthWeakPasswordException) {
+        AuthErrorMessages.weakPassword(reasons)
+    } else when (errorCode) {
         AuthErrorCode.InvalidCredentials -> "Email or password is incorrect."
-        AuthErrorCode.EmailNotConfirmed -> "Confirm your email before signing in."
+        AuthErrorCode.EmailNotConfirmed -> "Confirm your email before signing in. Open the link we emailed you, then try again."
         AuthErrorCode.EmailAddressInvalid -> "Enter a valid email address."
-        AuthErrorCode.WeakPassword -> "Choose a stronger password."
+        AuthErrorCode.WeakPassword -> AuthErrorMessages.weakPassword(emptyList())
+        AuthErrorCode.UserAlreadyExists, AuthErrorCode.EmailExists -> "An account with this email already exists. Sign in instead."
         AuthErrorCode.SignupDisabled -> "New account registration is currently unavailable."
         AuthErrorCode.UserBanned -> "This account is currently unavailable."
-        AuthErrorCode.OverRequestRateLimit,
-        AuthErrorCode.OverEmailSendRateLimit,
-        -> "Too many attempts. Wait a moment and try again."
+        AuthErrorCode.OverEmailSendRateLimit -> AuthErrorMessages.TOO_MANY_EMAILS
+        AuthErrorCode.OverRequestRateLimit -> AuthErrorMessages.TOO_MANY_ATTEMPTS
         else -> "Authentication failed. Try again."
     }
 }

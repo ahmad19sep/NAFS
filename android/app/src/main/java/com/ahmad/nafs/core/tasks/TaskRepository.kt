@@ -15,6 +15,16 @@ interface TaskRepository {
         completed: Boolean,
     ): TaskActionResult
 
+    /**
+     * Moves an open task to the period that contains [periodDate] (for example a missed task to today or
+     * tomorrow). The task stays active; a completed task is not moved.
+     */
+    suspend fun reschedule(
+        userId: String,
+        taskId: String,
+        periodDate: LocalDate,
+    ): TaskActionResult
+
     suspend fun softDelete(userId: String, taskId: String): TaskActionResult
 
     suspend fun restore(userId: String, taskId: String): TaskActionResult

@@ -1,29 +1,20 @@
 package com.ahmad.nafs.core.reminders
 
-import android.Manifest
-import android.annotation.SuppressLint
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.work.CoroutineWorker
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.ahmad.nafs.MainActivity
-import com.ahmad.nafs.R
 import com.ahmad.nafs.core.tasks.NafsTask
 import com.ahmad.nafs.domain.tasks.TaskPeriodType
-import com.ahmad.nafs.domain.tasks.TaskReminderPlanner
 import com.ahmad.nafs.domain.tasks.TaskReminderDeliveryRule
+import com.ahmad.nafs.domain.tasks.TaskReminderPlanner
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -45,10 +36,11 @@ class TaskReminderScheduler @Inject constructor(
             .filter { it.type == TaskPeriodType.DAILY && !it.isCompleted && it.dueTime != null }
             .toList()
         TaskReminderRegistry.replaceForUser(context, userId, eligible.map(NafsTask::id).toSet())
-        if (!ReminderPreferences.read(context, userId).tasks) {
+        val options = ReminderPreferences.read(context, userId)
+        if (!options.tasks) {
             TaskReminderRegistry.clearUser(context, userId); return
         }
-        eligible.forEach { schedule(it, timezone) }
+        eligible.forEach { schedule(it, timezone, options.taskLeadMinutes) }
     }
 
     suspend fun cancelTask(taskId: String) {
@@ -67,10 +59,24 @@ class TaskReminderScheduler @Inject constructor(
         cancelByTag(userTag(userId))
     }
 
-    fun ensureNotificationChannel() = TaskReminderNotifications.ensureChannel(context)
+    fun ensureNotificationChannel() = NafsNotifications.ensureChannels(context)
 
-    private fun schedule(task: NafsTask, timezone: String) {
-        TaskReminderNotifications.ensureChannel(context)
+    /** Shows the reminder again in [minutes]; it still goes quiet once the task is completed or deleted. */
+    internal fun snooze(userId: String, taskId: String, title: String, dueAtEpochMillis: Long, minutes: Long) {
+        TaskReminderNotifications.cancel(context, taskId)
+        ExactAlarms.set(
+            context,
+            ExactAlarms.intent(context, ReminderAlarmScheduler.ACTION_TASK, snoozeKey(taskId))
+                .putExtra(TaskReminderWorker.KEY_TASK_ID, taskId)
+                .putExtra(TaskReminderWorker.KEY_USER_ID, userId)
+                .putExtra(TaskReminderWorker.KEY_TITLE, title)
+                .putExtra(TaskReminderWorker.KEY_DUE_AT_EPOCH_MILLIS, dueAtEpochMillis)
+                .putExtra(TaskReminderWorker.KEY_SNOOZED, true),
+            Instant.now().plus(minutes, ChronoUnit.MINUTES),
+        )
+    }
+
+    private fun schedule(task: NafsTask, timezone: String, leadMinutes: Int) {
         val now = Instant.now()
         val dueTime = task.dueTime ?: return
         TaskReminderPlanner.plan(
@@ -78,6 +84,7 @@ class TaskReminderScheduler @Inject constructor(
             dueTime = dueTime,
             timezone = timezone,
             now = now,
+            leadMinutes = leadMinutes,
         ).forEach { reminder ->
             // An exact alarm, like prayer alerts: a deferred background job could be dropped after the due time.
             ExactAlarms.set(
@@ -93,12 +100,17 @@ class TaskReminderScheduler @Inject constructor(
         }
     }
 
-    /** Includes the earlier 60-minute offset so alarms from previous versions are also removed. */
-    private fun cancelAlarms(taskId: String) = listOf(30, 60).forEach {
-        ExactAlarms.cancel(context, ExactAlarms.intent(context, ReminderAlarmScheduler.ACTION_TASK, alarmKey(taskId, it)))
+    /** Every lead time a version of the app may have used, so changing the setting never leaves an old alarm behind. */
+    private fun cancelAlarms(taskId: String) {
+        (ReminderOptions.taskLeadChoices + LEGACY_LEADS).distinct().forEach {
+            ExactAlarms.cancel(context, ExactAlarms.intent(context, ReminderAlarmScheduler.ACTION_TASK, alarmKey(taskId, it)))
+        }
+        ExactAlarms.cancel(context, ExactAlarms.intent(context, ReminderAlarmScheduler.ACTION_TASK, snoozeKey(taskId)))
     }
 
     private fun alarmKey(taskId: String, minutesBefore: Int) = "task/$taskId/$minutesBefore"
+
+    private fun snoozeKey(taskId: String) = "task/$taskId/snooze"
 
     private suspend fun cancelByTag(tag: String) {
         withContext(Dispatchers.IO) {
@@ -112,6 +124,7 @@ class TaskReminderScheduler @Inject constructor(
 
     private companion object {
         const val MAX_NOTIFICATION_TITLE_LENGTH = 200
+        val LEGACY_LEADS = listOf(30, 60)
     }
 }
 
@@ -123,16 +136,23 @@ internal object TaskReminderDelivery {
         intent.getStringExtra(TaskReminderWorker.KEY_USER_ID),
         intent.getStringExtra(TaskReminderWorker.KEY_TITLE),
         intent.getLongExtra(TaskReminderWorker.KEY_DUE_AT_EPOCH_MILLIS, 0L),
+        intent.getBooleanExtra(TaskReminderWorker.KEY_SNOOZED, false),
     )
 
-    fun deliver(context: Context, taskId: String?, userId: String?, title: String?, dueAtEpochMillis: Long) {
+    fun deliver(context: Context, taskId: String?, userId: String?, title: String?, dueAtEpochMillis: Long, snoozed: Boolean = false) {
         if (taskId == null || userId == null || title == null || dueAtEpochMillis <= 0L) return
         if (!ReminderPreferences.read(context, userId).tasks) return
         if (ReminderAccount.read(context)?.user?.let { it != userId } == true) return
         // Completed, deleted and signed-out tasks leave the registry, so their alarms stay silent.
         if (!TaskReminderRegistry.isActive(context, userId, taskId)) return
-        val minutesRemaining = TaskReminderDeliveryRule.minutesRemaining(Instant.ofEpochMilli(dueAtEpochMillis), Instant.now()) ?: return
-        TaskReminderNotifications.show(context = context, taskId = taskId, title = title, minutesRemaining = minutesRemaining)
+        val dueAt = Instant.ofEpochMilli(dueAtEpochMillis)
+        val now = Instant.now()
+        // A first alert that arrives after the due time is pointless; a snoozed one may say the task is overdue.
+        val timing = (
+            if (snoozed) TaskReminderDeliveryRule.dueText(dueAt, now)
+            else TaskReminderDeliveryRule.minutesRemaining(dueAt, now)?.let { TaskReminderDeliveryRule.dueText(dueAt, now) }
+        ) ?: return
+        TaskReminderNotifications.show(context, userId, taskId, title, timing, dueAtEpochMillis)
     }
 }
 
@@ -154,71 +174,37 @@ class TaskReminderWorker(
         const val KEY_TITLE = "title"
         const val KEY_MINUTES_BEFORE = "minutes_before"
         const val KEY_DUE_AT_EPOCH_MILLIS = "due_at_epoch_millis"
+        const val KEY_SNOOZED = "snoozed"
     }
 }
 
-private object TaskReminderNotifications {
-    private const val CHANNEL_ID = "task_due_reminders"
+internal object TaskReminderNotifications {
+    const val SNOOZE_MINUTES = 10L
 
-    fun ensureChannel(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val manager = context.getSystemService(NotificationManager::class.java)
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            context.getString(R.string.task_reminder_channel_name),
-            NotificationManager.IMPORTANCE_HIGH,
-        ).apply {
-            description = context.getString(R.string.task_reminder_channel_description)
-        }
-        manager.createNotificationChannel(channel)
-    }
+    private fun tag(taskId: String) = "task:$taskId"
 
-    @SuppressLint("MissingPermission")
-    fun show(
-        context: Context,
-        taskId: String,
-        title: String,
-        minutesRemaining: Int,
-    ) {
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
-        val manager = NotificationManagerCompat.from(context)
-        if (!manager.areNotificationsEnabled()) return
-        ensureChannel(context)
-
-        val launchIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra(MainActivity.EXTRA_DESTINATION, MainActivity.DESTINATION_TASKS)
-            putExtra(MainActivity.EXTRA_TASK_ID, taskId)
-        }
-        val contentIntent = PendingIntent.getActivity(
-            context,
-            taskId.hashCode(),
-            launchIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val timing = if (minutesRemaining == 1) "1 minute" else "$minutesRemaining minutes"
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
+    fun show(context: Context, userId: String, taskId: String, title: String, timing: String, dueAtEpochMillis: Long) {
+        val key = tag(taskId)
+        val builder = NafsNotifications.builder(context, NafsChannel.TASKS)
             .setContentTitle(title)
-            .setContentText("Due in $timing")
-            .setContentIntent(contentIntent)
-            .setAutoCancel(true)
+            .setContentText(timing)
+            .setContentIntent(NafsNotifications.openApp(context, key, MainActivity.DESTINATION_TASKS))
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .build()
-        manager.notify("task:$taskId", 0, notification)
+            .addAction(0, "Mark done", ReminderActions.pending(context, ReminderActions.TASK_DONE, key) {
+                putExtra(ReminderActions.EXTRA_USER, userId)
+                putExtra(ReminderActions.EXTRA_ID, taskId)
+                putExtra(ReminderActions.EXTRA_TITLE, title)
+            })
+            .addAction(0, "Snooze $SNOOZE_MINUTES min", ReminderActions.pending(context, ReminderActions.TASK_SNOOZE, key) {
+                putExtra(ReminderActions.EXTRA_USER, userId)
+                putExtra(ReminderActions.EXTRA_ID, taskId)
+                putExtra(ReminderActions.EXTRA_TITLE, title)
+                putExtra(ReminderActions.EXTRA_DUE, dueAtEpochMillis)
+            })
+        NafsNotifications.notify(context, key, builder)
     }
 
-    fun cancel(context: Context, taskId: String) {
-        NotificationManagerCompat.from(context).cancel("task:$taskId", 0)
-    }
+    fun cancel(context: Context, taskId: String) = NafsNotifications.cancel(context, tag(taskId))
 }
 
 private object TaskReminderRegistry {

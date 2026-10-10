@@ -1,11 +1,57 @@
 package com.ahmad.nafs.ui.advice
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Autorenew
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Flag
+import androidx.compose.material.icons.rounded.Insights
+import androidx.compose.material.icons.rounded.TaskAlt
+import androidx.compose.material.icons.rounded.WarningAmber
+import androidx.compose.material.icons.rounded.Whatshot
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -13,12 +59,30 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.ahmad.nafs.core.network.NafsApiClient
 import com.ahmad.nafs.core.network.SupabaseClientProvider
+import com.ahmad.nafs.core.plans.AdviceProposals
+import com.ahmad.nafs.core.plans.PlanProposal
+import com.ahmad.nafs.core.plans.PlanStepState
+import com.ahmad.nafs.core.profile.UserProfile
 import com.ahmad.nafs.core.records.PrivateRecordStore
 import com.ahmad.nafs.core.records.RecordRules
-import com.ahmad.nafs.core.profile.UserProfile
-import com.ahmad.nafs.core.plans.AdviceProposals
+import com.ahmad.nafs.ui.components.NafsBanner
+import com.ahmad.nafs.ui.components.NafsBannerKind
+import com.ahmad.nafs.ui.components.NafsCard
+import com.ahmad.nafs.ui.components.NafsChoiceChip
+import com.ahmad.nafs.ui.components.NafsDivider
+import com.ahmad.nafs.ui.components.NafsEmojiBadge
+import com.ahmad.nafs.ui.components.NafsEmptyState
+import com.ahmad.nafs.ui.components.NafsEyebrow
+import com.ahmad.nafs.ui.components.NafsIconBadge
+import com.ahmad.nafs.ui.components.NafsPill
+import com.ahmad.nafs.ui.components.NafsPrimaryButton
+import com.ahmad.nafs.ui.components.NafsSecondaryButton
+import com.ahmad.nafs.ui.components.NafsSectionTitle
+import com.ahmad.nafs.ui.components.NafsSpace
+import com.ahmad.nafs.ui.components.NafsTopBar
 import com.ahmad.nafs.ui.progress.ProgressText
 import com.ahmad.nafs.ui.reports.ReportMarkdown
+import com.ahmad.nafs.ui.theme.Nafs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.jan.supabase.postgrest.from
 import java.util.UUID
@@ -158,55 +222,280 @@ private fun adviceText(value: JsonElement): String = when (value) {
     is JsonObject -> value.entries.filter { it.value != JsonNull && it.key !in setOf("request_id", "id", "user_id") }.joinToString("\n\n") { (key, child) -> "**${ProgressText.label(key)}**\n${adviceText(child)}" }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdviceRoute(profile: UserProfile, period: String?, offset: Int, onBack: () -> Unit, viewModel: AdviceViewModel = hiltViewModel(),
     applyViewModel: AdviceApplyViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val applyState by applyViewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(profile.userId, state.result) { state.result?.let { applyViewModel.initialize(profile, it) } }
-    var confirmClear by remember { mutableStateOf(false) }
     LaunchedEffect(profile.userId) { viewModel.initialize(profile.userId, profile.timezone, period, offset) }
-    Scaffold(topBar = { TopAppBar(title = { Text("Coach advice") }, navigationIcon = { TextButton(onClick = onBack) { Text("Back") } }) }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (state.busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            if (period == null) items(AdviceAction.entries.filter { it != AdviceAction.REVIEW }) { action ->
-                FilterChip(selected = state.action == action, onClick = { viewModel.select(action) }, enabled = !state.busy && !applyState.busy && state.request == null, label = { Text(action.label) })
+    AdviceScreen(
+        state = state,
+        applyState = applyState,
+        reviewMode = period != null,
+        actions = AdviceActions(
+            onBack = onBack,
+            onSelectAction = viewModel::select,
+            onSelectRow = viewModel::selectId,
+            onGenerate = viewModel::generate,
+            onClearRequest = viewModel::clearRequest,
+            onAdd = { result, index -> applyViewModel.add(profile, result, index) },
+        ),
+    )
+}
+
+/** Everything the advice screen can ask its two ViewModels to do. */
+internal data class AdviceActions(
+    val onBack: () -> Unit = {},
+    val onSelectAction: (AdviceAction) -> Unit = {},
+    val onSelectRow: (String) -> Unit = {},
+    val onGenerate: () -> Unit = {},
+    val onClearRequest: () -> Unit = {},
+    val onAdd: (result: JsonObject, index: Int) -> Unit = { _, _ -> },
+)
+
+@Composable
+internal fun AdviceScreen(state: AdviceState, applyState: AdviceApplyState, reviewMode: Boolean, actions: AdviceActions) {
+    var confirmClear by remember { mutableStateOf(false) }
+    val choicesEnabled = !state.busy && !applyState.busy && state.request == null
+    val canGenerate = !state.busy && !applyState.busy && (state.action.table == null || state.selectedId != null || state.request != null)
+
+    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        NafsTopBar(
+            title = "Coach advice",
+            onBack = actions.onBack,
+            subtitle = if (reviewMode) "A coach review of your report" else "Suggestions you can act on",
+        )
+        Box(Modifier.fillMaxWidth().height(4.dp)) {
+            if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(start = NafsSpace.screen, end = NafsSpace.screen, top = 8.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(NafsSpace.item),
+        ) {
+            if (!reviewMode) item(key = "areas") {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    NafsEyebrow("What would you like help with?", Modifier.padding(start = 4.dp))
+                    WrapRow {
+                        AdviceAction.entries.filter { it != AdviceAction.REVIEW }.forEach { action ->
+                            NafsChoiceChip(
+                                action.label,
+                                selected = state.action == action,
+                                onClick = { actions.onSelectAction(action) },
+                                enabled = choicesEnabled,
+                            )
+                        }
+                    }
+                }
             }
-            if (state.action == AdviceAction.HEALTH) item { Text("Complete your Health baseline before requesting advice. Recommendations support daily habits and do not diagnose or replace medical care.") }
-            state.error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
-            if (state.action.table != null && state.rows.isEmpty() && !state.busy) item { Text("Create a saved ${state.action.table.orEmpty().removeSuffix("s")} first.") }
+            if (state.action == AdviceAction.HEALTH) item(key = "health-note") {
+                NafsBanner(
+                    "Complete your Health baseline before requesting advice. Recommendations support daily habits and do not diagnose or replace medical care.",
+                    kind = NafsBannerKind.INFO,
+                )
+            }
+            state.error?.let { error -> item(key = "error") { NafsBanner(error, kind = NafsBannerKind.ERROR) } }
+            if (state.action.table != null && state.rows.isEmpty() && !state.busy) item(key = "no-rows") {
+                NafsEmptyState(
+                    icon = adviceIcon(state.action),
+                    title = "Nothing to advise on yet",
+                    message = "Create a saved ${state.action.table.orEmpty().removeSuffix("s")} first.",
+                    tint = Nafs.colors.coach,
+                )
+            }
+            if (state.rows.isNotEmpty()) item(key = "rows-title") {
+                NafsEyebrow("Choose one", Modifier.padding(start = 4.dp, top = 8.dp))
+            }
             items(state.rows, key = { RecordRules.text(it, "id") }) { row ->
-                FilterChip(selected = state.selectedId == RecordRules.text(row, "id"), onClick = { viewModel.selectId(RecordRules.text(row, "id")) },
-                    enabled = !state.busy && !applyState.busy && state.request == null, label = { Text(RecordRules.text(row, if (state.action.table == "habits") "name" else "title")) })
+                val id = RecordRules.text(row, "id")
+                RecordChoice(
+                    label = RecordRules.text(row, if (state.action.table == "habits") "name" else "title"),
+                    isSelected = state.selectedId == id,
+                    enabled = choicesEnabled,
+                    onClick = { actions.onSelectRow(id) },
+                )
             }
-            item { Button(onClick = viewModel::generate, enabled = !state.busy && !applyState.busy && (state.action.table == null || state.selectedId != null || state.request != null)) { Text(if (state.request != null) "Retry exact request" else "Request advice") } }
-            if (state.request != null) item {
-                Text("An unresolved request is retained on this device.")
-                TextButton(onClick = { confirmClear = true }, enabled = !state.busy) { Text("Release retained request") }
+            if (state.request != null) item(key = "retained") {
+                NafsCard(borderColor = Nafs.colors.warning.copy(alpha = 0.4f), shape = MaterialTheme.shapes.medium, contentPadding = PaddingValues(16.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+                        Icon(Icons.Rounded.WarningAmber, contentDescription = null, tint = Nafs.colors.warning, modifier = Modifier.size(20.dp))
+                        Text("An unresolved request is retained on this device.", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    }
+                    TextButton(onClick = { confirmClear = true }, enabled = !state.busy, modifier = Modifier.padding(top = 6.dp)) {
+                        Text("Release retained request")
+                    }
+                }
             }
             state.result?.let { result ->
-                item { ReportMarkdown(adviceText(result)) }
+                item(key = "result") { AdviceResult(result) }
                 val proposals = AdviceProposals.parse(result)
-                if (proposals.isNotEmpty()) item { Text("Review suggestions, then add the ones you choose. Each button creates one item in your account.") }
-                proposals.forEachIndexed { index, proposal -> item {
-                    Card { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("${proposal.emoji} ${proposal.title}", style = MaterialTheme.typography.titleMedium)
-                        Text(proposal.description())
+                if (proposals.isNotEmpty()) item(key = "suggestions-title") {
+                    NafsSectionTitle(
+                        "Suggestions",
+                        Modifier.padding(top = 8.dp),
+                        supporting = "Review suggestions, then add the ones you choose. Each button creates one item in your account.",
+                    )
+                }
+                proposals.forEachIndexed { index, proposal ->
+                    item(key = "proposal-$index") {
                         val step = applyState.steps.getOrNull(index)
-                        OutlinedButton(onClick = { applyViewModel.add(profile, result, index) },
-                            enabled = applyState.ready && !applyState.busy && !state.busy && step?.added != true) {
-                            Text(if (step?.added == true) "Added" else if (step?.applyDate != null) "Retry and confirm" else "Add ${proposal.kind}")
-                        }
-                    } }
-                } }
-                applyState.message?.let { message -> item { Text(message) } }
+                        ProposalCard(
+                            proposal = proposal,
+                            step = step,
+                            enabled = applyState.ready && !applyState.busy && !state.busy && step?.added != true,
+                            onAdd = { actions.onAdd(result, index) },
+                        )
+                    }
+                }
+                applyState.message?.let { message -> item(key = "apply-message") { NafsBanner(message, kind = NafsBannerKind.INFO) } }
             }
-            item { Spacer(Modifier.height(80.dp)) }
+        }
+        Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Column(Modifier.navigationBarsPadding()) {
+                NafsDivider(inset = 0.dp)
+                NafsPrimaryButton(
+                    if (state.request != null) "Retry exact request" else "Request advice",
+                    onClick = actions.onGenerate,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = NafsSpace.screen, vertical = 12.dp),
+                    enabled = canGenerate,
+                    icon = Icons.Rounded.AutoAwesome,
+                )
+            }
         }
     }
     if (confirmClear) AlertDialog(onDismissRequest = { confirmClear = false }, title = { Text("Release this request?") },
+        icon = { Icon(Icons.Rounded.WarningAmber, contentDescription = null) },
         text = { Text("The server may still finish it. Starting another request can generate a second answer. Saved feature records remain unchanged.") },
-        confirmButton = { TextButton(onClick = { viewModel.clearRequest(); confirmClear = false }) { Text("Release") } },
+        confirmButton = { TextButton(onClick = { actions.onClearRequest(); confirmClear = false }) { Text("Release") } },
         dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Keep request") } })
+}
+
+private fun adviceIcon(action: AdviceAction): ImageVector = when (action) {
+    AdviceAction.HABIT -> Icons.Rounded.Autorenew
+    AdviceAction.CHALLENGE -> Icons.Rounded.Whatshot
+    AdviceAction.GOAL_STARTER, AdviceAction.GOAL_ALIGNMENT, AdviceAction.GOAL_PLAN -> Icons.Rounded.Flag
+    AdviceAction.HEALTH -> Icons.Rounded.Favorite
+    AdviceAction.REVIEW -> Icons.Rounded.Insights
+}
+
+@Composable
+private fun RecordChoice(label: String, isSelected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val shape = MaterialTheme.shapes.medium
+    Surface(
+        modifier = Modifier.fillMaxWidth().clip(shape)
+            .selectable(selected = isSelected, enabled = enabled, role = Role.RadioButton, onClick = onClick),
+        shape = shape,
+        color = if (isSelected) scheme.primaryContainer else scheme.surfaceContainer,
+        contentColor = if (isSelected) scheme.onPrimaryContainer else scheme.onSurface,
+        border = BorderStroke(1.dp, if (isSelected) scheme.primary.copy(alpha = 0.5f) else Nafs.colors.cardBorder),
+    ) {
+        Row(
+            Modifier.padding(start = 16.dp, end = 6.dp, top = 2.dp, bottom = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            RadioButton(selected = isSelected, onClick = null, enabled = enabled)
+        }
+    }
+}
+
+@Composable
+private fun AdviceResult(result: JsonObject) {
+    val coach = Nafs.colors.coach
+    val text = remember(result) { adviceText(result) }
+    NafsCard(contentPadding = PaddingValues(20.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            NafsIconBadge(Icons.Rounded.AutoAwesome, coach, size = 38.dp, iconSize = 20.dp)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                NafsEyebrow("From your coach", color = coach)
+                Text("Your advice", style = MaterialTheme.typography.titleMedium)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        SelectionContainer { ReportMarkdown(text) }
+    }
+}
+
+/** Label, icon and accent for each kind of suggested item. */
+private data class KindStyle(val label: String, val icon: ImageVector, val tint: Color)
+
+@Composable
+private fun kindStyle(kind: String): KindStyle {
+    val label = kind.replaceFirstChar(Char::uppercase)
+    return when (kind) {
+        "task" -> KindStyle(label, Icons.Rounded.TaskAlt, Nafs.colors.tasks)
+        "habit" -> KindStyle(label, Icons.Rounded.Autorenew, Nafs.colors.habits)
+        else -> KindStyle(label, Icons.Rounded.Whatshot, Nafs.colors.challenges)
+    }
+}
+
+@Composable
+private fun ProposalCard(proposal: PlanProposal, step: PlanStepState?, enabled: Boolean, onAdd: () -> Unit) {
+    val kind = kindStyle(proposal.kind)
+    val added = step?.added == true
+    NafsCard(
+        borderColor = if (added) Nafs.colors.success.copy(alpha = 0.45f) else Nafs.colors.cardBorder,
+        contentPadding = PaddingValues(16.dp),
+    ) {
+        ProposalHeader(proposal, kind, added)
+        Spacer(Modifier.height(14.dp))
+        NafsSecondaryButton(
+            text = if (added) "Added" else if (step?.applyDate != null) "Retry and confirm" else "Add ${proposal.kind}",
+            onClick = onAdd,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = enabled,
+            icon = if (added) Icons.Rounded.CheckCircle else Icons.Rounded.Add,
+        )
+    }
+}
+
+@Composable
+private fun ProposalHeader(proposal: PlanProposal, kind: KindStyle, added: Boolean) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+        NafsEmojiBadge(proposal.emoji, kind.tint)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(proposal.title, style = MaterialTheme.typography.titleMedium)
+            WrapRow(spacing = 6.dp) {
+                NafsPill(kind.label, color = kind.tint, icon = kind.icon)
+                proposal.description().split(" · ").filter { it.isNotBlank() }.forEach { detail ->
+                    NafsPill(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (added) NafsPill("Added", color = Nafs.colors.success, icon = Icons.Rounded.CheckCircle)
+            }
+        }
+    }
+}
+
+/** Wraps chips and labels onto as many lines as they need. */
+@Composable
+private fun WrapRow(modifier: Modifier = Modifier, spacing: Dp = 8.dp, content: @Composable () -> Unit) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val gap = spacing.roundToPx()
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val placeables = measurables.map { it.measure(loose) }
+        val positions = ArrayList<IntOffset>(placeables.size)
+        var x = 0
+        var y = 0
+        var rowHeight = 0
+        var widest = 0
+        placeables.forEach { placeable ->
+            if (x > 0 && x + placeable.width > constraints.maxWidth) {
+                x = 0
+                y += rowHeight + gap
+                rowHeight = 0
+            }
+            positions.add(IntOffset(x, y))
+            widest = maxOf(widest, x + placeable.width)
+            x += placeable.width + gap
+            rowHeight = maxOf(rowHeight, placeable.height)
+        }
+        val width = widest.coerceIn(constraints.minWidth, constraints.maxWidth)
+        val height = (y + rowHeight).coerceIn(constraints.minHeight, constraints.maxHeight)
+        layout(width, height) {
+            placeables.forEachIndexed { index, placeable -> placeable.placeRelative(positions[index].x, positions[index].y) }
+        }
+    }
 }

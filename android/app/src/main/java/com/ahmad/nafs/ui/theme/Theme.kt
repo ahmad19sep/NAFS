@@ -5,103 +5,197 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
-import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import com.ahmad.nafs.core.preferences.ThemeMode
 
 private val DarkColors = darkColorScheme(
-    primary = BrightMint,
-    onPrimary = Color(0xFF003731),
-    primaryContainer = Color(0xFF005048),
-    onPrimaryContainer = Color(0xFF8EF8E5),
-    secondary = Color(0xFFF2C66D),
-    onSecondary = Color(0xFF442B00),
-    secondaryContainer = Color(0xFF614000),
-    onSecondaryContainer = PaleGold,
-    tertiary = Color(0xFFAFC6FF),
-    background = DeepNavy,
+    primary = Emerald300,
+    onPrimary = Emerald900,
+    primaryContainer = EmeraldDeep,
+    onPrimaryContainer = Color(0xFFB4F4E5),
+    inversePrimary = Emerald600,
+    secondary = Gold300,
+    onSecondary = Color(0xFF3B2A00),
+    secondaryContainer = Gold800,
+    onSecondaryContainer = Gold200,
+    tertiary = Sky300,
+    onTertiary = Color(0xFF0F2551),
+    tertiaryContainer = SkyDeep,
+    onTertiaryContainer = SkyMist,
+    background = Night900,
     onBackground = NightText,
-    surface = DeepSurface,
+    surface = Night900,
     onSurface = NightText,
-    surfaceVariant = DeepElevated,
-    onSurfaceVariant = Color(0xFFB7CBC7),
-    outline = Color(0xFF839692),
-    error = Color(0xFFFFB3B8),
-    surfaceContainer = DeepSurface,
-    surfaceContainerHigh = DeepElevated,
+    surfaceVariant = Night700,
+    onSurfaceVariant = NightMuted,
+    surfaceTint = Emerald300,
+    inverseSurface = NightText,
+    inverseOnSurface = Night900,
+    error = Rose300,
+    onError = Color(0xFF55101B),
+    errorContainer = Color(0xFF4A1820),
+    onErrorContainer = Color(0xFFFFDADC),
+    outline = Night500,
+    outlineVariant = Night650,
+    scrim = Color.Black,
+    surfaceBright = Night650,
+    surfaceDim = Night950,
+    surfaceContainerLowest = Night950,
+    surfaceContainerLow = Night850,
+    surfaceContainer = Night800,
+    surfaceContainerHigh = Night750,
+    surfaceContainerHighest = Night700,
 )
 
 private val LightColors = lightColorScheme(
-    primary = Emerald,
+    primary = Emerald600,
     onPrimary = Color.White,
-    primaryContainer = PaleMint,
-    onPrimaryContainer = Color(0xFF00201C),
-    secondary = Color(0xFF805D18),
+    primaryContainer = EmeraldMist,
+    onPrimaryContainer = Emerald900,
+    inversePrimary = Emerald300,
+    secondary = Gold600,
     onSecondary = Color.White,
-    secondaryContainer = PaleGold,
-    onSecondaryContainer = Color(0xFF281800),
-    tertiary = Color(0xFF405D8B),
-    background = WarmIvory,
+    secondaryContainer = GoldMist,
+    onSecondaryContainer = Color(0xFF2C1F00),
+    tertiary = Sky600,
+    onTertiary = Color.White,
+    tertiaryContainer = SkyMist,
+    onTertiaryContainer = Color(0xFF0D1C3E),
+    background = Paper100,
     onBackground = Ink,
-    surface = Paper,
+    surface = Paper100,
     onSurface = Ink,
-    surfaceVariant = SoftSand,
-    onSurfaceVariant = Slate,
-    outline = Color(0xFF718786),
-    error = ErrorRed,
-    surfaceContainer = Color(0xFFF0F1EB),
-    surfaceContainerHigh = Color(0xFFE9ECE5),
+    surfaceVariant = Paper300,
+    onSurfaceVariant = InkMuted,
+    surfaceTint = Emerald600,
+    inverseSurface = Color(0xFF233532),
+    inverseOnSurface = Paper100,
+    error = Rose600,
+    onError = Color.White,
+    errorContainer = Color(0xFFFFDADC),
+    onErrorContainer = Color(0xFF410011),
+    outline = Color(0xFFB9BDB5),
+    outlineVariant = Paper400,
+    scrim = Color.Black,
+    surfaceBright = Paper50,
+    surfaceDim = Paper300,
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Paper50,
+    surfaceContainer = Color.White,
+    surfaceContainerHigh = Paper200,
+    surfaceContainerHighest = Paper300,
 )
 
-private val NafsTypography = Typography(
-    displaySmall = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.Bold,
-        fontSize = 38.sp,
-        lineHeight = 44.sp,
-        letterSpacing = (-0.8).sp,
-    ),
-    headlineLarge = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.Bold,
-        fontSize = 32.sp,
-        lineHeight = 38.sp,
-        letterSpacing = (-0.5).sp,
-    ),
-    headlineMedium = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 27.sp,
-        lineHeight = 33.sp,
-    ),
-    headlineSmall = TextStyle(
-        fontFamily = FontFamily.SansSerif,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 23.sp,
-        lineHeight = 29.sp,
-    ),
-    titleLarge = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 26.sp),
-    titleMedium = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 22.sp),
-    titleSmall = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp),
-    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 25.sp),
-    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 21.sp),
-    bodySmall = TextStyle(fontSize = 12.sp, lineHeight = 18.sp),
-    labelLarge = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 20.sp),
-    labelMedium = TextStyle(fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 17.sp),
+/** Colours Material 3 has no role for: status, gold, the hero surface and per-feature accents. */
+@Immutable
+data class NafsColors(
+    val isDark: Boolean,
+    val success: Color,
+    val successContainer: Color,
+    val onSuccessContainer: Color,
+    val warning: Color,
+    val warningContainer: Color,
+    val onWarningContainer: Color,
+    val gold: Color,
+    val goldSoft: Color,
+    val heroTop: Color,
+    val heroBottom: Color,
+    val heroGlow: Color,
+    val onHero: Color,
+    val onHeroMuted: Color,
+    /** Accents that stay legible on the hero gradient in both themes. */
+    val heroGold: Color,
+    val heroMint: Color,
+    val heroSky: Color,
+    val cardBorder: Color,
+    val tasks: Color,
+    val habits: Color,
+    val goals: Color,
+    val challenges: Color,
+    val health: Color,
+    val deen: Color,
+    val coach: Color,
+    val reflect: Color,
 )
 
-private val NafsShapes = Shapes(
+private val DarkNafsColors = NafsColors(
+    isDark = true,
+    success = Success300,
+    successContainer = Color(0xFF113A27),
+    onSuccessContainer = Color(0xFFB9F5CF),
+    warning = Warning300,
+    warningContainer = Color(0xFF45300D),
+    onWarningContainer = Color(0xFFFFE0B5),
+    gold = Gold300,
+    goldSoft = Gold300.copy(alpha = 0.14f),
+    heroTop = Color(0xFF123B3A),
+    heroBottom = Color(0xFF0A1E26),
+    heroGlow = Gold400.copy(alpha = 0.22f),
+    onHero = Color(0xFFF4F8F6),
+    onHeroMuted = Color(0xFFB9CCC8),
+    heroGold = Gold300,
+    heroMint = Emerald300,
+    heroSky = AccentTasksDark,
+    cardBorder = Color.White.copy(alpha = 0.07f),
+    tasks = AccentTasksDark,
+    habits = Emerald300,
+    goals = Gold300,
+    challenges = AccentChallengesDark,
+    health = AccentHealthDark,
+    deen = AccentDeenDark,
+    coach = AccentCoachDark,
+    reflect = Gold300,
+)
+
+private val LightNafsColors = NafsColors(
+    isDark = false,
+    success = Success600,
+    successContainer = Color(0xFFD6F5E1),
+    onSuccessContainer = Color(0xFF00391D),
+    warning = Warning600,
+    warningContainer = Color(0xFFFFE6C4),
+    onWarningContainer = Color(0xFF3A2000),
+    gold = Gold600,
+    goldSoft = Gold400.copy(alpha = 0.18f),
+    heroTop = Color(0xFF0F6458),
+    heroBottom = Color(0xFF0A3F3D),
+    heroGlow = Gold300.copy(alpha = 0.30f),
+    onHero = Color(0xFFFFFFFF),
+    onHeroMuted = Color(0xFFCDE6DF),
+    heroGold = Gold300,
+    heroMint = Emerald300,
+    heroSky = AccentTasksDark,
+    cardBorder = Color(0xFF10201E).copy(alpha = 0.07f),
+    tasks = AccentTasksLight,
+    habits = Emerald600,
+    goals = Gold600,
+    challenges = AccentChallengesLight,
+    health = AccentHealthLight,
+    deen = AccentDeenLight,
+    coach = AccentCoachLight,
+    reflect = Gold600,
+)
+
+val LocalNafsColors = staticCompositionLocalOf { DarkNafsColors }
+
+/** Access point for NAFS-specific tokens: `Nafs.colors.gold`. */
+object Nafs {
+    val colors: NafsColors
+        @Composable @ReadOnlyComposable get() = LocalNafsColors.current
+}
+
+val NafsShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(18.dp),
@@ -119,12 +213,11 @@ fun NafsTheme(
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
     }
-    val colors = if (darkTheme) DarkColors else LightColors
     val view = LocalView.current
 
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
+            val window = (view.context as? Activity)?.window ?: return@SideEffect
             WindowCompat.getInsetsController(window, view).apply {
                 isAppearanceLightStatusBars = !darkTheme
                 isAppearanceLightNavigationBars = !darkTheme
@@ -132,10 +225,12 @@ fun NafsTheme(
         }
     }
 
-    MaterialTheme(
-        colorScheme = colors,
-        typography = NafsTypography,
-        shapes = NafsShapes,
-        content = content,
-    )
+    CompositionLocalProvider(LocalNafsColors provides if (darkTheme) DarkNafsColors else LightNafsColors) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColors else LightColors,
+            typography = NafsTypography,
+            shapes = NafsShapes,
+            content = content,
+        )
+    }
 }

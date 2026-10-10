@@ -29,7 +29,7 @@ import androidx.room.RoomDatabase
         CachedRecoveryEntity::class,
         RecordCacheEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 abstract class NafsDatabase : RoomDatabase() {

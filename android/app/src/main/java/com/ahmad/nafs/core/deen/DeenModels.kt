@@ -1,6 +1,7 @@
 package com.ahmad.nafs.core.deen
 
 import java.time.LocalDate
+import kotlin.math.floor
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -51,9 +52,37 @@ data class PrayerLog(
     val prayerPoints: Int get() = Prayer.entries.sumOf(::status)
 }
 
+/** An activity the web app suggests. A counter has a [target] and [unit]; the rest are yes/no. */
+data class DeenExtraSuggestion(val name: String, val emoji: String, val weight: Int, val target: Int? = null, val unit: String? = null) {
+    val isCounter: Boolean get() = target != null
+}
+
 /** Keep the original JSON object when changing a field, including fields added by the web app. */
 object DeenExtraRules {
-    val suggestions = linkedMapOf("Tahajjud" to 3, "Witr" to 2, "Sunnah (Rawatib)" to 2, "Duha" to 2, "Tarawih" to 3)
+    /** The web app's suggestions with its emoji, weights, targets and units, in its order. */
+    val catalog = listOf(
+        DeenExtraSuggestion("Tahajjud", "🌃", 3),
+        DeenExtraSuggestion("Witr", "🤲", 2),
+        DeenExtraSuggestion("Sunnah (Rawatib)", "✨", 2),
+        DeenExtraSuggestion("Duha", "🌅", 2),
+        DeenExtraSuggestion("Tarawih", "🕌", 3),
+        DeenExtraSuggestion("Quran", "📖", 3, target = 5, unit = "pages"),
+        DeenExtraSuggestion("Dhikr", "📿", 2, target = 100, unit = "count"),
+        DeenExtraSuggestion("Hadith", "📜", 1, target = 1, unit = "hadith"),
+        DeenExtraSuggestion("Islamic Learning", "🎓", 2, target = 15, unit = "mins"),
+        DeenExtraSuggestion("Listen to Quran", "🎧", 1, target = 10, unit = "mins"),
+        DeenExtraSuggestion("Sadaqah", "💝", 2),
+        DeenExtraSuggestion("Sunnah Fast", "🌙", 3),
+        DeenExtraSuggestion("Helped someone", "🤝", 1),
+        DeenExtraSuggestion("Istighfar (100x)", "🤲", 1),
+    )
+
+    /** Yes/no suggestions and their weights. */
+    val suggestions: LinkedHashMap<String, Int> =
+        catalog.filterNot { it.isCounter }.associateTo(LinkedHashMap()) { it.name to it.weight }
+
+    /** The highest counter value the validator accepts. */
+    const val MAX_COUNT = 1_000_000.0
 
     fun name(item: JsonObject): String = (item["name"] as? JsonPrimitive)?.contentOrNull.orEmpty()
     fun type(item: JsonObject): String? = (item["type"] as? JsonPrimitive)?.contentOrNull
@@ -62,17 +91,40 @@ object DeenExtraRules {
 
     fun done(item: JsonObject): Boolean = (item["done"] as? JsonPrimitive)?.booleanOrNull == true
     fun status(item: JsonObject): Int = (item["status"] as? JsonPrimitive)?.intOrNull ?: 0
+    fun unit(item: JsonObject): String = (item["unit"] as? JsonPrimitive)?.contentOrNull.orEmpty().trim()
     fun patch(item: JsonObject, field: String, value: JsonPrimitive): JsonObject = JsonObject(item + (field to value))
 
     fun newPrayer(name: String): JsonObject = JsonObject(
         mapOf(
             "name" to JsonPrimitive(name.trim()),
             "type" to JsonPrimitive("boolean"),
-            "emoji" to JsonPrimitive("✨"),
+            "emoji" to JsonPrimitive(catalog.firstOrNull { it.name == name.trim() && !it.isCounter }?.emoji ?: "✨"),
             "score_weight" to JsonPrimitive(suggestions[name.trim()] ?: 1),
             "done" to JsonPrimitive(false),
         ),
     )
+
+    /** A counter in the shape the web app writes: type "count" with value, target and unit. */
+    fun newCounter(suggestion: DeenExtraSuggestion): JsonObject = JsonObject(
+        mapOf(
+            "name" to JsonPrimitive(suggestion.name),
+            "type" to JsonPrimitive("count"),
+            "emoji" to JsonPrimitive(suggestion.emoji),
+            "score_weight" to JsonPrimitive(suggestion.weight),
+            "value" to JsonPrimitive(0),
+            "target" to JsonPrimitive(suggestion.target ?: 1),
+            "unit" to JsonPrimitive(suggestion.unit.orEmpty()),
+        ),
+    )
+
+    fun newExtra(suggestion: DeenExtraSuggestion): JsonObject =
+        if (suggestion.isCounter) newCounter(suggestion) else newPrayer(suggestion.name)
+
+    /** A counter after one −/+ step: a whole number from 0 to the validator's limit; other fields are kept. */
+    fun step(item: JsonObject, by: Int): JsonObject {
+        val next = (floor(number(item, "value")) + by).coerceIn(0.0, MAX_COUNT)
+        return patch(item, "value", JsonPrimitive(next.toLong()))
+    }
 
     fun points(item: JsonObject): Pair<Int, Int> = when (type(item)) {
         "boolean" -> number(item, "score_weight", 1.0).toInt().let { weight -> (if (done(item)) weight else 0) to weight }

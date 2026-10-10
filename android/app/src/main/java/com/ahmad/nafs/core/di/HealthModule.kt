@@ -1,6 +1,8 @@
 package com.ahmad.nafs.core.di
 
+import com.ahmad.nafs.core.health.HealthPreferenceStore
 import com.ahmad.nafs.core.health.HealthRepository
+import com.ahmad.nafs.core.health.SharedHealthPreferenceStore
 import com.ahmad.nafs.core.health.SupabaseHealthRepository
 import dagger.Binds
 import dagger.Module
@@ -14,4 +16,8 @@ abstract class HealthModule {
     @Binds
     @Singleton
     abstract fun bindHealthRepository(implementation: SupabaseHealthRepository): HealthRepository
+
+    @Binds
+    @Singleton
+    abstract fun bindHealthPreferenceStore(implementation: SharedHealthPreferenceStore): HealthPreferenceStore
 }

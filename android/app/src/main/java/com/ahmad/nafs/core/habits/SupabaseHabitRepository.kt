@@ -4,16 +4,22 @@ import com.ahmad.nafs.core.database.CachedHabitDao
 import com.ahmad.nafs.core.database.CachedHabitEntity
 import com.ahmad.nafs.core.database.CachedHabitLogEntity
 import com.ahmad.nafs.core.network.SupabaseClientProvider
+import com.ahmad.nafs.domain.habits.HabitResult
+import com.ahmad.nafs.domain.habits.HabitStreak
 import com.ahmad.nafs.domain.habits.HabitType
 import com.ahmad.nafs.domain.habits.ScheduleKind
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.Order
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonNull
@@ -25,15 +31,16 @@ class SupabaseHabitRepository @Inject constructor(
     private val clientProvider: SupabaseClientProvider,
     private val cache: CachedHabitDao,
 ) : HabitRepository {
+    /** One streak recount at a time, so an older recount can never land after a newer one. */
+    private val streakLock = Mutex()
+
     override suspend fun load(userId: String, today: LocalDate): HabitLoadResult {
         val startDate = today.minusDays(LOOKBACK_DAYS)
         return try {
             val habits = requireClient().from("habits").select(HABIT_COLUMNS) {
                 filter { eq("user_id", userId); eq("is_active", true) }
             }.decodeList<HabitDto>().map(HabitDto::toModel)
-            val logs = requireClient().from("habit_logs").select(LOG_COLUMNS) {
-                filter { eq("user_id", userId); gte("date", startDate.toString()) }
-            }.decodeList<HabitLogDto>().map(HabitLogDto::toModel)
+            val logs = fetchLogs(userId, startDate)
             cache.replaceForUser(
                 userId,
                 habits.map(Habit::toEntity),
@@ -112,6 +119,21 @@ class SupabaseHabitRepository @Inject constructor(
         HabitDefinitionActionResult.Success(habit)
     }
 
+    override suspend fun archive(userId: String, habitId: String): HabitDefinitionActionResult =
+        habitDefinitionAction {
+            val habit = setActive(userId, habitId, active = false)
+            // The server has it; a local cache hiccup must not report the archive as failed.
+            bestEffort { cache.deleteHabit(userId, habitId) }
+            HabitDefinitionActionResult.Success(habit)
+        }
+
+    override suspend fun restore(userId: String, habitId: String): HabitDefinitionActionResult =
+        habitDefinitionAction {
+            val habit = setActive(userId, habitId, active = true)
+            bestEffort { cache.upsertHabit(habit.toEntity()) }
+            HabitDefinitionActionResult.Success(habit)
+        }
+
     override suspend fun log(intent: LogHabitIntent): HabitActionResult = try {
         val log = intent.toLog()
         val subjectPosition = if (intent.habit.type == HabitType.SUBJECT) {
@@ -151,7 +173,92 @@ class SupabaseHabitRepository @Inject constructor(
         HabitActionResult.Failure(message)
     }
 
+    /**
+     * The web log route's recount (`api/habits/log`): current streak from the server's last 400 days, longest kept
+     * at its stored high so runs older than the lookback still count. Reads the row and logs fresh, so a log made
+     * on another device is included.
+     */
+    override suspend fun refreshStreak(
+        userId: String,
+        habitId: String,
+        today: LocalDate,
+    ): HabitStreakUpdate? = streakLock.withLock {
+        try {
+            val stored = requireClient().from("habits").select(HABIT_COLUMNS) {
+                filter {
+                    eq("id", habitId)
+                    eq("user_id", userId)
+                    eq("is_active", true)
+                }
+                limit(1)
+            }.decodeList<HabitDto>().firstOrNull()?.toModel() ?: return@withLock null
+            // Paused habits neither build nor break a streak, so a backfilled entry leaves the stored values alone.
+            if (stored.isPaused) return@withLock HabitStreakUpdate(stored.currentStreak, stored.longestStreak)
+            val results = fetchLogs(userId, today.minusDays(LOOKBACK_DAYS), habitId).map { log ->
+                HabitResult(log.date, log.completed, log.value, log.durationMinutes)
+            }
+            val streak = HabitStreak.summary(stored.schedule(), results, today, storedBest = stored.longestStreak)
+            val habit = if (streak.current == stored.currentStreak && streak.best == stored.longestStreak) {
+                stored
+            } else {
+                requireClient().from("habits")
+                    .update(StreakDto(streak.current, streak.best)) {
+                        select(HABIT_COLUMNS)
+                        filter {
+                            eq("id", habitId)
+                            eq("user_id", userId)
+                            eq("is_active", true)
+                        }
+                    }
+                    .decodeSingle<HabitDto>()
+                    .toModel()
+            }
+            bestEffort { cache.upsertHabit(habit.toEntity()) }
+            HabitStreakUpdate(habit.currentStreak, habit.longestStreak)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     override suspend fun clear(userId: String) = cache.clearForUser(userId)
+
+    /**
+     * Every log since [startDate], a page at a time: the API returns at most 1,000 rows per request, and a few
+     * habits logged daily pass that well within the lookback. A stable order keeps pages from overlapping.
+     */
+    private suspend fun fetchLogs(userId: String, startDate: LocalDate, habitId: String? = null): List<HabitLog> {
+        val logs = mutableListOf<HabitLog>()
+        for (page in 0 until MAX_LOG_PAGES) {
+            val from = page * LOG_PAGE_SIZE
+            val rows = requireClient().from("habit_logs").select(LOG_COLUMNS) {
+                filter {
+                    eq("user_id", userId)
+                    if (habitId != null) eq("habit_id", habitId)
+                    gte("date", startDate.toString())
+                }
+                order("date", Order.DESCENDING)
+                order("habit_id", Order.ASCENDING)
+                range(from, from + LOG_PAGE_SIZE - 1)
+            }.decodeList<HabitLogDto>()
+            rows.mapTo(logs, HabitLogDto::toModel)
+            if (rows.size < LOG_PAGE_SIZE) break
+        }
+        return logs
+    }
+
+    private suspend fun setActive(userId: String, habitId: String, active: Boolean): Habit =
+        requireClient().from("habits")
+            .update(ActiveHabitDto(active)) {
+                select(HABIT_COLUMNS)
+                filter {
+                    eq("id", habitId)
+                    eq("user_id", userId)
+                }
+            }
+            .decodeSingle<HabitDto>()
+            .toModel()
 
     private suspend fun loadCached(userId: String, startDate: LocalDate): HabitLoadResult = try {
         if (cache.getMetadata(userId) == null) {
@@ -211,15 +318,28 @@ class SupabaseHabitRepository @Inject constructor(
         )
     }
 
+    /** For local cache writes after the server already accepted a change: the next online load rewrites the cache. */
+    private suspend fun bestEffort(block: suspend () -> Unit) {
+        try {
+            block()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            // Kept quiet on purpose; see above.
+        }
+    }
+
     private fun requireClient() = checkNotNull(clientProvider.client) { "Supabase is not configured." }
 
     private companion object {
         const val LOOKBACK_DAYS = 400L
+        const val LOG_PAGE_SIZE = 1_000L
+        const val MAX_LOG_PAGES = 20
         val HABIT_COLUMNS = Columns.list(
             "id", "user_id", "name", "emoji", "type", "target_value", "unit",
             "time_target_mins", "subject_name", "subject_total", "subject_position",
             "subject_unit", "schedule_kind", "schedule_days", "weekly_target",
-            "is_paused", "sort_order", "current_streak", "longest_streak",
+            "is_paused", "sort_order", "current_streak", "longest_streak", "reminder_time",
         )
         val LOG_COLUMNS = Columns.list(
             "user_id", "habit_id", "date", "completed", "value", "duration_mins", "notes",
@@ -248,8 +368,10 @@ private data class HabitDto(
     @SerialName("sort_order") val sortOrder: Int = 0,
     @SerialName("current_streak") val currentStreak: Int = 0,
     @SerialName("longest_streak") val longestStreak: Int = 0,
+    @SerialName("reminder_time") val reminderTime: String? = null,
 )
 
+// Insert and update rows declare every field without a default, so a cleared reminder is sent as an explicit null.
 @Serializable
 private data class HabitInsertDto(
     val id: String,
@@ -272,6 +394,7 @@ private data class HabitInsertDto(
     @SerialName("sort_order") val sortOrder: Int,
     val category: String,
     @SerialName("score_weight") val scoreWeight: Int,
+    @SerialName("reminder_time") val reminderTime: String?,
 )
 
 @Serializable
@@ -289,11 +412,23 @@ private data class HabitUpdateDto(
     @SerialName("schedule_kind") val scheduleKind: String,
     @SerialName("schedule_days") val scheduleDays: List<String>?,
     @SerialName("weekly_target") val weeklyTarget: Int?,
+    @SerialName("reminder_time") val reminderTime: String?,
 )
 
 @Serializable
 private data class PauseHabitDto(
     @SerialName("is_paused") val isPaused: Boolean,
+)
+
+@Serializable
+private data class ActiveHabitDto(
+    @SerialName("is_active") val isActive: Boolean,
+)
+
+@Serializable
+private data class StreakDto(
+    @SerialName("current_streak") val currentStreak: Int,
+    @SerialName("longest_streak") val longestStreak: Int,
 )
 
 @Serializable
@@ -317,6 +452,7 @@ private fun HabitDto.toModel() = Habit(
     timeTargetMinutes, subjectName, subjectTotal, subjectPosition, subjectUnit,
     scheduleKind(scheduleKind), scheduleDays.orEmpty().mapNotNull(::dayOfWeek).toSet(),
     weeklyTarget, isPaused, sortOrder, currentStreak, longestStreak,
+    reminderTime = HabitReminderTime.parse(reminderTime),
 )
 
 private fun HabitLogDto.toModel() = HabitLog(
@@ -362,6 +498,7 @@ private fun SaveHabitIntent.toInsertDto(sortOrder: Int) = HabitInsertDto(
     sortOrder = sortOrder,
     category = "custom",
     scoreWeight = 1,
+    reminderTime = reminderTime?.let(HabitReminderTime::format),
 )
 
 private fun SaveHabitIntent.toUpdateDto() = HabitUpdateDto(
@@ -380,13 +517,14 @@ private fun SaveHabitIntent.toUpdateDto() = HabitUpdateDto(
         ?.sortedBy(DayOfWeek::getValue)
         ?.map(DayOfWeek::toWireValue),
     weeklyTarget = weeklyTarget,
+    reminderTime = reminderTime?.let(HabitReminderTime::format),
 )
 
 private fun Habit.toEntity() = CachedHabitEntity(
     id, userId, name, emoji, type.name, targetValue, unit, timeTargetMinutes, subjectName,
     subjectTotal, subjectPosition, subjectUnit, scheduleKind.name,
     scheduleDays.joinToString(",") { it.name }, weeklyTarget, isPaused, sortOrder,
-    currentStreak, longestStreak,
+    currentStreak, longestStreak, reminderTime?.let(HabitReminderTime::format),
 )
 
 private fun CachedHabitEntity.toModel() = Habit(
@@ -394,6 +532,7 @@ private fun CachedHabitEntity.toModel() = Habit(
     subjectName, subjectTotal, subjectPosition, subjectUnit, scheduleKind(scheduleKind),
     scheduleDays.orEmpty().split(',').mapNotNull { runCatching { DayOfWeek.valueOf(it) }.getOrNull() }.toSet(),
     weeklyTarget, isPaused, sortOrder, currentStreak, longestStreak,
+    reminderTime = HabitReminderTime.parse(reminderTime),
 )
 
 private fun HabitLog.toEntity() = CachedHabitLogEntity(
@@ -433,16 +572,18 @@ private fun SaveHabitIntent.normalized(): SaveHabitIntent = copy(
     subjectUnit = if (type == HabitType.SUBJECT) subjectUnit.normalized() else null,
     scheduleDays = if (scheduleKind == ScheduleKind.WEEKDAYS) scheduleDays else emptySet(),
     weeklyTarget = if (scheduleKind == ScheduleKind.PER_WEEK) weeklyTarget else null,
+    // The column keeps minutes only; matching that here keeps a replayed create comparable.
+    reminderTime = reminderTime?.truncatedTo(ChronoUnit.MINUTES),
 )
 
 private fun Habit.toPayload() = HabitDefinitionPayload(
     userId, name, emoji, type, targetValue, unit, timeTargetMinutes, subjectName,
-    subjectTotal, subjectPosition, subjectUnit, scheduleKind, scheduleDays, weeklyTarget,
+    subjectTotal, subjectPosition, subjectUnit, scheduleKind, scheduleDays, weeklyTarget, reminderTime,
 )
 
 private fun SaveHabitIntent.toPayload() = HabitDefinitionPayload(
     userId, name, emoji, type, targetValue, unit, timeTargetMinutes, subjectName,
-    subjectTotal, subjectPosition, subjectUnit, scheduleKind, scheduleDays, weeklyTarget,
+    subjectTotal, subjectPosition, subjectUnit, scheduleKind, scheduleDays, weeklyTarget, reminderTime,
 )
 
 private fun String?.normalized(): String? = this?.trim()?.takeIf(String::isNotEmpty)

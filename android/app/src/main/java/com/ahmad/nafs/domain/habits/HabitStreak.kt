@@ -33,6 +33,9 @@ data class HabitResult(
     val durationMinutes: Int = 0,
 )
 
+/** The running streak and the best one, in days (or weeks for a per-week habit). */
+data class StreakSummary(val current: Int, val best: Int)
+
 object HabitStreak {
     fun isScheduled(habit: HabitSchedule, date: LocalDate): Boolean {
         if (habit.isPaused) return false
@@ -80,6 +83,63 @@ object HabitStreak {
         return streak
     }
 
+    /**
+     * The longest run within [maxLookbackDays]: scheduled days in a row that were complete or, for a per-week
+     * habit, weeks in a row that met the target. Today (or this week) still in progress never ends a run.
+     * Pauses are not recorded, so history is read as if the habit had always been active.
+     */
+    fun longest(
+        habit: HabitSchedule,
+        results: List<HabitResult>,
+        today: LocalDate,
+        maxLookbackDays: Int = 400,
+    ): Int {
+        val active = habit.copy(isPaused = false)
+        if (active.scheduleKind == ScheduleKind.PER_WEEK) {
+            return longestWeekly(active, results, today, maxLookbackDays)
+        }
+        val byDate = results.associateBy(HabitResult::date)
+        var best = 0
+        var run = 0
+        for (offset in maxLookbackDays - 1 downTo 0) {
+            val date = today.minusDays(offset.toLong())
+            if (!isScheduled(active, date)) continue
+            if (isComplete(active, byDate[date])) {
+                run += 1
+                best = maxOf(best, run)
+            } else if (offset != 0) {
+                run = 0
+            }
+        }
+        return best
+    }
+
+    /**
+     * [current] with the best streak beside it. The best never reads lower than [storedBest] (runs older than the
+     * loaded history live only there) or than the current run.
+     */
+    fun summary(
+        habit: HabitSchedule,
+        results: List<HabitResult>,
+        today: LocalDate,
+        storedBest: Int = 0,
+    ): StreakSummary {
+        val current = current(habit, results, today)
+        return StreakSummary(current, maxOf(longest(habit, results, today), storedBest, current))
+    }
+
+    /** Completed days in the Monday-to-Sunday week that holds [today], counting up to [today]. */
+    fun completedThisWeek(habit: HabitSchedule, results: List<HabitResult>, today: LocalDate): Int {
+        val monday = weekStart(today)
+        return results.count { !it.date.isBefore(monday) && !it.date.isAfter(today) && isComplete(habit, it) }
+    }
+
+    /** Times per week a per-week habit asks for; at least one. */
+    fun weeklyTarget(habit: HabitSchedule): Int = habit.weeklyTarget?.takeIf { it > 0 } ?: 1
+
+    /** The Monday that starts [date]'s week. */
+    fun weekStart(date: LocalDate): LocalDate = date.minusDays((date.dayOfWeek.value - 1).toLong())
+
     private fun currentWeekly(
         habit: HabitSchedule,
         results: List<HabitResult>,
@@ -87,12 +147,9 @@ object HabitStreak {
         maxLookbackDays: Int,
     ): Int {
         if (habit.isPaused) return 0
-        val target = habit.weeklyTarget?.takeIf { it > 0 } ?: 1
-        val completedByWeek = results.asSequence()
-            .filter { isComplete(habit.copy(scheduleKind = ScheduleKind.DAILY), it) }
-            .groupingBy { it.date.minusDays((it.date.dayOfWeek.value - 1).toLong()) }
-            .eachCount()
-        val currentMonday = today.minusDays((today.dayOfWeek.value - 1).toLong())
+        val target = weeklyTarget(habit)
+        val completedByWeek = completedByWeek(habit, results)
+        val currentMonday = weekStart(today)
         val maxWeeks = (maxLookbackDays / 7).coerceAtLeast(1)
         var streak = 0
         repeat(maxWeeks) { offset ->
@@ -105,5 +162,35 @@ object HabitStreak {
         }
         return streak
     }
+
+    private fun longestWeekly(
+        habit: HabitSchedule,
+        results: List<HabitResult>,
+        today: LocalDate,
+        maxLookbackDays: Int,
+    ): Int {
+        val target = weeklyTarget(habit)
+        val completedByWeek = completedByWeek(habit, results)
+        val currentMonday = weekStart(today)
+        val maxWeeks = (maxLookbackDays / 7).coerceAtLeast(1)
+        var best = 0
+        var run = 0
+        for (offset in maxWeeks - 1 downTo 0) {
+            val week = currentMonday.minusWeeks(offset.toLong())
+            if ((completedByWeek[week] ?: 0) >= target) {
+                run += 1
+                best = maxOf(best, run)
+            } else if (offset != 0) {
+                run = 0
+            }
+        }
+        return best
+    }
+
+    private fun completedByWeek(habit: HabitSchedule, results: List<HabitResult>): Map<LocalDate, Int> =
+        results.asSequence()
+            .filter { isComplete(habit.copy(scheduleKind = ScheduleKind.DAILY), it) }
+            .groupingBy { weekStart(it.date) }
+            .eachCount()
 }
 

@@ -5,6 +5,7 @@ import com.ahmad.nafs.domain.habits.HabitType
 import com.ahmad.nafs.domain.habits.ScheduleKind
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalTime
 
 data class Habit(
     val id: String,
@@ -26,6 +27,7 @@ data class Habit(
     val sortOrder: Int,
     val currentStreak: Int,
     val longestStreak: Int,
+    val reminderTime: LocalTime? = null,
 ) {
     fun schedule() = HabitSchedule(
         type = type,
@@ -75,6 +77,8 @@ data class SaveHabitIntent(
     val scheduleKind: ScheduleKind,
     val scheduleDays: Set<DayOfWeek>,
     val weeklyTarget: Int?,
+    /** A daily nudge on scheduled days; null for none. */
+    val reminderTime: LocalTime? = null,
 )
 
 data class HabitDefinitionPayload(
@@ -92,14 +96,41 @@ data class HabitDefinitionPayload(
     val scheduleKind: ScheduleKind,
     val scheduleDays: Set<DayOfWeek>,
     val weeklyTarget: Int?,
+    val reminderTime: LocalTime? = null,
 )
 
+/**
+ * A create retry is safe only when the row the server already holds for the request id carries exactly the details
+ * being saved, the reminder time included (both sides at minute precision).
+ */
 object HabitDefinitionReplayRule {
     fun isSameIntent(
         existing: HabitDefinitionPayload,
         requested: HabitDefinitionPayload,
     ): Boolean = existing == requested
 }
+
+/** `habits.reminder_time` is a Postgres TIME: it reads back as "HH:MM:SS" and the web app writes "HH:MM". */
+object HabitReminderTime {
+    private val pattern = Regex("""^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$""")
+
+    /** The time to the minute, or null for a blank or unreadable value (which then reads as "no reminder"). */
+    fun parse(raw: String?): LocalTime? {
+        val match = pattern.matchEntire(raw?.trim().orEmpty()) ?: return null
+        val hour = match.groupValues[1].toInt()
+        val minute = match.groupValues[2].toInt()
+        val second = match.groupValues[3].ifEmpty { "0" }.toInt()
+        if (hour !in 0..23 || minute !in 0..59 || second !in 0..59) return null
+        return LocalTime.of(hour, minute)
+    }
+
+    /** "HH:MM" with ASCII digits whatever the device locale: the format the web app writes. */
+    fun format(time: LocalTime): String =
+        "${time.hour.toString().padStart(2, '0')}:${time.minute.toString().padStart(2, '0')}"
+}
+
+/** The stored streak columns after they were recomputed from the server's own log history. */
+data class HabitStreakUpdate(val currentStreak: Int, val longestStreak: Int)
 
 object HabitDefinitionValidator {
     fun validationError(intent: SaveHabitIntent): String? = when {

@@ -1,5 +1,6 @@
 package com.ahmad.nafs.core.profile
 
+import com.ahmad.nafs.core.auth.EmailRules
 import com.ahmad.nafs.core.database.CachedProfileDao
 import com.ahmad.nafs.core.database.CachedProfileEntity
 import com.ahmad.nafs.core.network.SupabaseClientProvider
@@ -61,8 +62,11 @@ class SupabaseProfileRepository @Inject constructor(
         userId: String,
         name: String,
         selectedHabitKeys: Set<String>,
+        timezone: String?,
     ): ProfileActionResult = try {
         val client = checkNotNull(clientProvider.client)
+        val zone = timezone?.trim()?.takeIf { it.isNotEmpty() }
+        require(zone == null || TimezoneCatalog.isValid(zone))
         val selectedHabits = starterHabits.filter { it.key in selectedHabitKeys }
         val unselectedIds = starterHabits
             .filterNot { it.key in selectedHabitKeys }
@@ -96,15 +100,20 @@ class SupabaseProfileRepository @Inject constructor(
             }
         }
 
-        val updated = client.from("users").update(
-            CompleteProfileDto(
-                name = name.trim(),
-                onboardingComplete = true,
-            ),
-        ) {
-            select(PROFILE_COLUMNS)
-            filter { eq("id", userId) }
-        }.decodeSingle<ProfileDto>().toProfile(isFromCache = false)
+        val users = client.from("users")
+        // One update, so the timezone can't be left behind if setup finishes and the app moves on.
+        val result = if (zone == null) {
+            users.update(CompleteProfileDto(name = name.trim(), onboardingComplete = true)) {
+                select(PROFILE_COLUMNS)
+                filter { eq("id", userId) }
+            }
+        } else {
+            users.update(CompleteProfileWithTimezoneDto(name = name.trim(), onboardingComplete = true, timezone = zone)) {
+                select(PROFILE_COLUMNS)
+                filter { eq("id", userId) }
+            }
+        }
+        val updated = result.decodeSingle<ProfileDto>().toProfile(isFromCache = false)
 
         profileDao.upsert(updated.toEntity())
         _state.value = ProfileState.Loaded(updated)
@@ -134,6 +143,38 @@ class SupabaseProfileRepository @Inject constructor(
         throw cancellation
     } catch (_: Exception) {
         ProfileActionResult.Failure("Profile was not changed. Check your connection and retry.")
+    }
+
+    override suspend fun updateAvatar(userId: String, avatarUrl: String?): ProfileActionResult = try {
+        require(avatarUrl == null || (avatarUrl.startsWith("https://") && avatarUrl.length <= 2048))
+        val updated = checkNotNull(clientProvider.client).from("users").update(UpdateAvatarDto(avatarUrl)) {
+            select(PROFILE_COLUMNS)
+            filter { eq("id", userId) }
+        }.decodeSingle<ProfileDto>().toProfile(isFromCache = false)
+        // The returned row proves the change; an update that matched nothing would fail above.
+        check(updated.avatarUrl == avatarUrl)
+        profileDao.upsert(updated.toEntity())
+        _state.value = ProfileState.Loaded(updated)
+        ProfileActionResult.Success
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        ProfileActionResult.Failure("Your photo wasn't changed. Check your connection and retry.")
+    }
+
+    override suspend fun updateEmail(userId: String, email: String): ProfileActionResult = try {
+        require(EmailRules.isValid(email))
+        val updated = checkNotNull(clientProvider.client).from("users").update(UpdateEmailDto(email.trim())) {
+            select(PROFILE_COLUMNS)
+            filter { eq("id", userId) }
+        }.decodeSingle<ProfileDto>().toProfile(isFromCache = false)
+        profileDao.upsert(updated.toEntity())
+        _state.value = ProfileState.Loaded(updated)
+        ProfileActionResult.Success
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        ProfileActionResult.Failure("Your profile email wasn't updated. It will be retried next time.")
     }
 
     override suspend fun updateTimezone(userId: String, timezone: String): ProfileActionResult = try {
@@ -249,7 +290,21 @@ private data class CompleteProfileDto(
 )
 
 @Serializable
+private data class CompleteProfileWithTimezoneDto(
+    val name: String,
+    @SerialName("onboarding_complete") val onboardingComplete: Boolean,
+    val timezone: String,
+)
+
+@Serializable
 private data class UpdateTimezoneDto(val timezone: String)
+
+/** No default value, so a null is sent as `"avatar_url": null` and really clears the photo. */
+@Serializable
+private data class UpdateAvatarDto(@SerialName("avatar_url") val avatarUrl: String?)
+
+@Serializable
+private data class UpdateEmailDto(val email: String)
 
 @Serializable
 private data class UpdateDeenDto(@SerialName("deen_enabled") val enabled: Boolean)

@@ -125,6 +125,8 @@ data class CachedHabitEntity(
     val sortOrder: Int,
     val currentStreak: Int,
     val longestStreak: Int,
+    /** "HH:MM", or null for no reminder. Added in version 15. */
+    val reminderTime: String? = null,
 )
 
 @Entity(

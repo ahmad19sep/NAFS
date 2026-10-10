@@ -11,6 +11,8 @@ import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.work.*
 import com.ahmad.nafs.core.auth.KeystoreSessionManager
+import com.ahmad.nafs.core.checkin.CheckInLoadResult
+import com.ahmad.nafs.core.checkin.CheckInRepository
 import com.ahmad.nafs.core.deen.Coordinates
 import com.ahmad.nafs.core.deen.DeenLoadResult
 import com.ahmad.nafs.core.deen.DeenRepository
@@ -24,7 +26,16 @@ import com.ahmad.nafs.core.records.RecordRules
 import com.ahmad.nafs.core.tasks.TaskLoadResult
 import com.ahmad.nafs.core.tasks.TaskRepository
 import com.ahmad.nafs.core.time.AccountDate
+import com.ahmad.nafs.domain.habits.HabitStreak
+import com.ahmad.nafs.domain.reminders.HabitReminderRules
 import com.ahmad.nafs.domain.reminders.PrayerTrigger
+import com.ahmad.nafs.domain.tasks.TaskPeriod
+import com.ahmad.nafs.domain.tasks.TaskPeriodType
+import com.ahmad.nafs.core.tasks.TaskPriority
+import androidx.core.app.NotificationCompat
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import com.ahmad.nafs.domain.reminders.ScheduledReminderRules
 import com.ahmad.nafs.ui.dashboard.DashboardUiState
 import com.ahmad.nafs.ui.dashboard.metrics
@@ -74,6 +85,8 @@ interface ScheduledReminderDependencies {
     fun sessions(): SupabaseApiSessionTokens
     fun storedSession(): KeystoreSessionManager
     fun taskReminders(): TaskReminderScheduler
+    fun habitReminders(): HabitReminderScheduler
+    fun checkIns(): CheckInRepository
 }
 
 internal fun Context.reminderDependencies() =
@@ -144,7 +157,10 @@ internal object ExactAlarms {
 }
 
 @Singleton
-class ReminderAlarmScheduler @Inject constructor(@ApplicationContext private val context: Context) {
+class ReminderAlarmScheduler @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val habitReminders: HabitReminderScheduler,
+) {
     private val work = WorkManager.getInstance(context)
 
     fun canScheduleExact(): Boolean = ExactAlarms.canSchedule(context)
@@ -154,6 +170,7 @@ class ReminderAlarmScheduler @Inject constructor(@ApplicationContext private val
         if (runCatching { ZoneId.of(zone) }.isFailure) { cancelAll(user); return }
         ReminderAccount.save(context, ReminderAccount(user, zone, deen))
         rearmSummaries(user, zone)
+        habitReminders.rearm(user, zone)
         if (ReminderPreferences.read(context, user).prayers && deen) {
             val input = workDataOf("user" to user, "zone" to zone)
             val network = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
@@ -183,7 +200,9 @@ class ReminderAlarmScheduler @Inject constructor(@ApplicationContext private val
             ExactAlarms.set(context, intent.putExtra(EXTRA_USER, user).apply(extras), next)
             slots.edit(commit = true) { putLong(key, next.toEpochMilli()) }
         }
-        arm("daily", ACTION_DAILY, options.daily, ScheduledReminderRules.nextDaily(now, zone)) { }
+        arm("morning", ACTION_MORNING, options.morning, ScheduledReminderRules.nextDaily(now, zone, options.morningTime)) { }
+        arm("habit-check", ACTION_HABIT_CHECK, options.habits, ScheduledReminderRules.nextDaily(now, zone, options.habitCheckTime)) { }
+        arm("daily", ACTION_DAILY, options.daily, ScheduledReminderRules.nextDaily(now, zone, options.dailyTime)) { }
         val weeklyAt = ScheduledReminderRules.nextWeekly(now, zone)
         // The week the report closes, so a tap after midnight still opens that week.
         val weekStart = weeklyAt.atZone(ZoneId.of(zone)).toLocalDate().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
@@ -194,9 +213,12 @@ class ReminderAlarmScheduler @Inject constructor(@ApplicationContext private val
     fun cancelAll(user: String) {
         ExactAlarms.cancel(context, ExactAlarms.intent(context, ACTION_DAILY, "daily"))
         ExactAlarms.cancel(context, ExactAlarms.intent(context, ACTION_WEEKLY, "weekly"))
+        ExactAlarms.cancel(context, ExactAlarms.intent(context, ACTION_MORNING, "morning"))
+        ExactAlarms.cancel(context, ExactAlarms.intent(context, ACTION_HABIT_CHECK, "habit-check"))
+        habitReminders.cancelAll(user)
         context.getSharedPreferences(SLOTS, Context.MODE_PRIVATE).edit(commit = true) { clear() }
         cancelPrayers(user)
-        NotificationManagerCompat.from(context).let { shown -> listOf("prayer", "daily", "weekly").forEach { shown.cancel("$it-$user", 0) } }
+        NotificationManagerCompat.from(context).let { shown -> listOf("prayer", "daily", "weekly", "morning", "habits", "letters").forEach { shown.cancel("$it-$user", 0) } }
         ReminderAccount.clear(context, user)
     }
 
@@ -219,7 +241,8 @@ class ReminderAlarmScheduler @Inject constructor(@ApplicationContext private val
         val now = Instant.now()
         triggers.filter { it.at.isAfter(now) && prayerKey(it.date, it.prayer) !in keep }.forEach { trigger ->
             ExactAlarms.set(context, ExactAlarms.intent(context, ACTION_PRAYER, prayerKey(trigger.date, trigger.prayer))
-                .putExtra(EXTRA_USER, user).putExtra(EXTRA_PRAYER, trigger.prayer).putExtra(EXTRA_TIME, trigger.time.toString()), trigger.at)
+                .putExtra(EXTRA_USER, user).putExtra(EXTRA_PRAYER, trigger.prayer).putExtra(EXTRA_TIME, trigger.time.toString())
+                .putExtra(EXTRA_DATE, trigger.date.toString()), trigger.at)
         }
     }
 
@@ -239,6 +262,10 @@ class ReminderAlarmScheduler @Inject constructor(@ApplicationContext private val
         const val ACTION_DAILY = "com.ahmad.nafs.reminders.DAILY"
         const val ACTION_WEEKLY = "com.ahmad.nafs.reminders.WEEKLY"
         const val ACTION_TASK = "com.ahmad.nafs.reminders.TASK"
+        const val ACTION_HABIT = "com.ahmad.nafs.reminders.HABIT"
+        const val ACTION_MORNING = "com.ahmad.nafs.reminders.MORNING"
+        const val ACTION_HABIT_CHECK = "com.ahmad.nafs.reminders.HABIT_CHECK"
+        const val EXTRA_DATE = "date"
         const val EXTRA_USER = "user"
         const val EXTRA_PRAYER = "prayer"
         const val EXTRA_TIME = "time"
@@ -328,16 +355,20 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
 
     private suspend fun handle(context: Context, intent: Intent) {
         if (intent.action == ReminderAlarmScheduler.ACTION_TASK) { TaskReminderDelivery.deliver(context, intent); return }
+        if (intent.action == ReminderAlarmScheduler.ACTION_HABIT) { HabitReminderDelivery.deliver(context, intent); return }
         val account = ReminderAccount.read(context) ?: return
         val deps = context.reminderDependencies()
         when (intent.action) {
-            ReminderAlarmScheduler.ACTION_PRAYER, ReminderAlarmScheduler.ACTION_DAILY, ReminderAlarmScheduler.ACTION_WEEKLY -> {
+            ReminderAlarmScheduler.ACTION_PRAYER, ReminderAlarmScheduler.ACTION_DAILY, ReminderAlarmScheduler.ACTION_WEEKLY,
+            ReminderAlarmScheduler.ACTION_MORNING, ReminderAlarmScheduler.ACTION_HABIT_CHECK -> {
                 if (intent.getStringExtra(ReminderAlarmScheduler.EXTRA_USER) != account.user) return
                 // Each daily/weekly alarm fires once: arm the next one before any network work,
                 // so an offline evening or a slow load cannot end the series.
                 when (intent.action) {
                     ReminderAlarmScheduler.ACTION_DAILY -> deps.scheduler().rearmSummaries(account.user, account.zone, delivered = "daily")
                     ReminderAlarmScheduler.ACTION_WEEKLY -> deps.scheduler().rearmSummaries(account.user, account.zone, delivered = "weekly")
+                    ReminderAlarmScheduler.ACTION_MORNING -> deps.scheduler().rearmSummaries(account.user, account.zone, delivered = "morning")
+                    ReminderAlarmScheduler.ACTION_HABIT_CHECK -> deps.scheduler().rearmSummaries(account.user, account.zone, delivered = "habit-check")
                 }
                 // Offline, the stored session still counts; only a real sign-out or revoked session ends the series.
                 if (!deps.signedIn(account.user)) { deps.scheduler().cancelAll(account.user); return }
@@ -348,19 +379,29 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
                     ReminderAlarmScheduler.ACTION_PRAYER -> if (options.prayers && account.deen) {
                         val prayer = intent.getStringExtra(ReminderAlarmScheduler.EXTRA_PRAYER) ?: return
                         val time = intent.getStringExtra(ReminderAlarmScheduler.EXTRA_TIME).orEmpty()
-                        LocalReminderNotifications.show(context, "prayer-${account.user}", "$prayer · $time",
-                            "It's time for $prayer. Mark it in NAFS once you've prayed.", "deen", ReminderChannel.PRAYER)
+                        val date = intent.getStringExtra(ReminderAlarmScheduler.EXTRA_DATE) ?: AccountDate.today(account.zone).toString()
+                        PrayerNotifications.show(context, account.user, prayer, time, date)
                     }
                     ReminderAlarmScheduler.ACTION_DAILY -> if (options.daily) {
                         val text = withTimeoutOrNull(15_000L) { daily(deps, account) } ?: GENERIC_DAILY
-                        if (stillCurrent()) LocalReminderNotifications.show(context, "daily-${account.user}", "How today went", text, "dashboard", ReminderChannel.SUMMARY)
+                        if (stillCurrent()) LocalReminderNotifications.show(context, "daily-${account.user}", "How today went", text, "dashboard", NafsChannel.SUMMARY)
                     }
                     ReminderAlarmScheduler.ACTION_WEEKLY -> if (options.weekly) {
                         val weekStart = intent.getStringExtra(ReminderAlarmScheduler.EXTRA_WEEK_START)
                             ?: AccountDate.today(account.zone).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).toString()
                         val text = withTimeoutOrNull(15_000L) { weekly(deps, account, weekStart) } ?: GENERIC_WEEKLY
                         if (stillCurrent()) LocalReminderNotifications.show(context, "weekly-${account.user}", "Your week in review", text,
-                            "progress?weekStart=$weekStart", ReminderChannel.SUMMARY)
+                            "progress?weekStart=$weekStart", NafsChannel.SUMMARY)
+                    }
+                    ReminderAlarmScheduler.ACTION_MORNING -> if (options.morning) {
+                        val (title, body, destination) = withTimeoutOrNull(15_000L) { morning(deps, account) }
+                            ?: Triple("Good morning", "Open NAFS to plan your day.", "dashboard")
+                        if (stillCurrent()) LocalReminderNotifications.show(context, "morning-${account.user}", title, body, destination, NafsChannel.SUMMARY)
+                    }
+                    ReminderAlarmScheduler.ACTION_HABIT_CHECK -> if (options.habits) {
+                        val check = withTimeoutOrNull(15_000L) { habitCheck(deps, account) }
+                        if (check != null && stillCurrent()) LocalReminderNotifications.show(context, "habits-${account.user}", check.first, check.second,
+                            "habits", NafsChannel.HABITS)
                     }
                 }
             }
@@ -376,6 +417,38 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
                 deps.rearmTasks(context, account)
             }
         }
+    }
+
+    /** Today's plan from fresh copies only; a source that is offline or failed is left out, never counted as zero. */
+    private suspend fun morning(deps: ScheduledReminderDependencies, account: ReminderAccount): Triple<String, String, String> {
+        val today = AccountDate.today(account.zone)
+        val tasks = (deps.tasks().load(account.user, today) as? TaskLoadResult.Success)?.takeUnless { it.isOffline }
+        val habits = (deps.habits().load(account.user, today) as? HabitLoadResult.Success)?.takeUnless { it.isOffline }
+        val checkIn = (deps.checkIns().load(account.user, today) as? CheckInLoadResult.Success)?.takeUnless { it.isOffline }
+        val period = TaskPeriod.key(TaskPeriodType.DAILY, today)
+        val open = tasks?.tasks.orEmpty().filter { it.type == TaskPeriodType.DAILY && it.periodDate == period && !it.isCompleted }
+        val clock = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
+        val first = open.mapNotNull { task -> task.dueTime?.let { due -> runCatching { LocalTime.parse(due.take(5)) }.getOrNull()?.let { task to it } } }
+            .minByOrNull { it.second }?.let { (task, at) -> "${task.title.take(60)} at ${at.format(clock)}" }
+        val habitsDue = habits?.habits?.count { !it.isPaused && HabitStreak.isScheduled(it.schedule(), today) }
+        val hasPriorities = checkIn?.let { it.record?.tasks.orEmpty().isNotEmpty() }
+        val (title, body) = ScheduledReminderRules.morningPlan(
+            tasksOpen = tasks?.let { open.size },
+            highPriority = open.count { it.priority == TaskPriority.HIGH },
+            habitsDue = habitsDue,
+            firstDue = first,
+            hasPriorities = hasPriorities,
+        )
+        return Triple(title, body, if (hasPriorities == false) "checkin" else "dashboard")
+    }
+
+    /** The evening habit check, from a fresh copy only: an offline one could nag about habits done on another device. */
+    private suspend fun habitCheck(deps: ScheduledReminderDependencies, account: ReminderAccount): Pair<String, String>? {
+        val today = AccountDate.today(account.zone)
+        val loaded = (deps.habits().load(account.user, today) as? HabitLoadResult.Success)?.takeUnless { it.isOffline } ?: return null
+        val open = loaded.habits.filter { habit -> HabitReminderGate.shouldRemind(habit, loaded.logs.filter { it.habitId == habit.id }, today) }
+            .map { habit -> HabitReminderGate.facts(habit, loaded.logs.firstOrNull { it.habitId == habit.id && it.date == today }) }
+        return HabitReminderRules.eveningCheck(open)
     }
 
     /** The same counts as Home. Offline copies and failed loads are unknown, never zero. */
@@ -426,8 +499,30 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
         const val GENERIC_DAILY = "Open NAFS to review today and plan tomorrow."
         const val GENERIC_WEEKLY = "Your weekly report is ready. Tap to open it."
         val ALARM_ACTIONS = setOf(ReminderAlarmScheduler.ACTION_PRAYER, ReminderAlarmScheduler.ACTION_DAILY,
-            ReminderAlarmScheduler.ACTION_WEEKLY, ReminderAlarmScheduler.ACTION_TASK)
+            ReminderAlarmScheduler.ACTION_WEEKLY, ReminderAlarmScheduler.ACTION_TASK, ReminderAlarmScheduler.ACTION_HABIT,
+            ReminderAlarmScheduler.ACTION_MORNING, ReminderAlarmScheduler.ACTION_HABIT_CHECK)
         val SYSTEM_ACTIONS = setOf(Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED, Intent.ACTION_TIME_CHANGED,
             Intent.ACTION_TIMEZONE_CHANGED, "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED")
+    }
+}
+
+/** The prayer-start alert, with buttons that record the prayer without opening the app. */
+internal object PrayerNotifications {
+    fun show(context: Context, user: String, prayer: String, time: String, date: String) {
+        val tag = "prayer-$user"
+        val clock = runCatching { LocalTime.parse(time.trim().take(5)).format(DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)) }.getOrDefault(time)
+        fun button(status: Int, key: String) = ReminderActions.pending(context, ReminderActions.PRAYER_DONE, "$tag/$date/$prayer/$key", tag) {
+            putExtra(ReminderActions.EXTRA_USER, user)
+            putExtra(ReminderActions.EXTRA_ID, prayer)
+            putExtra(ReminderActions.EXTRA_DATE, date)
+            putExtra(ReminderActions.EXTRA_STATUS, status)
+        }
+        NafsNotifications.notify(context, tag, NafsNotifications.builder(context, NafsChannel.PRAYER)
+            .setContentTitle("$prayer · $clock")
+            .setContentText("It's time for $prayer.")
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setContentIntent(NafsNotifications.openApp(context, tag, "deen"))
+            .addAction(0, "Prayed", button(1, "alone"))
+            .addAction(0, "In jamaat", button(2, "jamaat")))
     }
 }

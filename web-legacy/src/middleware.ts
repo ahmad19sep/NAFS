@@ -15,7 +15,7 @@ export function middleware(request: NextRequest) {
     .some(({ name, value }) => /^sb-.+-auth-token(\.\d+)?$/.test(name) && value)
 
   const { pathname } = request.nextUrl
-  const publicRoutes = ['/auth', '/auth/callback', '/auth/error']
+  const publicRoutes = ['/auth', '/auth/callback', '/auth/error', '/privacy']
   const isPublicRoute = publicRoutes.some((r) => pathname.startsWith(r))
 
   if (!hasAuthCookie && !isPublicRoute) {

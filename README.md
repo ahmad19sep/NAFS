@@ -2,8 +2,25 @@
 
 A personal accountability app: habits, tasks, goals, health, Islamic practice, and an AI coach.
 
-**Platforms:** Android & iOS (native, via Expo)  
-**Stack:** Expo SDK 52 · expo-router · NativeWind · Supabase · Cloudflare Workers AI
+## Where things live today
+
+| Folder | What it is | Status |
+|---|---|---|
+| [`android/`](android/README.md) | **The Android app** — Kotlin, Jetpack Compose, Hilt, Room, WorkManager | Current; this is the APK on phones |
+| [`web-legacy/`](web-legacy/) | Next.js web app **and the API backend** (AI, reports, account deletion, cron) on Vercel | Current; required by the Android app |
+| [`supabase/`](supabase/) | Database migrations (run in the Supabase SQL editor) | See `web-legacy/NATIVE_API.md` for what the Android app needs |
+| `app/`, root `package.json` | Earlier Expo / React Native client | Superseded by `android/` |
+| `android-capacitor-legacy/` | Earlier WebView shell around the web app | Superseded by `android/` |
+
+### Android app
+
+- Design system and screen anatomy: [`android/DESIGN.md`](android/DESIGN.md).
+- Every push that touches `android/` runs the **Android** GitHub Actions workflow: unit tests, Compose
+  screenshots (light and dark), debug APK, lint and an R8 release build. Download the installable APK from the
+  run page → *Artifacts* → `nafs-debug-apk` (it installs as **NAFS Dev**, next to the release app).
+- The **Backend check** workflow reports whether the Vercel deployment has every route the app calls.
+
+The sections below describe the earlier Expo setup and are kept for reference.
 
 ---
 

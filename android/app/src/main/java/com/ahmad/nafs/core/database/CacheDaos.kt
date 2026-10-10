@@ -182,6 +182,10 @@ abstract class CachedHabitDao {
     @Upsert
     abstract suspend fun upsertLog(log: CachedHabitLogEntity)
 
+    /** Drops one archived habit. Its cached logs stay, so a restored habit still shows its history offline. */
+    @Query("DELETE FROM cached_habits WHERE userId = :userId AND id = :habitId")
+    abstract suspend fun deleteHabit(userId: String, habitId: String)
+
     @Query("DELETE FROM cached_habits WHERE userId = :userId")
     protected abstract suspend fun deleteHabits(userId: String)
 

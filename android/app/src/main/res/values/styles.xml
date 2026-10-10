@@ -2,9 +2,16 @@
     <style name="Theme.Nafs" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:navigationBarColor">#0B1A2B</item>
+        <item name="android:windowBackground">@color/nafs_window</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
+    </style>
+
+    <!-- Shown while the app starts and the saved session is restored (androidx SplashScreen). -->
+    <style name="Theme.Nafs.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/nafs_splash</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="postSplashScreenTheme">@style/Theme.Nafs</item>
     </style>
 </resources>

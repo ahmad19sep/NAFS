@@ -135,9 +135,11 @@ class PrayerAutoLocate @Inject constructor(
         val today = AccountDate.today(zone)
         if (onlyIfMoved && saved != null && savedHere != null && savedHere.distanceKm(here) < 5.0 &&
             RecordRules.text(saved, "date") == today.toString() && RecordRules.text(saved, "zone") == zone) return PrayerLocateResult.Saved(saved, refreshed = false)
+        // Until the user chooses a convention, use the one most mosques in the account's region follow.
+        val regional = PrayerCalculationDefaults.forZone(zone)
         val chosenMethod = method?.takeIf { it in PrayerTimeRules.methods }
-            ?: RecordRules.text(saved, "method").toIntOrNull()?.takeIf { it in PrayerTimeRules.methods } ?: 1
-        val chosenHanafi = hanafi ?: (saved?.get("hanafi") as? JsonPrimitive)?.booleanOrNull ?: true
+            ?: RecordRules.text(saved, "method").toIntOrNull()?.takeIf { it in PrayerTimeRules.methods } ?: regional.method
+        val chosenHanafi = hanafi ?: (saved?.get("hanafi") as? JsonPrimitive)?.booleanOrNull ?: regional.hanafi
         val data = try { repository.fetchAt(here, chosenMethod, chosenHanafi, zone, today) }
             catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { return PrayerLocateResult.FetchFailed }
         if (onlyIfMoved) {

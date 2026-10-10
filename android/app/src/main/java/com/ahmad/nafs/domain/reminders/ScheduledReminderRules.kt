@@ -13,6 +13,7 @@ data class PrayerTrigger(val prayer: String, val date: LocalDate, val time: Loca
 /** Account-timezone timing and wording for prayer, end-of-day and weekly notifications. */
 object ScheduledReminderRules {
     val prayers = listOf("Fajr", "Dhuhr", "Asr", "Maghrib", "Isha")
+    val morningPlanTime: LocalTime = LocalTime.of(7, 30)
     val dailySummaryTime: LocalTime = LocalTime.of(21, 30)
     val weeklyReportDay: DayOfWeek = DayOfWeek.SUNDAY
     val weeklyReportTime: LocalTime = LocalTime.of(21, 45)
@@ -62,6 +63,29 @@ object ScheduledReminderRules {
             else -> "Everything planned is done."
         }
         return parts.joinToString(" · ") + ". " + close
+    }
+
+    /**
+     * The morning plan as title to body. Counts are today's open tasks and scheduled habits; a null count is unknown
+     * (its load failed) and is left out. [firstDue] is the earliest open task with a due time, already worded
+     * ("Call Ammi at 8:00 PM"). [hasPriorities] is false when today's check-in has no priorities yet.
+     */
+    fun morningPlan(tasksOpen: Int?, highPriority: Int, habitsDue: Int?, firstDue: String?, hasPriorities: Boolean?): Pair<String, String> {
+        val counts = buildList {
+            tasksOpen?.takeIf { it > 0 }?.let { add(if (it == 1) "1 task" else "$it tasks") }
+            habitsDue?.takeIf { it > 0 }?.let { add(if (it == 1) "1 habit" else "$it habits") }
+        }
+        val title = if (counts.isEmpty()) "Good morning" else "Your day: " + counts.joinToString(" · ")
+        val body = buildList {
+            if (highPriority > 0) add(if (highPriority == 1) "1 high-priority task." else "$highPriority high-priority tasks.")
+            firstDue?.let { add("First up: $it.") }
+            if (hasPriorities == false) add("Set today's priorities in Check-in.")
+            if (isEmpty()) add(
+                if (tasksOpen == null && habitsDue == null) "Open NAFS to plan your day."
+                else "Nothing is planned yet. Add the one thing that matters most today.",
+            )
+        }
+        return title to body.joinToString(" ")
     }
 
     /** Values come from the canonical weekly report; a null or blank value is unknown and is left out, not shown as zero. */

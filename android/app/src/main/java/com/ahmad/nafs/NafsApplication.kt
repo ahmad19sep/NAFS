@@ -1,6 +1,7 @@
 package com.ahmad.nafs
 
 import android.app.Application
+import com.ahmad.nafs.core.AppShortcuts
 import com.ahmad.nafs.core.reminders.TaskReminderScheduler
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -11,7 +12,9 @@ class NafsApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // All channels up front, so they can be adjusted in Android settings before the first notification.
         taskReminderScheduler.ensureNotificationChannel()
+        AppShortcuts.publish(this)
     }
 }
 
