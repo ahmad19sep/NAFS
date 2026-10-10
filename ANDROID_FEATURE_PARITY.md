@@ -779,3 +779,14 @@ The unavailable Coach report led to a model correction: Gemini 3.8 Flash timed o
 ### 2026-10-10 - Coach retained-message recovery and first authenticated Gemini reply
 
 While a message is retained, Coach now replaces the composer with Retry message and Check for reply; after an online check, Edit message returns the text to the composer under a new request. Sends are bounded at 70 seconds and reloads at 30 seconds, so the screen cannot wait indefinitely. 275 unit tests across 42 classes, debug assembly and lint (0 errors) passed, and the build was installed over the existing app data. The message retained from the 09:51 UTC failure (HTTP 503 from Gemini 3.8 Flash) was retried on the phone: `POST /api/ai/chat` returned 200 at 10:27:53 UTC on deployment `dpl_F8ZdqGVLWWxzrDhiUngVJL7zEtWv` (Gemini 3.5 Flash-Lite), and the saved reply appeared with the composer unlocked. Duplicate-request replay and the other AI routes remain unverified with an account.
+
+### 2026-10-10 - Authenticated Gemini acceptance on the owner's account
+
+With the owner's approval, on the Android 16 phone against production (Gemini 3.5 Flash-Lite):
+
+- Coach chat: a double-tapped Send produced exactly one `POST /api/ai/chat` (200 at 10:38:37 UTC). The saved reply cited the account's own goals and habits.
+- Recovery-plan preview: a described setback produced `POST /api/ai/plan` 200 at 10:40:17 UTC and a two-step preview (a task and a daily habit) based on that day's records. No step was applied.
+- Evening verdict: not run. The day's check-in had no priorities or notes, and none were invented for the owner's account.
+- Future-self reply: not run. The account has no letters.
+
+Remaining: evening verdict and letter reply with real owner content, server-side replay of an identical request ID, report and growth reviews, and the starter/health advice routes.
