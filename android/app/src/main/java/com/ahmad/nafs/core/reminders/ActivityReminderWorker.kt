@@ -31,6 +31,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 
 @EntryPoint @InstallIn(SingletonComponent::class)
@@ -78,9 +79,14 @@ class ActivityReminderWorker(context: Context, params: WorkerParameters) : Corou
         val user = inputData.getString("user") ?: return Result.failure()
         val zone = inputData.getString("zone") ?: return Result.failure()
         val dependencies = EntryPointAccessors.fromApplication(applicationContext, ActivityReminderDependencies::class.java)
-        dependencies.provider().client?.auth?.awaitInitialization()
+        // Alarms the system dropped (revoked exact-alarm access, aggressive battery savers) come back here.
+        val reminders = applicationContext.reminderDependencies()
+        ReminderAccount.read(applicationContext)?.takeIf { it.user == user && reminders.signedIn(user) }?.let { account ->
+            reminders.scheduler().rearmSummaries(account.user, account.zone)
+            reminders.rearmTasks(applicationContext, account)
+        }
+        withTimeoutOrNull(10_000L) { dependencies.provider().client?.auth?.awaitInitialization() }
         if (!dependencies.sessions().isCurrentUser(user)) return Result.success()
-        ReminderAccount.read(applicationContext)?.takeIf { it.user == user }?.let { dependencies.scheduler().rearmSummaries(it.user, it.zone) }
         val preferences = applicationContext.getSharedPreferences("activity_reminder_delivery", Context.MODE_PRIVATE)
         try {
             val today = AccountDate.today(zone)

@@ -8,6 +8,8 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Build
 import android.os.CancellationSignal
+import android.os.SystemClock
+import java.util.concurrent.TimeUnit
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
 import com.ahmad.nafs.core.records.PrivateRecordStore
@@ -67,18 +69,27 @@ class PrayerLocation @Inject constructor(@ApplicationContext private val context
     @SuppressLint("MissingPermission")
     suspend fun current(): Coordinates? {
         if (manager == null || !hasPermission()) return null
+        // Before Android 12, approximate permission alone cannot use GPS or passive locations.
+        val gpsAllowed = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         val providers = buildList {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && manager.hasProvider(LocationManager.FUSED_PROVIDER)) add(LocationManager.FUSED_PROVIDER)
             if (runCatching { manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) }.getOrDefault(false)) add(LocationManager.NETWORK_PROVIDER)
-            if (runCatching { manager.isProviderEnabled(LocationManager.GPS_PROVIDER) }.getOrDefault(false)) add(LocationManager.GPS_PROVIDER)
+            if (gpsAllowed && runCatching { manager.isProviderEnabled(LocationManager.GPS_PROVIDER) }.getOrDefault(false)) add(LocationManager.GPS_PROVIDER)
         }
         for (provider in providers) {
             withTimeoutOrNull(15_000L) { request(provider) }?.let { return Coordinates.of(it.latitude, it.longitude) }
         }
-        // A recent fix from any provider is still accurate enough for prayer times.
-        return (providers + LocationManager.PASSIVE_PROVIDER).distinct()
+        // Only a recent fix: an old one may be from another city.
+        val now = SystemClock.elapsedRealtimeNanos()
+        return (providers + listOfNotNull(LocationManager.PASSIVE_PROVIDER.takeIf { gpsAllowed })).distinct()
             .mapNotNull { runCatching { manager.getLastKnownLocation(it) }.getOrNull() }
-            .maxByOrNull(Location::getTime)?.let { Coordinates.of(it.latitude, it.longitude) }
+            .filter { now - it.elapsedRealtimeNanos in 0..MAX_FIX_AGE_NANOS }
+            .maxByOrNull(Location::getElapsedRealtimeNanos)?.let { Coordinates.of(it.latitude, it.longitude) }
+    }
+
+    private companion object {
+        val MAX_FIX_AGE_NANOS = TimeUnit.MINUTES.toNanos(30)
     }
 
     @SuppressLint("MissingPermission")
@@ -129,7 +140,10 @@ class PrayerAutoLocate @Inject constructor(
         val chosenHanafi = hanafi ?: (saved?.get("hanafi") as? JsonPrimitive)?.booleanOrNull ?: true
         val data = try { repository.fetchAt(here, chosenMethod, chosenHanafi, zone, today) }
             catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { return PrayerLocateResult.FetchFailed }
-        store.write(user, KEY, data)
+        if (onlyIfMoved) {
+            // The user may have chosen a city or refreshed while this ran; never replace a newer choice.
+            if (!store.writeIf(user, KEY, data) { it == saved }) return PrayerLocateResult.Saved(store.read(user, KEY) ?: data, refreshed = false)
+        } else store.write(user, KEY, data)
         return PrayerLocateResult.Saved(data)
     }
 

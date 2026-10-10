@@ -142,12 +142,31 @@ class PrayerTimesViewModel @Inject constructor(private val repository: PrayerTim
     fun hanafi(value: Boolean) { if (_state.value.busy) return; _state.update { it.copy(hanafi = value) }; refreshSource() }
     fun invalidateDate() { _state.update { it.copy(data = it.data?.takeIf { data -> RecordRules.text(data, "date") == AccountDate.today(zone).toString() }) } }
 
-    /** A changed calculation setting refetches from the current source, so the times and alarms stay consistent. */
+    /**
+     * A changed calculation setting refetches from the saved source (area or city), so the times and alarms stay
+     * consistent. Saved coordinates need no location permission or new fix; a typed but unconfirmed city is ignored.
+     */
     private fun refreshSource() {
-        val current = _state.value
-        when {
-            Coordinates.from(current.data) != null && location.hasPermission() -> useLocation()
-            current.data != null && current.city.isNotBlank() && current.country.isNotBlank() -> fetch()
+        val input = _state.value; val userId = account; val timezone = zone
+        _state.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val saved = store.read(userId, PrayerAutoLocate.KEY) ?: return@launch
+                val today = AccountDate.today(timezone)
+                val area = Coordinates.from(saved)
+                val city = RecordRules.text(saved, "city"); val country = RecordRules.text(saved, "country")
+                val data = when {
+                    area != null -> repository.fetchAt(area, input.method, input.hanafi, timezone, today)
+                    city.isNotBlank() && country.isNotBlank() -> repository.fetch(city, country, input.method, input.hanafi, timezone, today)
+                    else -> return@launch
+                }
+                if (account != userId || zone != timezone) return@launch
+                store.write(userId, PrayerAutoLocate.KEY, data)
+                _state.update { it.copy(data = data, cached = false, area = PrayerAutoLocate.label(data)) }
+                alarms.reschedule(userId, timezone, deen)
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { _state.update { it.copy(error = "The new calculation setting could not be applied. Check your connection and retry.") } }
+            finally { _state.update { it.copy(busy = false) } }
         }
     }
 

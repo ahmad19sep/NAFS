@@ -81,7 +81,10 @@ class ScheduledReminderRulesTest {
     }
 
     @Test fun `weekly summary with failed sources says so and drops affected figures`() {
-        assertEquals("Tasks 4/6 · Recorded days 0/7. Some records could not be loaded. Tap for the full report.",
+        // Recorded days are counted from every source, so a failed source makes that figure unknown too.
+        assertEquals("Tasks 4/6. Some records could not be loaded. Tap for the full report.",
             ScheduledReminderRules.weeklySummary(0, "7", null, "4", "6", null, null, null, incomplete = true))
+        assertEquals("Some records could not be loaded. Tap for the full report.",
+            ScheduledReminderRules.weeklySummary(0, "7", null, "", null, null, null, null, incomplete = true))
     }
 }

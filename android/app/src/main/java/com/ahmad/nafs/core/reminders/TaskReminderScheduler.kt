@@ -128,6 +128,7 @@ internal object TaskReminderDelivery {
     fun deliver(context: Context, taskId: String?, userId: String?, title: String?, dueAtEpochMillis: Long) {
         if (taskId == null || userId == null || title == null || dueAtEpochMillis <= 0L) return
         if (!ReminderPreferences.read(context, userId).tasks) return
+        if (ReminderAccount.read(context)?.user?.let { it != userId } == true) return
         // Completed, deleted and signed-out tasks leave the registry, so their alarms stay silent.
         if (!TaskReminderRegistry.isActive(context, userId, taskId)) return
         val minutesRemaining = TaskReminderDeliveryRule.minutesRemaining(Instant.ofEpochMilli(dueAtEpochMillis), Instant.now()) ?: return

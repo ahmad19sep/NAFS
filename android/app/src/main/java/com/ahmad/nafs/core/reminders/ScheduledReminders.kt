@@ -73,6 +73,7 @@ interface ScheduledReminderDependencies {
     fun provider(): SupabaseClientProvider
     fun sessions(): SupabaseApiSessionTokens
     fun storedSession(): KeystoreSessionManager
+    fun taskReminders(): TaskReminderScheduler
 }
 
 internal fun Context.reminderDependencies() =
@@ -87,7 +88,15 @@ internal suspend fun ScheduledReminderDependencies.signedIn(user: String): Boole
     val auth = provider().client?.auth ?: return false
     withTimeoutOrNull(5_000L) { auth.awaitInitialization() }
     if (sessions().isCurrentUser(user)) return true
-    return try { storedSession().loadSession().user?.id == user } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { false }
+    return storedSession().storedUserId() == user
+}
+
+/** Task alarms do not survive a reboot; rebuild them from the tasks, using the offline copy if needed. */
+internal suspend fun ScheduledReminderDependencies.rearmTasks(context: Context, account: ReminderAccount) {
+    if (!ReminderPreferences.read(context, account.user).tasks) return
+    val today = runCatching { AccountDate.today(account.zone) }.getOrNull() ?: return
+    val loaded = withTimeoutOrNull(15_000L) { tasks().load(account.user, today) } as? TaskLoadResult.Success ?: return
+    if (ReminderAccount.read(context)?.user == account.user) taskReminders().reconcile(account.user, loaded.tasks, account.zone)
 }
 
 /** The signed-in account whose reminders are scheduled; read after reboots and clock changes, cleared on sign-out. */
@@ -156,34 +165,43 @@ class ReminderAlarmScheduler @Inject constructor(@ApplicationContext private val
         } else cancelPrayers(user)
     }
 
-    /** Sets the next end-of-day and weekly alarms only. Safe to call often; each key replaces its previous alarm. */
-    fun rearmSummaries(user: String, zone: String) {
+    /**
+     * Sets the next end-of-day and weekly alarms. Safe to call often. An alarm whose time has passed within the last
+     * hour is still waiting for delivery (Android may hold inexact alarms back), so it is left alone unless it is the
+     * [delivered] one that just fired.
+     */
+    fun rearmSummaries(user: String, zone: String, delivered: String? = null) {
         if (runCatching { ZoneId.of(zone) }.isFailure) return
         val options = ReminderPreferences.read(context, user)
         val now = Instant.now()
-        val daily = ExactAlarms.intent(context, ACTION_DAILY, "daily")
-        val weekly = ExactAlarms.intent(context, ACTION_WEEKLY, "weekly")
-        if (options.daily) ExactAlarms.set(context, daily.putExtra(EXTRA_USER, user), ScheduledReminderRules.nextDaily(now, zone))
-        else ExactAlarms.cancel(context, daily)
-        if (options.weekly) {
-            val at = ScheduledReminderRules.nextWeekly(now, zone)
-            // The week the report closes, so a tap after midnight still opens that week.
-            val weekStart = at.atZone(ZoneId.of(zone)).toLocalDate().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-            ExactAlarms.set(context, weekly.putExtra(EXTRA_USER, user).putExtra(EXTRA_WEEK_START, weekStart.toString()), at)
-        } else ExactAlarms.cancel(context, weekly)
+        val slots = context.getSharedPreferences(SLOTS, Context.MODE_PRIVATE)
+        fun arm(key: String, action: String, enabled: Boolean, next: Instant, extras: Intent.() -> Unit) {
+            val intent = ExactAlarms.intent(context, action, key)
+            if (!enabled) { ExactAlarms.cancel(context, intent); slots.edit(commit = true) { remove(key) }; return }
+            val armed = Instant.ofEpochMilli(slots.getLong(key, 0L))
+            if (key != delivered && !armed.isAfter(now) && armed.isAfter(now.minus(1, ChronoUnit.HOURS))) return
+            ExactAlarms.set(context, intent.putExtra(EXTRA_USER, user).apply(extras), next)
+            slots.edit(commit = true) { putLong(key, next.toEpochMilli()) }
+        }
+        arm("daily", ACTION_DAILY, options.daily, ScheduledReminderRules.nextDaily(now, zone)) { }
+        val weeklyAt = ScheduledReminderRules.nextWeekly(now, zone)
+        // The week the report closes, so a tap after midnight still opens that week.
+        val weekStart = weeklyAt.atZone(ZoneId.of(zone)).toLocalDate().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        arm("weekly", ACTION_WEEKLY, options.weekly, weeklyAt) { putExtra(EXTRA_WEEK_START, weekStart.toString()) }
     }
 
     /** Removes alarms, background work and notifications already on screen for this account. */
     fun cancelAll(user: String) {
         ExactAlarms.cancel(context, ExactAlarms.intent(context, ACTION_DAILY, "daily"))
         ExactAlarms.cancel(context, ExactAlarms.intent(context, ACTION_WEEKLY, "weekly"))
+        context.getSharedPreferences(SLOTS, Context.MODE_PRIVATE).edit(commit = true) { clear() }
         cancelPrayers(user)
         NotificationManagerCompat.from(context).let { shown -> listOf("prayer", "daily", "weekly").forEach { shown.cancel("$it-$user", 0) } }
         ReminderAccount.clear(context, user)
     }
 
-    /** For a cold start that is already signed out: clear whichever account was last scheduled. */
-    fun cancelStored() { ReminderAccount.read(context)?.let { cancelAll(it.user) } }
+    /** The account whose reminders are scheduled, if any; used to clean up after a sign-out while the app was closed. */
+    fun storedUser(): String? = ReminderAccount.read(context)?.user
 
     /**
      * Replaces prayer alarms for [resolved] dates only, so a failed fetch never removes alarms that are still valid.
@@ -226,6 +244,7 @@ class ReminderAlarmScheduler @Inject constructor(@ApplicationContext private val
         const val EXTRA_TIME = "time"
         const val EXTRA_WEEK_START = "week_start"
         internal fun prayerKey(date: LocalDate, prayer: String) = "prayer/$date/$prayer"
+        private const val SLOTS = "scheduled_summary_slots"
     }
 }
 
@@ -236,8 +255,11 @@ internal object PrayerPlan {
 
     suspend fun schedule(deps: ScheduledReminderDependencies, user: String, zone: String, fetch: Boolean): Boolean {
         val records = deps.records()
+        // Restoring after a reboot runs before a token refresh is possible; signedIn() has confirmed the stored session.
+        if (!fetch && !deps.signedIn(user)) return true
+        val read: suspend (String) -> JsonObject? = if (fetch) { key -> records.read(user, key) } else { key -> records.readForStoredSession(user, key) }
         // The Prayer times screen writes the latest chosen source (area or city) to TODAY_KEY.
-        val saved = records.read(user, TODAY_KEY) ?: records.read(user, NEXT_KEY) ?: return true // No area or city saved yet.
+        val saved = read(TODAY_KEY) ?: read(NEXT_KEY) ?: return true // No area or city saved yet.
         val area = Coordinates.from(saved)
         val city = RecordRules.text(saved, "city"); val country = RecordRules.text(saved, "country")
         val method = RecordRules.text(saved, "method").toIntOrNull()?.takeIf { it in PrayerTimeRules.methods } ?: 1
@@ -253,19 +275,25 @@ internal object PrayerPlan {
                 (if (area != null) deps.prayerTimes().fetchAt(area, method, hanafi, zone, date)
                     else deps.prayerTimes().fetch(city, country, method, hanafi, zone, date)).also { records.write(user, key, it) }
             } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { null }
-            val data = fetched ?: listOf(TODAY_KEY, NEXT_KEY).firstNotNullOfOrNull { cachedKey ->
-                records.read(user, cachedKey)?.takeIf { RecordRules.text(it, "date") == date.toString() && RecordRules.text(it, "zone") == zone && sameSource(it, saved) }
-            } ?: return@flatMap emptyList()
+            val data = fetched ?: cached(read, date, zone, saved) ?: return@flatMap emptyList()
             resolved += date
-            val times = (data["times"] as? JsonObject)?.mapValues { (it.value as? JsonPrimitive)?.contentOrNull.orEmpty() }.orEmpty()
-            ScheduledReminderRules.prayerTriggers(date, times, zone, since)
+            ScheduledReminderRules.prayerTriggers(date, times(data), zone, since)
         }
         if (resolved.isEmpty() || !deps.signedIn(user)) return resolved.size == 2
         val now = Instant.now()
-        val keep = triggers.filter { !it.at.isAfter(now) }.map { ReminderAlarmScheduler.prayerKey(it.date, it.prayer) }.toSet()
+        // Just after midnight, yesterday's late prayer (for example Isha) may still be waiting for delivery.
+        val yesterday = cached(read, today.minusDays(1), zone, saved)?.let { ScheduledReminderRules.prayerTriggers(today.minusDays(1), times(it), zone, since) }.orEmpty()
+        val keep = (triggers + yesterday).filter { !it.at.isAfter(now) }.map { ReminderAlarmScheduler.prayerKey(it.date, it.prayer) }.toSet()
         deps.scheduler().setPrayers(user, triggers, planned, resolved, keep)
         return resolved.size == 2
     }
+
+    private suspend fun cached(read: suspend (String) -> JsonObject?, date: LocalDate, zone: String, saved: JsonObject) =
+        listOf(TODAY_KEY, NEXT_KEY).firstNotNullOfOrNull { key ->
+            read(key)?.takeIf { RecordRules.text(it, "date") == date.toString() && RecordRules.text(it, "zone") == zone && sameSource(it, saved) }
+        }
+
+    private fun times(data: JsonObject) = (data["times"] as? JsonObject)?.mapValues { (it.value as? JsonPrimitive)?.contentOrNull.orEmpty() }.orEmpty()
 
     /** A cached day is reused only if it was calculated for the same area or city and the same method. */
     private fun sameSource(a: JsonObject, b: JsonObject) = Coordinates.from(a) == Coordinates.from(b) &&
@@ -307,8 +335,12 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
                 if (intent.getStringExtra(ReminderAlarmScheduler.EXTRA_USER) != account.user) return
                 // Each daily/weekly alarm fires once: arm the next one before any network work,
                 // so an offline evening or a slow load cannot end the series.
-                if (intent.action != ReminderAlarmScheduler.ACTION_PRAYER) deps.scheduler().rearmSummaries(account.user, account.zone)
-                if (!deps.signedIn(account.user)) return
+                when (intent.action) {
+                    ReminderAlarmScheduler.ACTION_DAILY -> deps.scheduler().rearmSummaries(account.user, account.zone, delivered = "daily")
+                    ReminderAlarmScheduler.ACTION_WEEKLY -> deps.scheduler().rearmSummaries(account.user, account.zone, delivered = "weekly")
+                }
+                // Offline, the stored session still counts; only a real sign-out or revoked session ends the series.
+                if (!deps.signedIn(account.user)) { deps.scheduler().cancelAll(account.user); return }
                 val options = ReminderPreferences.read(context, account.user)
                 // The account may sign out or switch while content loads; check again before anything is shown.
                 fun stillCurrent() = ReminderAccount.read(context)?.user == account.user
@@ -337,7 +369,11 @@ class ReminderAlarmReceiver : BroadcastReceiver() {
                 if (!deps.signedIn(account.user)) { deps.scheduler().cancelAll(account.user); return }
                 deps.scheduler().reschedule(account.user, account.zone, account.deen)
                 // Reboots clear alarms; restore prayer alerts from the saved times before any connection is back.
-                if (ReminderPreferences.read(context, account.user).prayers && account.deen) PrayerPlan.schedule(deps, account.user, account.zone, fetch = false)
+                if (ReminderPreferences.read(context, account.user).prayers && account.deen) {
+                    try { PrayerPlan.schedule(deps, account.user, account.zone, fetch = false) }
+                    catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { /* The prayer worker re-plans once online. */ }
+                }
+                deps.rearmTasks(context, account)
             }
         }
     }

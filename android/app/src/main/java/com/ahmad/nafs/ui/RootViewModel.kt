@@ -134,7 +134,11 @@ class RootViewModel @Inject constructor(
                     -> {
                         _profileMessage.value = null
                         // A cold start that is already signed out has no loaded user; clear whichever account was scheduled.
-                        if (loadedUserId == null) reminderAlarms.cancelStored()
+                        if (loadedUserId == null) reminderAlarms.storedUser()?.let { stale ->
+                            activityReminders.cancel(stale)
+                            reminderScheduler.cancelAll(stale)
+                            reminderAlarms.cancelAll(stale)
+                        }
                         loadedUserId?.let {
                             activityReminders.cancel(it)
                             reminderAlarms.cancelAll(it)

@@ -28,6 +28,9 @@ class KeystoreSessionManager @Inject constructor(
     @ApplicationContext context: Context,
 ) : SessionManager {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    // The IV and ciphertext are separate entries; a read between the two halves of a save would mismatch
+    // and look corrupt. Every read and write of the pair holds this lock.
+    private val lock = Any()
     private val json = Json {
         encodeDefaults = true
         ignoreUnknownKeys = true
@@ -38,36 +41,51 @@ class KeystoreSessionManager @Inject constructor(
             init(Cipher.ENCRYPT_MODE, getOrCreateKey())
         }
         val encrypted = cipher.doFinal(json.encodeToString(session).encodeToByteArray())
-        val saved = preferences.edit()
-            .putString(IV_KEY, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-            .putString(SESSION_KEY, Base64.encodeToString(encrypted, Base64.NO_WRAP))
-            .commit()
+        val saved = synchronized(lock) {
+            preferences.edit()
+                .putString(IV_KEY, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+                .putString(SESSION_KEY, Base64.encodeToString(encrypted, Base64.NO_WRAP))
+                .commit()
+        }
         check(saved) { "Unable to persist the authentication session." }
     }
 
     override suspend fun loadSession(): UserSession = withContext(Dispatchers.IO) {
-        val encodedIv = preferences.getString(IV_KEY, null) ?: throw NoSessionFoundException()
-        val encodedSession = preferences.getString(SESSION_KEY, null) ?: throw NoSessionFoundException()
-
-        try {
-            val cipher = Cipher.getInstance(TRANSFORMATION).apply {
-                init(
-                    Cipher.DECRYPT_MODE,
-                    getOrCreateKey(),
-                    GCMParameterSpec(GCM_TAG_LENGTH_BITS, Base64.decode(encodedIv, Base64.NO_WRAP)),
-                )
+        synchronized(lock) {
+            val encodedIv = preferences.getString(IV_KEY, null) ?: throw NoSessionFoundException()
+            val encodedSession = preferences.getString(SESSION_KEY, null) ?: throw NoSessionFoundException()
+            try {
+                decrypt(encodedIv, encodedSession)
+            } catch (_: Exception) {
+                // A consistent pair that cannot be decrypted is unusable, for example after a Keystore reset.
+                preferences.edit().remove(IV_KEY).remove(SESSION_KEY).commit()
+                throw NoSessionFoundException()
             }
-            val plaintext = cipher.doFinal(Base64.decode(encodedSession, Base64.NO_WRAP))
-            json.decodeFromString<UserSession>(plaintext.decodeToString())
-        } catch (_: Exception) {
-            preferences.edit().remove(IV_KEY).remove(SESSION_KEY).commit()
-            throw NoSessionFoundException()
+        }
+    }
+
+    /**
+     * The account of the stored session, for background reminders that run before a token refresh is possible.
+     * Read-only: unlike [loadSession] it never deletes anything, and any problem returns null.
+     */
+    suspend fun storedUserId(): String? = withContext(Dispatchers.IO) {
+        synchronized(lock) {
+            val encodedIv = preferences.getString(IV_KEY, null) ?: return@synchronized null
+            val encodedSession = preferences.getString(SESSION_KEY, null) ?: return@synchronized null
+            runCatching { decrypt(encodedIv, encodedSession).user?.id }.getOrNull()
         }
     }
 
     override suspend fun deleteSession() = withContext(Dispatchers.IO) {
-        preferences.edit().remove(IV_KEY).remove(SESSION_KEY).commit()
+        synchronized(lock) { preferences.edit().remove(IV_KEY).remove(SESSION_KEY).commit() }
         Unit
+    }
+
+    private fun decrypt(encodedIv: String, encodedSession: String): UserSession {
+        val cipher = Cipher.getInstance(TRANSFORMATION).apply {
+            init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_LENGTH_BITS, Base64.decode(encodedIv, Base64.NO_WRAP)))
+        }
+        return json.decodeFromString<UserSession>(cipher.doFinal(Base64.decode(encodedSession, Base64.NO_WRAP)).decodeToString())
     }
 
     private fun getOrCreateKey(): SecretKey {

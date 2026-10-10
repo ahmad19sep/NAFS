@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- On-time prayer, end-of-day and weekly notifications; the user grants this in Alarms & reminders. -->
+    <!-- On-time task, prayer, end-of-day and weekly notifications; the user grants this in Alarms & reminders. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Approximate, foreground-only location for prayer times. Rounded to about 1 km; no background location. -->

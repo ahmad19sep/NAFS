@@ -29,7 +29,10 @@ class ProgressViewModel @Inject constructor(private val api: NafsApiClient, priv
     private var account = ""; private var job: Job? = null
     fun initialize(userId: String) { if (account != userId) { account = userId; reload() } }
     fun period(value: String) { if (value !in setOf("weekly", "monthly")) return; _state.update { it.copy(period = value, offset = 0, response = null) }; reload() }
+    private var appliedWeekStart: String? = null
     fun openWeek(start: String, zone: String) {
+        if (start == appliedWeekStart) return
+        appliedWeekStart = start
         val monday = runCatching { LocalDate.parse(start) }.getOrNull() ?: return
         val current = runCatching { AccountDate.today(zone) }.getOrNull()?.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)) ?: return
         val offset = ChronoUnit.WEEKS.between(monday, current).toInt().coerceIn(0, 60)

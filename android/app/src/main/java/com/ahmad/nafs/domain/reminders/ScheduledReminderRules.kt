@@ -76,8 +76,8 @@ object ScheduledReminderRules {
             habitPct?.takeIf { it.isNotBlank() }?.let { add("Habits $it%") }
             if (!prayerPoints.isNullOrBlank() && !prayerMax.isNullOrBlank()) add("Prayer points $prayerPoints/$prayerMax")
         }
-        val days = "Recorded days $daysLogged" + (daysElapsed.takeIf { it.isNotBlank() }?.let { "/$it" } ?: "")
-        val close = if (incomplete) "Some records could not be loaded. Tap for the full report." else "Tap for the full report."
-        return (parts + days).joinToString(" · ") + ". " + close
+        val days = ("Recorded days $daysLogged" + (daysElapsed.takeIf { it.isNotBlank() }?.let { "/$it" } ?: "")).takeUnless { incomplete }
+        if (incomplete) return (parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")?.plus(". ") ?: "") + "Some records could not be loaded. Tap for the full report."
+        return (parts + listOfNotNull(days)).joinToString(" · ") + ". Tap for the full report."
     }
 }

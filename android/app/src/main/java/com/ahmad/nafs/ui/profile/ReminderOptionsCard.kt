@@ -158,7 +158,7 @@ fun ReminderOptionsCard(profile: UserProfile, onOpenPrayerTimes: () -> Unit, vie
         }
         ReminderSwitch("End-of-day summary · ${ScheduledReminderRules.dailySummaryTime.format(clock)}", options.daily) { update(options.copy(daily = it)) }
         ReminderSwitch("Weekly report · Sundays ${ScheduledReminderRules.weeklyReportTime.format(clock)}", options.weekly) { update(options.copy(weekly = it)) }
-        if ((options.prayers && profile.deenEnabled || options.daily || options.weekly) && !exact && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if ((options.tasks || options.prayers && profile.deenEnabled || options.daily || options.weekly) && !exact && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             Text("Android may deliver these several minutes late. Allow alarms for NAFS to receive them on time.", style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = {
                 runCatching { context.startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, "package:${context.packageName}".toUri())) }
