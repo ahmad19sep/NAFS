@@ -1,5 +1,6 @@
 package com.ahmad.nafs.screenshots
 
+import android.app.Application
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -9,6 +10,9 @@ import androidx.compose.ui.Modifier
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ahmad.nafs.core.auth.SignUpGender
 import com.ahmad.nafs.core.preferences.ThemeMode
+import com.ahmad.nafs.core.profile.UserProfile
+import com.ahmad.nafs.ui.LibraryScreen
+import com.ahmad.nafs.ui.QuickAddContent
 import com.ahmad.nafs.ui.auth.AuthMode
 import com.ahmad.nafs.ui.auth.AuthScreen
 import com.ahmad.nafs.ui.auth.AuthUiState
@@ -25,7 +29,8 @@ import org.robolectric.annotation.GraphicsMode
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [34], qualifiers = "w393dp-h852dp-xhdpi")
+// A plain Application: the real one schedules WorkManager jobs that have no place in a render test.
+@Config(sdk = [34], qualifiers = "w393dp-h852dp-xhdpi", application = Application::class)
 class ScreenshotTest {
 
     private fun shot(name: String, content: @Composable () -> Unit) {
@@ -54,5 +59,16 @@ class ScreenshotTest {
 
     @Test fun authForgot() = shot("03_auth_forgot") {
         AuthScreen(AuthUiState(mode = AuthMode.FORGOT_PASSWORD, email = "ahmad@example.com"), {}, {}, {}, {}, {}, {}, {})
+    }
+
+    @Test fun explore() = shot("10_explore") { LibraryScreen(sampleProfile, onBack = {}) {} }
+
+    @Test fun quickAdd() = shot("11_quick_add") { QuickAddContent {} }
+
+    companion object {
+        val sampleProfile = UserProfile(
+            userId = "user-1", name = "Ahmad Siddique", email = "ahmad@example.com", timezone = "Asia/Karachi",
+            avatarUrl = null, onboardingComplete = true, deenEnabled = true,
+        )
     }
 }

@@ -2,6 +2,10 @@ package com.ahmad.nafs
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
+import androidx.activity.viewModels
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.ahmad.nafs.ui.RootAppState
 import androidx.lifecycle.lifecycleScope
 import com.ahmad.nafs.core.auth.AuthCallbackController
 import com.ahmad.nafs.ui.auth.AuthCallbackDialog
@@ -11,7 +15,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ahmad.nafs.core.preferences.ThemeMode
 import com.ahmad.nafs.ui.NafsApp
@@ -25,14 +28,23 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var authCallbacks: AuthCallbackController
     private fun handleAuthIntent(intent: Intent?) { intent?.data?.let { uri -> lifecycleScope.launch { authCallbacks.handle(uri) } } }
     private val requestedDestination = MutableStateFlow<String?>(null)
+    private val rootViewModel: RootViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
+        // Hold the branded splash while the saved session and profile resolve, so a returning user
+        // goes straight to Home. Capped so a slow network falls through to the in-app loading state.
+        val splashStarted = SystemClock.elapsedRealtime()
+        splash.setKeepOnScreenCondition {
+            val resolving = rootViewModel.appState.value.let { it == RootAppState.RestoringSession || it == RootAppState.LoadingProfile }
+            resolving && SystemClock.elapsedRealtime() - splashStarted < SPLASH_MAX_MS
+        }
         handleAuthIntent(intent)
         requestedDestination.value = intent?.getStringExtra(EXTRA_DESTINATION)
         enableEdgeToEdge()
         setContent {
-            val viewModel: RootViewModel = hiltViewModel()
+            val viewModel = rootViewModel
             val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
             val appState by viewModel.appState.collectAsStateWithLifecycle()
             val profileMessage by viewModel.profileMessage.collectAsStateWithLifecycle()
@@ -68,6 +80,7 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_DESTINATION = "com.ahmad.nafs.extra.DESTINATION"
         const val EXTRA_TASK_ID = "com.ahmad.nafs.extra.TASK_ID"
         const val DESTINATION_TASKS = "tasks"
+        private const val SPLASH_MAX_MS = 2_500L
     }
 }
 
