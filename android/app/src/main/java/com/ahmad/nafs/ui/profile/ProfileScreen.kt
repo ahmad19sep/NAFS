@@ -38,6 +38,7 @@ import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MilitaryTech
 import androidx.compose.material.icons.rounded.NightsStay
 import androidx.compose.material.icons.rounded.PhotoCamera
+import androidx.compose.material.icons.rounded.Policy
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,6 +58,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -103,6 +105,7 @@ fun ProfileRoute(
     val editorMessage by editor.message.collectAsStateWithLifecycle()
     val faithSaving by faith.saving.collectAsStateWithLifecycle()
     val faithError by faith.error.collectAsStateWithLifecycle()
+    val uriHandler = LocalUriHandler.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri?.let { editor.upload(profile, it) }
     }
@@ -128,6 +131,8 @@ fun ProfileRoute(
             onDeleteAccount = { confirmation -> editor.delete(profile, confirmation) },
             onSignOut = onSignOut,
             onOpenRoute = onOpenRoute,
+            // Hosted by the web app. If no browser can open it, the tap does nothing rather than crash.
+            onOpenPrivacyPolicy = { runCatching { uriHandler.openUri("${BuildConfig.API_BASE_URL}/privacy") } },
         ),
         notifications = {
             NotificationSettingsCard()
@@ -156,6 +161,7 @@ internal data class ProfileActions(
     val onDeleteAccount: (confirmation: String) -> Unit = {},
     val onSignOut: () -> Unit = {},
     val onOpenRoute: (String) -> Unit = {},
+    val onOpenPrivacyPolicy: () -> Unit = {},
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -267,6 +273,9 @@ internal fun ProfileScreen(
                 NafsDivider()
                 NafsListRow("Privacy & data", subtitle = "How NAFS protects your records", icon = Icons.Rounded.Lock,
                     tint = Nafs.colors.habits, onClick = { showAbout = true })
+                NafsDivider()
+                NafsListRow("Privacy policy", subtitle = "Opens in your browser", icon = Icons.Rounded.Policy,
+                    tint = Nafs.colors.habits, onClick = actions.onOpenPrivacyPolicy)
                 NafsDivider()
                 NafsListRow("About NAFS", subtitle = "Version ${BuildConfig.VERSION_NAME}", icon = Icons.Rounded.Description,
                     tint = scheme.onSurfaceVariant, onClick = { showAbout = true })
