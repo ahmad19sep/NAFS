@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.time.Duration
 import java.util.Properties
 
 fun String.asBuildConfigString(): String =
@@ -115,7 +116,7 @@ kotlin {
 
 // A hung test (for example an animation that never idles) fails the build instead of stalling CI.
 tasks.withType<Test>().configureEach {
-    timeout.set(java.time.Duration.ofMinutes(15))
+    timeout.set(Duration.ofMinutes(15))
 }
 
 ksp {
