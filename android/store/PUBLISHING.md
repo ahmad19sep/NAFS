@@ -50,6 +50,8 @@ The release is signed with an **upload key**. It is stored outside the repositor
   - The AI provider generates coach replies.
   - Aladhan calculates prayer times from the approximate location.
 - **Encrypted in transit:** Yes, HTTPS only.
+- **Account creation:** Username and password, and OAuth (Google sign-in).
+- **Advertising ID:** Not used. The release manifest has no `AD_ID` permission.
 - **Account deletion:** Users can request deletion in the app and at https://nafs-one.vercel.app/privacy. To delete on the web: sign in at https://nafs-one.vercel.app, then go to Profile → Delete account.
 
 Data types, all *collected*, *linked to the user*, *not used for ads*, and with the purpose **App functionality** (and **Account management** where it applies):
@@ -59,9 +61,9 @@ Data types, all *collected*, *linked to the user*, *not used for ads*, and with 
 | Personal info: name, email address, user IDs | Required |
 | Health and fitness: health info, fitness info | Optional |
 | Photos | Optional: avatar, challenge proof, log photos |
-| Approximate location | Optional, only for prayer times |
+| Approximate location | Optional, only for prayer times. Processed ephemerally: it is sent to Aladhan and cached encrypted on the phone, never stored on our servers |
 | App activity: other user-generated content (tasks, habits, goals, journals, coach chats) | Required for core features |
-| Other: religious practice, prayer logs in faith mode | Optional. Play has no exact category; describe it under "Other user-generated content" |
+| Personal info: political or religious beliefs (prayer logs in faith mode) | Optional |
 
 Not collected: precise location, contacts, messages, audio, files, calendar, financial info, web history, device IDs, crash logs or diagnostics.
 
@@ -70,6 +72,8 @@ Not collected: precise location, contacts, messages, audio, files, calendar, fin
 1. **Internal testing.** Go to Testing → Internal testing → Create release, upload `app-release.aab` and paste the release notes. Add your own email as a tester and install from the opt-in link.
 2. **Closed testing (required for new personal accounts).** Google requires a closed test with a minimum number of testers (currently 12) who stay opted in for at least 14 days before you can apply for production. Check the current numbers in Play Console. Invite friends or family by email list or Google Group.
 3. **Production.** After the closed test, apply for production access in the Dashboard, then promote the release. Review usually takes from a few hours to several days.
+
+**Status on 11 Oct 2026:** internal testing is live. The store listing, the app content declarations and a closed test were sent to Google for review. The closed test is Alpha: all countries, the `testers` email list (13 people) and release 2 (1.1.0). After the review passes, testers opt in from the closed test link and must stay opted in for 14 days. Then apply for production.
 
 ## Before each update
 

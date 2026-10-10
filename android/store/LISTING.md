@@ -75,7 +75,7 @@ NAFS works best with notifications and "Alarms & reminders" allowed, so prayer a
 |---|---|---|
 | App icon | 512 × 512 PNG | `app/build/outputs/store/icon-512.png` |
 | Feature graphic | 1024 × 500 PNG | `app/build/outputs/store/feature-graphic.png` |
-| Phone screenshots | 2 to 8, sides 320–3,840 px, no more than 2:1 | `store/screenshots/*.png` |
+| Phone screenshots | 2 to 8, exactly 9:16, sides 320–3,840 px | `store/screenshots/*.png` |
 
 ## Release notes for the first release (500 characters max)
 
