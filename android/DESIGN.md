@@ -66,7 +66,10 @@ bottom spacer (the tab bar already pads the content)
 
 ## Screenshots
 
-`app/src/test/java/com/ahmad/nafs/screenshots/` renders screens with sample state in dark and light.
-`./gradlew :app:recordRoborazziDebug` writes them to `app/build/outputs/roborazzi/`; CI publishes them as the
-`screenshots` artifact. Screens are split into a `…Route` (ViewModel wiring) and a stateless `internal`
-screen composable so they can be rendered here.
+`app/src/test/java/com/ahmad/nafs/screenshots/` renders every screen with sample state in dark and light — about
+60 screens and states. Test classes extend `ScreenshotTestBase` and call `captureScreen(name) { … }` once per
+test; shared sample records live in `SampleData`. `./gradlew :app:recordRoborazziDebug` writes the PNGs to
+`app/build/outputs/roborazzi/`, and CI publishes them as the `screenshots` artifact.
+
+To be renderable, each screen is split into a `…Route` (ViewModel wiring, permission launchers, effects) and a
+stateless `internal` screen that takes a state object and an actions class with no-op defaults.

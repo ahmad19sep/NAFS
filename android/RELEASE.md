@@ -38,8 +38,9 @@ listing. Signing and versioning details are in [README.md](README.md#release-sig
 ## Play Store listing
 
 - **Package:** `com.ahmad.nafs`. Target SDK 36 meets the current Play requirement.
-- **Privacy policy URL:** required because the app handles health, faith and account data. Host one (for
-  example a page on the Vercel site) that matches the data-safety answers below.
+- **Privacy policy URL:** required because the app handles health, faith and account data. Use
+  `https://nafs-one.vercel.app/privacy` (`web-legacy/src/app/privacy/page.tsx`, also linked from Profile → Privacy
+  policy). Keep it in step with the data-safety answers below, and add a contact email before publishing.
 - **Data safety** — what the app actually does:
   - Collected and linked to the account: name, email, user content (tasks, habits, goals, journals, coach
     chats), health and fitness data (sleep, water, steps, weight, meals, mood), religious practice (prayer

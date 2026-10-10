@@ -241,7 +241,7 @@ private fun LevelHero(level: JsonObject, earned: Int, total: Int) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        next?.let { "${RecordRules.text(level, "daysToNext")} more recorded days to ${RecordRules.text(it, "name")}" }
+                        next?.let { "${RecordRules.text(level, "daysToNext")} more recorded ${if (RecordRules.text(level, "daysToNext") == "1") "day" else "days"} to ${RecordRules.text(it, "name")}" }
                             ?: "Every level reached. Keep showing up.",
                         Modifier.weight(1f),
                         style = MaterialTheme.typography.labelLarge,
