@@ -16,7 +16,7 @@ import kotlinx.coroutines.withContext
 
 /** Public images use a separate connection without session headers or disk persistence. */
 @Composable
-fun PublicPhoto(url: String?, description: String, modifier: Modifier = Modifier) {
+fun PublicPhoto(url: String?, description: String, modifier: Modifier = Modifier, crop: Boolean = false) {
     var bitmap by remember(url) { mutableStateOf<ImageBitmap?>(null) }
     var failed by remember(url) { mutableStateOf(false) }
     LaunchedEffect(url) {
@@ -43,6 +43,7 @@ fun PublicPhoto(url: String?, description: String, modifier: Modifier = Modifier
         } catch (cancel: CancellationException) { throw cancel }
         catch (_: Exception) { failed = true }
     }
-    bitmap?.let { Image(it, description, modifier, contentScale = ContentScale.Fit) }
-    if (failed) Text("Photo unavailable")
+    bitmap?.let { Image(it, description, modifier, contentScale = if (crop) ContentScale.Crop else ContentScale.Fit) }
+    // A cropped photo sits inside an avatar or tile that already shows a fallback.
+    if (failed && !crop) Text("Photo unavailable")
 }

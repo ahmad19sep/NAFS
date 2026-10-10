@@ -53,8 +53,9 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Unit tests
-        run: ./gradlew --no-configuration-cache :app:testDebugUnitTest
+      # Runs every JVM unit test; the screenshot test also records its PNGs.
+      - name: Unit tests and screenshots
+        run: ./gradlew --no-configuration-cache :app:recordRoborazziDebug
 
       - name: Debug APK
         run: ./gradlew --no-configuration-cache :app:assembleDebug
@@ -69,6 +70,29 @@ jobs:
           name: nafs-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: ignore
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: android/app/build/outputs/roborazzi/*.png
+          if-no-files-found: ignore
+
+      # Also kept on a branch per source branch, so they can be fetched with git.
+      - name: Publish screenshots to a branch
+        if: always() && github.event_name == 'push' && hashFiles('android/app/build/outputs/roborazzi/*.png') != ''
+        working-directory: android/app/build/outputs/roborazzi
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git init -q -b screenshots
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          printf 'Source: %s@%s\n' "$GITHUB_REF_NAME" "$GITHUB_SHA" > SOURCE.txt
+          git add -A
+          git commit -qm "Screenshots for $GITHUB_REF_NAME@${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/screenshots/${GITHUB_REF_NAME}"
 
       - name: Upload reports
         if: failure()
