@@ -1,0 +1,45 @@
+# Is the server the Android app talks to up to date?
+#
+# Unauthenticated POSTs to each route the native app calls. A deployed route
+# answers 400/401/403/405 (it exists and rejects us); 404 means the deployment
+# is older than the app. Runs daily, on demand, and when this file changes.
+
+name: Backend check
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch: {}
+  push:
+    paths:
+      - '.github/workflows/backend-check.yml'
+
+jobs:
+  routes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ORIGIN: https://nafs-one.vercel.app
+    steps:
+      - name: Probe native API routes
+        run: |
+          missing=0
+          {
+            echo "### NAFS backend at $ORIGIN"
+            echo
+            echo "| Route | HTTP | Status |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for route in /api/progress /api/recognition /api/ai/native /api/ai/chat /api/ai/evening-verdict \
+                       /api/ai/plan /api/ai/plan-from-chat /api/ai/future-self /api/ai/report-review \
+                       /api/ai/habit-starter /api/ai/goal-starter /api/ai/challenge-starter /api/ai/health-recommend \
+                       /api/screentime/analyze /api/user/delete; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -X POST -H 'Content-Type: application/json' -d '{}' "$ORIGIN$route")
+            if [ "$code" = "404" ] || [ "$code" = "000" ]; then state="missing"; missing=$((missing+1)); else state="deployed"; fi
+            echo "$route $code $state"
+            echo "| \`$route\` | $code | $state |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          if [ "$missing" -gt 0 ]; then
+            echo "::error::$missing route(s) are not deployed. Redeploy web-legacy on Vercel from main."
+            exit 1
+          fi

@@ -138,7 +138,7 @@ fun NafsHeroCard(
 ) {
     NafsHeroSurface(modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            NafsEyebrow(eyebrow, color = Nafs.colors.gold)
+            NafsEyebrow(eyebrow, color = Nafs.colors.heroGold)
             Text(title, color = Nafs.colors.onHero, style = MaterialTheme.typography.headlineSmall)
             Text(body, color = Nafs.colors.onHeroMuted, style = MaterialTheme.typography.bodyMedium)
             content?.invoke()

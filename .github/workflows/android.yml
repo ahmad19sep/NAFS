@@ -57,20 +57,6 @@ jobs:
       - name: Unit tests and screenshots
         run: ./gradlew --no-configuration-cache :app:recordRoborazziDebug
 
-      - name: Debug APK
-        run: ./gradlew --no-configuration-cache :app:assembleDebug
-
-      - name: Lint
-        run: ./gradlew --no-configuration-cache :app:lintDebug
-
-      - name: Upload debug APK
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nafs-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: ignore
-
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -93,6 +79,23 @@ jobs:
           git add -A
           git commit -qm "Screenshots for $GITHUB_REF_NAME@${GITHUB_SHA::7}"
           git push -qf "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/screenshots/${GITHUB_REF_NAME}"
+
+      - name: Debug APK
+        run: ./gradlew --no-configuration-cache :app:assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: nafs-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+
+      - name: Lint
+        run: ./gradlew --no-configuration-cache :app:lintDebug
+
+      # Unsigned release build: proves R8 shrinking still works before a signed build is made locally.
+      - name: Release build (R8)
+        run: ./gradlew --no-configuration-cache :app:assembleRelease
 
       - name: Upload reports
         if: failure()

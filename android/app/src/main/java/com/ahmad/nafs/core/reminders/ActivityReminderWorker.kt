@@ -57,6 +57,9 @@ enum class ReminderChannel(val id: String, val title: String, val importance: In
     PRAYER("nafs_prayer_times", "Prayer times", NotificationManager.IMPORTANCE_HIGH),
     SUMMARY("nafs_summaries", "Daily and weekly summaries", NotificationManager.IMPORTANCE_DEFAULT),
 }
+/** NAFS emerald: tints the small icon and app name in the notification shade. */
+const val NOTIFICATION_ACCENT = 0xFF0F7466.toInt()
+
 object LocalReminderNotifications {
     @SuppressLint("MissingPermission")
     fun show(context: Context, key: String, title: String, text: String, destination: String,
@@ -69,7 +72,7 @@ object LocalReminderNotifications {
         val pending = PendingIntent.getActivity(context, key.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         manager.notify(key, 0, NotificationCompat.Builder(context, channel.id).setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title).setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setContentIntent(pending).setAutoCancel(true)
+            .setContentIntent(pending).setAutoCancel(true).setColor(NOTIFICATION_ACCENT)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build())
         return true
     }

@@ -116,6 +116,7 @@ fun DashboardRoute(
             onOpenProfile = onOpenProfile,
         ),
         insight = { DashboardInsightCard(profile, onOpenLibrary, onOpenCoach) },
+        nudge = { NotificationNudge() },
     )
 }
 
@@ -141,6 +142,7 @@ internal fun DashboardScreen(
     state: DashboardUiState,
     actions: DashboardActions,
     insight: @Composable () -> Unit = {},
+    nudge: @Composable () -> Unit = {},
 ) {
     val zone = runCatching { ZoneId.of(profile.timezone) }.getOrDefault(ZoneId.of("UTC"))
     val now by produceState(initialValue = ZonedDateTime.now(zone), zone) {
@@ -186,7 +188,13 @@ internal fun DashboardScreen(
             item { NafsBanner(message, kind = NafsBannerKind.WARNING, onDismiss = actions.onDismissMessage) }
         }
 
-        item { TodayHero(metrics, now, profile.timezone, onOpenTasks = actions.onOpenTasks) }
+        item {
+            // The nudge renders nothing once notifications work, so it shares the hero's item.
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                nudge()
+                TodayHero(metrics, now, profile.timezone, onOpenTasks = actions.onOpenTasks)
+            }
+        }
 
         nextTask?.let { task -> item { NextUpCard(task, actions.onOpenTasks) } }
 
@@ -194,7 +202,7 @@ internal fun DashboardScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 ShortcutTile(
                     title = "Check-in",
-                    subtitle = if (now.hour < 15) "Set today's priorities" else "Reflect on today",
+                    subtitle = if (now.hour < 15) "Plan today" else "Reflect",
                     icon = Icons.Rounded.WbTwilight,
                     tint = Nafs.colors.reflect,
                     onClick = actions.onOpenCheckIn,
@@ -295,7 +303,7 @@ private fun TodayHero(metrics: DashboardMetrics, now: ZonedDateTime, timezone: S
                     progress = progress,
                     size = 108.dp,
                     stroke = 10.dp,
-                    colors = listOf(c.gold, MaterialTheme.colorScheme.primary),
+                    colors = listOf(c.heroGold, c.heroMint),
                     trackColor = Color.White.copy(alpha = 0.12f),
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -304,7 +312,7 @@ private fun TodayHero(metrics: DashboardMetrics, now: ZonedDateTime, timezone: S
                     }
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    NafsEyebrow("Your day, honestly", color = c.gold)
+                    NafsEyebrow("Your day, honestly", color = c.heroGold)
                     Text(heroHeadline(metrics), style = MaterialTheme.typography.titleLarge, color = c.onHero)
                     Text(
                         "${now.format(DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH))} · $timezone",
@@ -315,9 +323,9 @@ private fun TodayHero(metrics: DashboardMetrics, now: ZonedDateTime, timezone: S
             }
             Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.10f)))
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                HeroStat("Tasks", "${metrics.completedTasks}/${metrics.totalTasks}", fraction(metrics.completedTasks, metrics.totalTasks), c.tasks, Modifier.weight(1f))
-                HeroStat("Habits", "${metrics.completedHabits}/${metrics.totalHabits}", fraction(metrics.completedHabits, metrics.totalHabits), c.habits, Modifier.weight(1f))
-                HeroStat("Goals", "${metrics.averageGoalProgress}%", metrics.averageGoalProgress / 100f, c.gold, Modifier.weight(1f))
+                HeroStat("Tasks", "${metrics.completedTasks}/${metrics.totalTasks}", fraction(metrics.completedTasks, metrics.totalTasks), c.heroSky, Modifier.weight(1f))
+                HeroStat("Habits", "${metrics.completedHabits}/${metrics.totalHabits}", fraction(metrics.completedHabits, metrics.totalHabits), c.heroMint, Modifier.weight(1f))
+                HeroStat("Goals", "${metrics.averageGoalProgress}%", metrics.averageGoalProgress / 100f, c.heroGold, Modifier.weight(1f))
             }
             if (total == 0) {
                 Surface(onClick = onOpenTasks, shape = MaterialTheme.shapes.medium, color = Color.White.copy(alpha = 0.08f)) {

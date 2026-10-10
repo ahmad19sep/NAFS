@@ -1,0 +1,4 @@
+<resources>
+    <!-- Debug builds install next to the release app (id suffix .debug); the label tells them apart. -->
+    <string name="app_name">NAFS Dev</string>
+</resources>
