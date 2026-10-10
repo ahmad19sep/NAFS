@@ -58,6 +58,7 @@ import com.ahmad.nafs.ui.components.isOnline
 import com.ahmad.nafs.ui.dashboard.DashboardRoute
 import com.ahmad.nafs.ui.deen.DeenRoute
 import com.ahmad.nafs.ui.deen.PrayerTimesRoute
+import com.ahmad.nafs.ui.deen.QiblaRoute
 import com.ahmad.nafs.ui.goals.GoalRoute
 import com.ahmad.nafs.ui.habits.HabitRoute
 import com.ahmad.nafs.ui.health.HealthRoute
@@ -122,7 +123,7 @@ fun NafsApp(
 
 /** Screens a notification, app shortcut or home-screen widget may open. Anything else is ignored. */
 internal val externalDestinations = setOf(
-    "coach", "coach/letters", "deen", "prayer-times", "qibla", "tasbih", "progress", "checkin", "health",
+    "coach", "coach/letters", "deen", "prayer-times", "qibla", "progress", "checkin", "health",
     "challenges", "library", "tasks/new", "habits/new",
 )
 
@@ -211,9 +212,16 @@ private fun AuthenticatedNafsApp(
                 composable("goals") { GoalRoute(profile = profile) }
                 composable("challenges") { ChallengeRoute(profile = profile) }
                 composable("health") { HealthRoute(profile = profile) }
-                composable("deen") { DeenRoute(profile = profile) }
+                composable("deen") { DeenRoute(profile = profile, onOpenRoute = open) }
                 composable("checkin") { CheckInRoute(profile = profile) }
                 composable("prayer-times") { if (profile.deenEnabled) PrayerTimesRoute(profile, { navController.popBackStack() }) }
+                composable("qibla") {
+                    if (profile.deenEnabled) QiblaRoute(
+                        profile = profile,
+                        onBack = { navController.popBackStack() },
+                        onOpenPrayerTimes = { open("prayer-times") },
+                    )
+                }
                 composable("achievements") { AchievementsRoute(profile, { navController.popBackStack() }) }
                 composable("library") { LibraryScreen(profile, onBack = { navController.popBackStack() }, onNavigate = open) }
                 RecordFeature.entries.forEach { feature ->

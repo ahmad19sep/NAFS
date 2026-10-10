@@ -43,7 +43,7 @@ class ScreenshotTest : ScreenshotTestBase() {
     @Test fun authSignUp() = captureScreen("02_auth_signup") {
         AuthScreen(
             AuthUiState(mode = AuthMode.SIGN_UP, name = "Ahmad Siddique", gender = SignUpGender.MALE, email = "ahmad@example.com",
-                errorMessage = "Password must be at least 6 characters."),
+                errorMessage = "Use 8–128 characters for your password."),
             {}, {}, {}, {}, {}, {}, {},
         )
     }

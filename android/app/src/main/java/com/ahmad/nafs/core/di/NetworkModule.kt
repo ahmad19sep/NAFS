@@ -2,13 +2,13 @@ package com.ahmad.nafs.core.di
 
 import com.ahmad.nafs.BuildConfig
 import com.ahmad.nafs.core.network.NafsApiClient
+import com.ahmad.nafs.core.network.nafsHttpEngine
 import com.ahmad.nafs.core.network.SupabaseApiSessionTokens
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.android.Android
 import io.ktor.client.plugins.HttpTimeout
 import javax.inject.Singleton
 
@@ -18,7 +18,7 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideApiClient(sessions: SupabaseApiSessionTokens): NafsApiClient = NafsApiClient(
-        http = HttpClient(Android) {
+        http = HttpClient(nafsHttpEngine()) {
             followRedirects = false
             expectSuccess = false
             install(HttpTimeout) {

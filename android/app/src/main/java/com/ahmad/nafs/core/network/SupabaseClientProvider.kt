@@ -27,6 +27,7 @@ class SupabaseClientProvider @Inject constructor(
                 supabaseUrl = BuildConfig.SUPABASE_URL,
                 supabaseKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY,
             ) {
+                httpEngine = nafsHttpEngine()
                 install(Auth) {
                     this.sessionManager = this@SupabaseClientProvider.sessionManager
                     flowType = FlowType.PKCE

@@ -12,7 +12,7 @@ class TaskPresentationTest {
     private val today = LocalDate.parse("2026-10-09")
 
     @Test
-    fun visibleTasksKeepOnlyCurrentAndGraceThenOrderByPeriodPriorityAndStatus() {
+    fun visibleTasksKeepOnlyCurrentAndGraceThenOrderByPeriodStatusAndPriority() {
         val currentLow = task("current-low", today, TaskPriority.LOW)
         val currentDone = task(
             "current-done",
@@ -39,7 +39,7 @@ class TaskPresentationTest {
         )
 
         assertEquals(
-            listOf("current-active", "current-done", "current-low", "grace"),
+            listOf("current-active", "current-low", "current-done", "grace"),
             visible.map(NafsTask::id),
         )
     }

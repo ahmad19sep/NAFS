@@ -102,7 +102,7 @@ fun ProfileRoute(
     faith: FaithModeViewModel = hiltViewModel(),
 ) {
     val busy by editor.busy.collectAsStateWithLifecycle()
-    val editorMessage by editor.message.collectAsStateWithLifecycle()
+    val editorNotice by editor.notice.collectAsStateWithLifecycle()
     val faithSaving by faith.saving.collectAsStateWithLifecycle()
     val faithError by faith.error.collectAsStateWithLifecycle()
     val uriHandler = LocalUriHandler.current
@@ -114,7 +114,7 @@ fun ProfileRoute(
         themeMode = themeMode,
         state = ProfileUiState(
             busy = busy,
-            editorMessage = editorMessage,
+            editorMessage = editorNotice?.text,
             faithSaving = faithSaving,
             faithError = faithError,
             timezoneMessage = profileMessage,

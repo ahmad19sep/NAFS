@@ -37,7 +37,6 @@ import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.NightsStay
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Remove
-import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -152,7 +151,6 @@ fun DeenRoute(
             onRetryHistory = viewModel::retryHistory,
             onOpenPrayerTimes = { onOpenRoute("prayer-times") },
             onOpenQibla = { onOpenRoute("qibla") },
-            onOpenTasbih = { onOpenRoute("tasbih") },
         ),
         clock = clock,
         now = now,
@@ -174,7 +172,6 @@ internal data class DeenActions(
     val onRetryHistory: () -> Unit = {},
     val onOpenPrayerTimes: () -> Unit = {},
     val onOpenQibla: () -> Unit = {},
-    val onOpenTasbih: () -> Unit = {},
 )
 
 /**
@@ -331,14 +328,6 @@ private fun LazyListScope.deenItems(
                 icon = Icons.Rounded.Explore,
                 tint = Nafs.colors.deen,
                 onClick = actions.onOpenQibla,
-            )
-            NafsDivider()
-            NafsListRow(
-                title = "Tasbih",
-                subtitle = "Count dhikr after salah",
-                icon = Icons.Rounded.TouchApp,
-                tint = Nafs.colors.deen,
-                onClick = actions.onOpenTasbih,
             )
         }
     }

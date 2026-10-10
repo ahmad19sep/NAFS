@@ -137,7 +137,7 @@ class DashboardViewModel @Inject constructor(
             val taskRequest = async { taskRepository.load(userId, today) }
             val habitRequest = async { habitRepository.load(userId, today) }
             val goalRequest = async { goalRepository.load(userId) }
-            val challengeRequest = async { challengeRepository.load(userId) }
+            val challengeRequest = async { challengeRepository.load(userId, today) }
             val taskResult = taskRequest.await()
             val habitResult = habitRequest.await()
             val goalResult = goalRequest.await()

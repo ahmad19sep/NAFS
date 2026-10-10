@@ -96,7 +96,7 @@ import com.ahmad.nafs.ui.theme.AmiriArabic
 import com.ahmad.nafs.ui.theme.Nafs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.android.Android
+import com.ahmad.nafs.core.network.nafsHttpEngine
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
@@ -134,7 +134,7 @@ object PrayerTimeRules {
 @Singleton
 class PrayerTimesRepository @Inject constructor() {
     // A dedicated public client: account tokens are never sent to the prayer provider.
-    private val http = HttpClient(Android) { install(HttpTimeout) { requestTimeoutMillis = 15_000; connectTimeoutMillis = 10_000 }; followRedirects = false }
+    private val http = HttpClient(nafsHttpEngine()) { install(HttpTimeout) { requestTimeoutMillis = 15_000; connectTimeoutMillis = 10_000 }; followRedirects = false }
     suspend fun fetch(city: String, country: String, method: Int, hanafi: Boolean, zone: String, date: LocalDate): JsonObject {
         require(city.trim().length in 1..100 && country.trim().length in 1..100 && method in PrayerTimeRules.methods)
         ZoneId.of(zone)

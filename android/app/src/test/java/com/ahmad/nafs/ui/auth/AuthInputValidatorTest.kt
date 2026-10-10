@@ -26,11 +26,11 @@ class AuthInputValidatorTest {
     }
 
     @Test
-    fun `sign up requires identity fields and minimum password length`() {
+    fun `sign up requires identity fields and password length bounds`() {
         val base = AuthUiState(
             mode = AuthMode.SIGN_UP,
             email = "user@example.com",
-            password = "123456",
+            password = "12345678",
         )
 
         assertEquals("Enter your full name.", AuthInputValidator.validate(base))
@@ -39,14 +39,25 @@ class AuthInputValidatorTest {
             AuthInputValidator.validate(base.copy(name = "A User")),
         )
         assertEquals(
-            "Password must be at least 6 characters.",
+            "Use 8–128 characters for your password.",
             AuthInputValidator.validate(
-                base.copy(name = "A User", gender = SignUpGender.MALE, password = "12345"),
+                base.copy(name = "A User", gender = SignUpGender.MALE, password = "1234567"),
             ),
         )
         assertNull(
             AuthInputValidator.validate(
                 base.copy(name = "A User", gender = SignUpGender.FEMALE),
+            ),
+        )
+        assertNull(
+            AuthInputValidator.validate(
+                base.copy(name = "A User", gender = SignUpGender.FEMALE, password = "p".repeat(128)),
+            ),
+        )
+        assertEquals(
+            "Use 8–128 characters for your password.",
+            AuthInputValidator.validate(
+                base.copy(name = "A User", gender = SignUpGender.FEMALE, password = "p".repeat(129)),
             ),
         )
     }

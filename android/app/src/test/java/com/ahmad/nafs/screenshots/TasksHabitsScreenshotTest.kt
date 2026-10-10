@@ -240,6 +240,7 @@ class TasksHabitsScreenshotTest : ScreenshotTestBase() {
             HabitHistoryContent(
                 habit = habits.first { it.id == "h1" },
                 logs = habitState.logs.filter { it.habitId == "h1" }.sortedByDescending { it.date },
+                today = today,
                 onEditEntry = {},
                 onClose = {},
             )
