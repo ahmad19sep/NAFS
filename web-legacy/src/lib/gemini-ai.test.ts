@@ -19,7 +19,7 @@ describe('Gemini transport', () => {
     const turns = Array.from({ length: 24 }, (_, i) => ({ role: i % 2 ? 'assistant' as const : 'user' as const, content: `turn ${i}` }))
     expect(await geminiChat([{ role: 'system', content: 'Coach' }, { role: 'system', content: 'Account context' }, ...turns])).toBe('Take one small step.')
     const [url, request] = fetchMock.mock.calls[0]
-    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent')
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent')
     expect(url).not.toContain('test-key-private')
     expect(request.headers['x-goog-api-key']).toBe('test-key-private')
     expect(request.redirect).toBe('error')
@@ -31,9 +31,9 @@ describe('Gemini transport', () => {
   })
 
   it('sends the response schema and configurable model', async () => {
-    vi.stubEnv('GEMINI_MODEL', 'gemini-3.5-flash-lite')
+    vi.stubEnv('GEMINI_MODEL', 'gemini-2.5-flash')
     await geminiChat([{ role: 'user', content: 'Plan' }], { schema: { kind: 'object', fields: { title: { kind: 'string' } } } })
-    expect(fetchMock.mock.calls[0][0]).toContain('gemini-3.5-flash-lite:generateContent')
+    expect(fetchMock.mock.calls[0][0]).toContain('gemini-2.5-flash:generateContent')
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).generationConfig).toMatchObject({ responseMimeType: 'application/json', responseJsonSchema: { type: 'object', required: ['title'] } })
   })
 

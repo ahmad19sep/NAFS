@@ -20,7 +20,7 @@ describe('shared provider routing', () => {
   it('uses Gemini for every text task, chat and deep reviews even with an Anthropic key', async () => {
     for (const task of ['chat', 'verdict', 'bulk', 'json', 'deep'] as const) expect(await aiText(task, 'prompt', 'system')).toBe('Gemini answer')
     expect(await aiChat([{ role: 'user', content: 'hello' }])).toBe('Gemini answer')
-    expect(await aiDeep([{ role: 'user', content: 'review' }])).toMatchObject({ provider: 'gemini', model: 'gemini-3.8-flash', fellBack: false })
+    expect(await aiDeep([{ role: 'user', content: 'review' }])).toMatchObject({ provider: 'gemini', model: 'gemini-3.5-flash-lite', fellBack: false })
     expect(deepProvider()).toBe('gemini')
     expect(mocks.cloudflare).not.toHaveBeenCalled(); expect(mocks.text).not.toHaveBeenCalled(); expect(mocks.anthropic).not.toHaveBeenCalled()
   })
