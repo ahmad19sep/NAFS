@@ -1,6 +1,7 @@
 package com.ahmad.nafs.core.tasks
 
 import com.ahmad.nafs.domain.tasks.TaskCompletionStatus
+import com.ahmad.nafs.domain.tasks.TaskPeriod
 import com.ahmad.nafs.domain.tasks.TaskPeriodType
 import java.time.LocalDate
 
@@ -37,7 +38,13 @@ data class CreateTaskIntent(
     val priority: TaskPriority,
     val dueTime: String?,
     val today: LocalDate,
-)
+    /** A later day for a daily task planned ahead; null keeps the task in the current period. */
+    val plannedDate: LocalDate? = null,
+) {
+    /** The `period_date` the task is saved under. */
+    val periodDate: LocalDate
+        get() = TaskPeriod.key(type, plannedDate?.takeIf { type == TaskPeriodType.DAILY } ?: today)
+}
 
 data class EditTaskIntent(
     val userId: String,

@@ -21,17 +21,15 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccessTime
+import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.LocationCity
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.MyLocation
-import androidx.compose.material.icons.rounded.NightsStay
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.WbSunny
-import androidx.compose.material.icons.rounded.WbTwilight
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -40,14 +38,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -61,9 +57,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.ahmad.nafs.core.deen.Coordinates
+import com.ahmad.nafs.core.deen.HijriDate
+import com.ahmad.nafs.core.deen.HijriDay
+import com.ahmad.nafs.core.deen.HijriPreferences
+import com.ahmad.nafs.core.deen.NextPrayer
+import com.ahmad.nafs.core.deen.NextPrayerRules
+import com.ahmad.nafs.core.deen.Prayer
 import com.ahmad.nafs.core.deen.PrayerAutoLocate
+import com.ahmad.nafs.core.deen.PrayerCalculationDefaults
 import com.ahmad.nafs.core.deen.PrayerLocateResult
 import com.ahmad.nafs.core.deen.PrayerLocation
+import com.ahmad.nafs.core.deen.QiblaMath
 import com.ahmad.nafs.core.profile.UserProfile
 import com.ahmad.nafs.core.records.PrivateRecordStore
 import com.ahmad.nafs.core.records.RecordRules
@@ -108,7 +112,7 @@ import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -138,10 +142,19 @@ class PrayerTimesRepository @Inject constructor() {
             parameter("city", city.trim()); parameter("country", country.trim()); parameter("method", method)
             parameter("school", if (hanafi) 1 else 0); parameter("timezonestring", zone)
         }
-        val timings = timings(response, zone, date)
+        val data = payload(response, zone, date)
+        val timings = data["timings"] as JsonObject
+        // Where Aladhan placed the city, for the Qibla compass. Kept apart from latitude/longitude, which mark
+        // location-based times for the reminders and Prayer times.
+        val place = (data["meta"] as? JsonObject)?.let { meta ->
+            val latitude = (meta["latitude"] as? JsonPrimitive)?.doubleOrNull
+            val longitude = (meta["longitude"] as? JsonPrimitive)?.doubleOrNull
+            if (latitude != null && longitude != null) Coordinates.of(latitude, longitude) else null
+        }
         return buildJsonObject {
             put("date", date.toString()); put("zone", zone); put("city", city.trim()); put("country", country.trim())
             put("method", method); put("hanafi", hanafi)
+            if (place != null) { put(QiblaMath.CITY_LATITUDE, place.latitude); put(QiblaMath.CITY_LONGITUDE, place.longitude) }
             put("times", buildJsonObject { PrayerTimeRules.names.forEach { name -> put(name, PrayerTimeRules.time(RecordRules.text(timings, name)).toString()) } })
         }
     }
@@ -154,7 +167,7 @@ class PrayerTimesRepository @Inject constructor() {
             parameter("latitude", at.latitude); parameter("longitude", at.longitude); parameter("method", method)
             parameter("school", if (hanafi) 1 else 0); parameter("timezonestring", zone)
         }
-        val timings = timings(response, zone, date)
+        val timings = payload(response, zone, date)["timings"] as JsonObject
         return buildJsonObject {
             put("date", date.toString()); put("zone", zone); put("city", ""); put("country", "")
             put("latitude", at.latitude); put("longitude", at.longitude); put("method", method); put("hanafi", hanafi)
@@ -162,40 +175,66 @@ class PrayerTimesRepository @Inject constructor() {
         }
     }
 
-    private suspend fun timings(response: HttpResponse, zone: String, date: LocalDate): JsonObject {
+    /** The response's data object, after checking it is for the requested day and timezone. */
+    private suspend fun payload(response: HttpResponse, zone: String, date: LocalDate): JsonObject {
         require(response.status.value == 200)
         val body = response.bodyAsText(); require(body.length <= 100_000)
         val data = (Json.parseToJsonElement(body) as JsonObject)["data"] as JsonObject
         val returnedDate = ((data["date"] as JsonObject)["gregorian"] as JsonObject)
         require(RecordRules.text(returnedDate, "date") == date.format(DateTimeFormatter.ofPattern("dd-MM-yyyy")))
         require(RecordRules.text(data["meta"] as JsonObject, "timezone") == zone)
-        return data["timings"] as JsonObject
+        return data
     }
 }
 
 data class PrayerTimesState(val city: String = "", val country: String = "", val method: Int = 1, val hanafi: Boolean = true,
     val data: JsonObject? = null, val busy: Boolean = false, val cached: Boolean = false, val error: String? = null,
     /** "your current area" for location-based times, otherwise the saved city. */
-    val area: String? = null)
+    val area: String? = null,
+    /** Tomorrow's times for the same place, so the countdown runs on to Fajr after Isha. */
+    val tomorrow: JsonObject? = null,
+    /** Tomorrow's times could not be fetched (usually offline); the hero says so instead of counting down. */
+    val tomorrowFailed: Boolean = false,
+    /** The Hijri adjustment for local moon sighting: −1, 0 or +1 day. */
+    val hijriAdjustment: Int = 0)
 
 @HiltViewModel
 class PrayerTimesViewModel @Inject constructor(private val repository: PrayerTimesRepository, private val store: PrivateRecordStore,
-    private val autoLocate: PrayerAutoLocate, private val location: PrayerLocation, private val alarms: ReminderAlarmScheduler) : ViewModel() {
+    private val autoLocate: PrayerAutoLocate, private val location: PrayerLocation, private val alarms: ReminderAlarmScheduler,
+    private val hijri: HijriPreferences) : ViewModel() {
     private val _state = MutableStateFlow(PrayerTimesState()); val state = _state.asStateFlow()
     private var account = ""; private var zone = "UTC"; private var deen = false
+    private var tomorrowJob: Job? = null
+    /** The place and day tomorrow's times were last requested for, so a failed fetch is not repeated on every resume. */
+    private var tomorrowRequest: String? = null
+
     fun initialize(profile: UserProfile) {
         if (account == profile.userId && zone == profile.timezone) return
         account = profile.userId; zone = profile.timezone; deen = profile.deenEnabled
+        tomorrowJob?.cancel(); tomorrowRequest = null
+        // Until the user chooses a convention, start from the one most mosques in the account's region follow.
+        val regional = PrayerCalculationDefaults.forZone(zone)
+        _state.value = PrayerTimesState(method = regional.method, hanafi = regional.hanafi, hijriAdjustment = hijri.adjustment(account))
         viewModelScope.launch {
             val saved = try { store.read(account, PrayerAutoLocate.KEY) } catch (cancel: CancellationException) { throw cancel }
                 catch (_: Exception) { _state.update { it.copy(error = "Saved prayer times could not be read.") }; null }
-            if (saved != null) _state.value = PrayerTimesState(RecordRules.text(saved, "city"), RecordRules.text(saved, "country"),
-                RecordRules.text(saved, "method").toIntOrNull()?.takeIf { it in PrayerTimeRules.methods } ?: 1,
-                RecordRules.text(saved, "hanafi") != "false",
-                saved.takeIf { RecordRules.text(it, "date") == AccountDate.today(zone).toString() && RecordRules.text(it, "zone") == zone },
-                cached = true, area = PrayerAutoLocate.label(saved))
+            if (saved != null) {
+                val next = try { store.read(account, NextPrayerRules.NEXT_KEY) } catch (cancel: CancellationException) { throw cancel }
+                    catch (_: Exception) { null }
+                val records = listOfNotNull(saved, next)
+                val today = AccountDate.today(zone)
+                _state.value = PrayerTimesState(RecordRules.text(saved, "city"), RecordRules.text(saved, "country"),
+                    RecordRules.text(saved, "method").toIntOrNull()?.takeIf { it in PrayerTimeRules.methods } ?: regional.method,
+                    (saved["hanafi"] as? JsonPrimitive)?.booleanOrNull ?: regional.hanafi,
+                    // Today's copy may be the one the reminders saved yesterday as "tomorrow".
+                    NextPrayerRules.dayRecord(records, saved, today, zone),
+                    cached = true, area = PrayerAutoLocate.label(saved),
+                    tomorrow = NextPrayerRules.dayRecord(records, saved, today.plusDays(1), zone),
+                    hijriAdjustment = _state.value.hijriAdjustment)
+            }
             // Location-based times refresh on their own; a chosen city is kept until the user changes it.
             if ((saved == null || Coordinates.from(saved) != null) && location.hasPermission() && _state.value.data == null) useLocation()
+            else ensureTomorrow()
         }
     }
     fun canUseLocation() = location.hasPermission()
@@ -204,13 +243,41 @@ class PrayerTimesViewModel @Inject constructor(private val repository: PrayerTim
     fun country(value: String) { if (!_state.value.busy && value.length <= 100) _state.update { it.copy(country = value) } }
     fun method(value: Int) { if (_state.value.busy) return; _state.update { it.copy(method = value) }; refreshSource() }
     fun hanafi(value: Boolean) { if (_state.value.busy) return; _state.update { it.copy(hanafi = value) }; refreshSource() }
-    fun invalidateDate() { _state.update { it.copy(data = it.data?.takeIf { data -> RecordRules.text(data, "date") == AccountDate.today(zone).toString() }) } }
+
+    fun hijriAdjust(days: Int) {
+        if (account.isBlank()) return
+        val value = days.coerceIn(HijriDate.adjustments)
+        hijri.setAdjustment(account, value)
+        _state.update { it.copy(hijriAdjustment = value) }
+    }
+
+    /**
+     * Called when the account day may have changed. Tomorrow's copy becomes today's; without one, today's times are
+     * fetched again for the saved place.
+     */
+    fun invalidateDate() {
+        val today = runCatching { AccountDate.today(zone) }.getOrNull()?.toString() ?: return
+        val before = _state.value
+        _state.update { s ->
+            when {
+                RecordRules.text(s.data, "date") == today -> s
+                s.tomorrow != null && RecordRules.text(s.tomorrow, "date") == today ->
+                    s.copy(data = s.tomorrow, tomorrow = null, tomorrowFailed = false, cached = true)
+                else -> s.copy(data = null, tomorrow = null, tomorrowFailed = false)
+            }
+        }
+        val after = _state.value
+        if (after.data != null) ensureTomorrow()
+        else if (before.data != null && after.area != null && !after.busy) {
+            refreshSource("Today's prayer times could not be fetched. Check your connection and retry.")
+        }
+    }
 
     /**
      * A changed calculation setting refetches from the saved source (area or city), so the times and alarms stay
      * consistent. Saved coordinates need no location permission or new fix; a typed but unconfirmed city is ignored.
      */
-    private fun refreshSource() {
+    private fun refreshSource(failure: String = "The new calculation setting could not be applied. Check your connection and retry.") {
         val input = _state.value; val userId = account; val timezone = zone
         _state.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
@@ -226,10 +293,10 @@ class PrayerTimesViewModel @Inject constructor(private val repository: PrayerTim
                 }
                 if (account != userId || zone != timezone) return@launch
                 store.write(userId, PrayerAutoLocate.KEY, data)
-                _state.update { it.copy(data = data, cached = false, area = PrayerAutoLocate.label(data)) }
+                showNewTimes(data)
                 alarms.reschedule(userId, timezone, deen)
             } catch (cancel: CancellationException) { throw cancel }
-            catch (_: Exception) { _state.update { it.copy(error = "The new calculation setting could not be applied. Check your connection and retry.") } }
+            catch (_: Exception) { _state.update { it.copy(error = failure) } }
             finally { _state.update { it.copy(busy = false) } }
         }
     }
@@ -244,7 +311,7 @@ class PrayerTimesViewModel @Inject constructor(private val repository: PrayerTim
                 if (account != userId || zone != timezone) return@launch
                 when (result) {
                     is PrayerLocateResult.Saved -> {
-                        _state.update { it.copy(data = result.data, cached = false, area = PrayerAutoLocate.label(result.data), city = "", country = "") }
+                        showNewTimes(result.data) { it.copy(city = "", country = "") }
                         alarms.reschedule(userId, timezone, deen)
                     }
                     PrayerLocateResult.NoPermission -> locationDenied()
@@ -266,12 +333,54 @@ class PrayerTimesViewModel @Inject constructor(private val repository: PrayerTim
             try {
                 val data = repository.fetch(input.city, input.country, input.method, input.hanafi, timezone, AccountDate.today(timezone))
                 if (account != userId || zone != timezone) return@launch
-                _state.update { it.copy(data = data, cached = false, area = PrayerAutoLocate.label(data)) }
+                showNewTimes(data)
                 store.write(userId, PrayerAutoLocate.KEY, data)
                 alarms.reschedule(userId, timezone, deen)
             } catch (cancel: CancellationException) { throw cancel }
             catch (_: Exception) { _state.update { it.copy(error = "Prayer times could not be refreshed. Check the city and country, and your connection.") } }
             finally { _state.update { it.copy(busy = false) } }
+        }
+    }
+
+    /** Shows freshly fetched times; tomorrow's copy belongs to the old place or setting, so it is looked up again. */
+    private fun showNewTimes(data: JsonObject, extra: (PrayerTimesState) -> PrayerTimesState = { it }) {
+        tomorrowJob?.cancel(); tomorrowRequest = null
+        _state.update { extra(it.copy(data = data, cached = false, area = PrayerAutoLocate.label(data), tomorrow = null, tomorrowFailed = false)) }
+        ensureTomorrow()
+    }
+
+    /** Tomorrow's times for the place on screen: the saved copy if there is one, otherwise fetched once and saved. */
+    private fun ensureTomorrow() {
+        val current = _state.value
+        val today = current.data ?: return
+        val date = runCatching { LocalDate.parse(RecordRules.text(today, "date")) }.getOrNull() ?: return
+        val tomorrowDate = date.plusDays(1)
+        val userId = account; val timezone = zone
+        val shown = current.tomorrow
+        if (shown != null && NextPrayerRules.dayRecord(listOf(shown), today, tomorrowDate, timezone) != null) return
+        val request = "$tomorrowDate|" + listOf("latitude", "longitude", "city", "country", "method", "hanafi").joinToString("|") { RecordRules.text(today, it) }
+        if (tomorrowRequest == request) return
+        tomorrowRequest = request
+        tomorrowJob?.cancel()
+        tomorrowJob = viewModelScope.launch {
+            val record = try {
+                store.read(userId, NextPrayerRules.NEXT_KEY)?.takeIf { NextPrayerRules.dayRecord(listOf(it), today, tomorrowDate, timezone) != null }
+                    ?: fetchDay(today, tomorrowDate, timezone)?.also { store.write(userId, NextPrayerRules.NEXT_KEY, it) }
+            } catch (cancel: CancellationException) { throw cancel } catch (_: Exception) { null }
+            if (account != userId || zone != timezone || _state.value.data != today) return@launch
+            _state.update { it.copy(tomorrow = record, tomorrowFailed = record == null) }
+        }
+    }
+
+    private suspend fun fetchDay(source: JsonObject, date: LocalDate, timezone: String): JsonObject? {
+        val method = RecordRules.text(source, "method").toIntOrNull()?.takeIf { it in PrayerTimeRules.methods } ?: return null
+        val hanafi = (source["hanafi"] as? JsonPrimitive)?.booleanOrNull ?: return null
+        val area = Coordinates.from(source)
+        val city = RecordRules.text(source, "city"); val country = RecordRules.text(source, "country")
+        return when {
+            area != null -> repository.fetchAt(area, method, hanafi, timezone, date)
+            city.isNotBlank() && country.isNotBlank() -> repository.fetch(city, country, method, hanafi, timezone, date)
+            else -> null
         }
     }
 }
@@ -281,8 +390,7 @@ fun PrayerTimesRoute(profile: UserProfile, onBack: () -> Unit, viewModel: Prayer
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(profile.userId, profile.timezone) { viewModel.initialize(profile) }
     AccountDayRefreshEffects(profile.timezone, viewModel::invalidateDate)
-    var now by remember(profile.timezone) { mutableStateOf(ZonedDateTime.now(ZoneId.of(profile.timezone))) }
-    LaunchedEffect(profile.timezone) { while (true) { now = ZonedDateTime.now(ZoneId.of(profile.timezone)); delay(1_000) } }
+    val now = rememberAccountNow(profile.timezone)
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) viewModel.useLocation() else viewModel.locationDenied()
     }
@@ -301,6 +409,7 @@ fun PrayerTimesRoute(profile: UserProfile, onBack: () -> Unit, viewModel: Prayer
             onCityChange = viewModel::city,
             onCountryChange = viewModel::country,
             onUseCity = viewModel::fetch,
+            onHijriAdjust = viewModel::hijriAdjust,
         ),
     )
 }
@@ -314,13 +423,24 @@ internal data class PrayerTimesActions(
     val onCityChange: (String) -> Unit = {},
     val onCountryChange: (String) -> Unit = {},
     val onUseCity: () -> Unit = {},
+    val onHijriAdjust: (Int) -> Unit = {},
 )
 
+/** [now] is the current time in the account timezone [timezone]. */
 @Composable
 internal fun PrayerTimesScreen(state: PrayerTimesState, now: ZonedDateTime, timezone: String, actions: PrayerTimesActions) {
-    val today = state.data?.takeIf { RecordRules.text(it, "date") == now.toLocalDate().toString() }
-    val timings = today?.let { record -> (record["times"] as JsonObject).mapValues { (it.value as JsonPrimitive).content } }
-    val next = timings?.let { PrayerTimeRules.next(it, now.toLocalTime()) }
+    val date = now.toLocalDate()
+    val today = state.data?.takeIf { RecordRules.text(it, "date") == date.toString() }
+    val timings = today?.let { record -> (record["times"] as? JsonObject)?.mapValues { (it.value as? JsonPrimitive)?.contentOrNull.orEmpty() } }
+    val tomorrow = state.tomorrow?.takeIf { record ->
+        today != null && RecordRules.text(record, "date") == date.plusDays(1).toString() && NextPrayerRules.sameSource(record, today)
+    }
+    val parsedToday = NextPrayerRules.times(today)
+    val next = if (today != null) NextPrayerRules.select(now, parsedToday, NextPrayerRules.times(tomorrow)) else null
+    // Every time of today is readable and has passed: only tomorrow's Fajr is left.
+    val afterIsha = next == null && parsedToday.size == Prayer.entries.size &&
+        parsedToday.values.none { date.atTime(it).atZone(now.zone).isAfter(now) }
+    val hijri = remember(date, state.hijriAdjustment) { runCatching { HijriDate.of(date, state.hijriAdjustment) }.getOrNull() }
     val usingArea = Coordinates.from(state.data) != null
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -333,9 +453,11 @@ internal fun PrayerTimesScreen(state: PrayerTimesState, now: ZonedDateTime, time
             if (timings != null) {
                 item {
                     NextPrayerHero(
-                        timings = timings,
                         next = next,
-                        now = now.toLocalTime(),
+                        afterIsha = afterIsha,
+                        tomorrowFailed = state.tomorrowFailed,
+                        now = now,
+                        hijri = hijri,
                         place = (state.area ?: "saved location").replaceFirstChar { it.uppercase() },
                         detail = buildString {
                             append(shortDate(RecordRules.text(today, "date")))
@@ -345,7 +467,7 @@ internal fun PrayerTimesScreen(state: PrayerTimesState, now: ZonedDateTime, time
                         },
                     )
                 }
-                item { TimesCard(timings, next?.first) }
+                item { TimesCard(timings, next) }
             } else {
                 item { NoTimesCard(state.busy) }
             }
@@ -360,6 +482,9 @@ internal fun PrayerTimesScreen(state: PrayerTimesState, now: ZonedDateTime, time
             item { NafsSectionTitle("Or choose a city", supporting = "Times stay fixed to this city until you change it.") }
             item { CityCard(state.city, state.country, state.busy, actions) }
 
+            item { NafsSectionTitle("Hijri date", supporting = "Umm al-Qura calendar. Adjust it if your local moon sighting differs.") }
+            item { HijriCard(hijri, state.hijriAdjustment, actions.onHijriAdjust) }
+
             item { SourceNote() }
         }
     }
@@ -368,40 +493,86 @@ internal fun PrayerTimesScreen(state: PrayerTimesState, now: ZonedDateTime, time
 // ─── Today ───────────────────────────────────────────────────────────────────
 
 @Composable
-private fun NextPrayerHero(timings: Map<String, String>, next: Pair<String, Duration>?, now: LocalTime, place: String, detail: String) {
+private fun NextPrayerHero(
+    next: NextPrayer?,
+    afterIsha: Boolean,
+    tomorrowFailed: Boolean,
+    now: ZonedDateTime,
+    hijri: HijriDay?,
+    place: String,
+    detail: String,
+) {
     val c = Nafs.colors
     NafsHeroSurface {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            NafsEyebrow(if (next != null) "Next prayer" else "Today", color = c.heroGold)
+            NafsEyebrow(
+                when {
+                    next == null -> "Today"
+                    next.isTomorrow -> "Next prayer · tomorrow"
+                    else -> "Next prayer"
+                },
+                color = c.heroGold,
+            )
             if (next != null) {
-                val (name, remaining) = next
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                val name = next.prayer.label
+                val remaining = next.remaining(now)
+                Row(
+                    Modifier.semantics(mergeDescendants = true) {},
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     Text(name, style = MaterialTheme.typography.headlineLarge, color = c.onHero, maxLines = 1)
-                    Text(arabicName(name), style = HeroArabic, color = c.heroGold, maxLines = 1, modifier = Modifier.padding(bottom = 2.dp))
+                    Text(
+                        PrayerDisplay.arabic(next.prayer),
+                        style = PrayerDisplay.ArabicLarge,
+                        color = c.heroGold,
+                        maxLines = 1,
+                        modifier = Modifier.padding(bottom = 2.dp).clearAndSetSemantics { },
+                    )
                     Spacer(Modifier.weight(1f))
                     Column(horizontalAlignment = Alignment.End) {
-                        Text(timings[name].orEmpty(), style = MaterialTheme.typography.headlineSmall.copy(fontFeatureSettings = "tnum"), color = c.onHero)
-                        Text("in ${countdown(remaining)}", style = MaterialTheme.typography.labelMedium, color = c.onHeroMuted)
+                        Text(PrayerDisplay.time(next.time), style = MaterialTheme.typography.headlineSmall.copy(fontFeatureSettings = "tnum"), color = c.onHero)
+                        Text(
+                            if (remaining.isZero) "starting now" else "in ${PrayerDisplay.countdown(remaining)}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = c.onHeroMuted,
+                        )
                     }
                 }
-                sinceLastPrayer(timings, name, now)?.let { (previous, fraction) ->
+                val previous = next.previous
+                val previousAt = next.previousAt
+                val progress = next.progress(now)
+                if (previous != null && previousAt != null && progress != null) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        NafsProgressBar(fraction, color = c.heroMint, trackColor = Color.White.copy(alpha = 0.12f), height = 6.dp)
+                        NafsProgressBar(progress, color = c.heroMint, trackColor = Color.White.copy(alpha = 0.12f), height = 6.dp)
                         Row {
                             Text(
-                                "$previous ${timings[previous].orEmpty()}",
+                                "${previous.label} ${PrayerDisplay.time(previousAt.toLocalTime())}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = c.onHeroMuted,
                                 modifier = Modifier.weight(1f),
                             )
-                            Text("$name ${timings[name].orEmpty()}", style = MaterialTheme.typography.labelSmall, color = c.onHeroMuted)
+                            Text(
+                                "$name ${PrayerDisplay.time(next.time)}${if (next.isTomorrow) " tomorrow" else ""}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = c.onHeroMuted,
+                            )
                         }
                     }
                 }
+            } else if (afterIsha) {
+                Text("Isha has passed.", style = MaterialTheme.typography.headlineSmall, color = c.onHero)
+                Text(
+                    if (tomorrowFailed) "Tomorrow's times couldn't be fetched. Connect to the internet to see when Fajr begins."
+                    else "Finding tomorrow's Fajr time…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onHeroMuted,
+                )
             } else {
-                Text("Today's prayer times have passed.", style = MaterialTheme.typography.headlineSmall, color = c.onHero)
-                Text("May Allah accept your prayers.", style = MaterialTheme.typography.bodyMedium, color = c.onHeroMuted)
+                Text("Some of today's times couldn't be read.", style = MaterialTheme.typography.headlineSmall, color = c.onHero)
+                Text("Update them with your location or city below.", style = MaterialTheme.typography.bodyMedium, color = c.onHeroMuted)
             }
+            hijri?.let { HijriDateLine(it, color = c.onHeroMuted, accent = c.heroGold) }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Rounded.LocationOn, contentDescription = null, tint = c.onHeroMuted, modifier = Modifier.size(14.dp))
                 Text("$place · $detail", style = MaterialTheme.typography.labelMedium, color = c.onHeroMuted, maxLines = 2)
@@ -411,19 +582,22 @@ private fun NextPrayerHero(timings: Map<String, String>, next: Pair<String, Dura
 }
 
 @Composable
-private fun TimesCard(timings: Map<String, String>, next: String?) {
-    val nextIndex = next?.let { PrayerTimeRules.names.indexOf(it) } ?: PrayerTimeRules.names.size
+private fun TimesCard(timings: Map<String, String>, next: NextPrayer?) {
+    val nextIndex = next?.takeIf { !it.isTomorrow }?.let { PrayerTimeRules.names.indexOf(it.prayer.label) } ?: PrayerTimeRules.names.size
     NafsCard(contentPadding = PaddingValues(6.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             PrayerTimeRules.names.forEachIndexed { index, name ->
                 TimeRow(name, timings[name].orEmpty(), isNext = index == nextIndex, passed = index < nextIndex)
+            }
+            if (next != null && next.isTomorrow) {
+                TimeRow(next.prayer.label, PrayerDisplay.time(next.time), isNext = true, passed = false, label = "Tomorrow")
             }
         }
     }
 }
 
 @Composable
-private fun TimeRow(name: String, time: String, isNext: Boolean, passed: Boolean) {
+private fun TimeRow(name: String, time: String, isNext: Boolean, passed: Boolean, label: String = "Next") {
     val c = Nafs.colors
     val scheme = MaterialTheme.colorScheme
     val textColor = when {
@@ -441,12 +615,12 @@ private fun TimeRow(name: String, time: String, isNext: Boolean, passed: Boolean
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        NafsIconBadge(prayerIcon(name), if (isNext) c.deen else scheme.onSurfaceVariant, size = 38.dp, iconSize = 19.dp)
+        NafsIconBadge(PrayerDisplay.icon(name), if (isNext) c.deen else scheme.onSurfaceVariant, size = 38.dp, iconSize = 19.dp)
         Column(Modifier.weight(1f)) {
             Text(name, style = MaterialTheme.typography.titleMedium, color = if (passed) scheme.onSurfaceVariant else scheme.onSurface)
-            Text(arabicName(name), style = RowArabic, color = if (isNext) c.deen else scheme.onSurfaceVariant)
+            Text(PrayerDisplay.arabic(name), style = PrayerDisplay.ArabicSmall, color = if (isNext) c.deen else scheme.onSurfaceVariant)
         }
-        if (isNext) NafsPill("Next", color = c.deen)
+        if (isNext) NafsPill(label, color = c.deen)
         Text(
             time.ifBlank { "—" },
             style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
@@ -592,6 +766,33 @@ private fun CityCard(city: String, country: String, busy: Boolean, actions: Pray
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HijriCard(hijri: HijriDay?, adjustment: Int, onAdjust: (Int) -> Unit) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    NafsCard {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                NafsIconBadge(Icons.Rounded.CalendarMonth, Nafs.colors.deen, size = 38.dp, iconSize = 20.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(hijri?.label ?: "The Hijri date isn't available on this device.", style = MaterialTheme.typography.titleSmall)
+                    hijri?.let { Text(it.arabicLabel, style = HijriArabic, color = Nafs.colors.deen, modifier = Modifier.clearAndSetSemantics { }) }
+                }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(-1 to "−1 day", 0 to "As calculated", 1 to "+1 day").forEach { (days, label) ->
+                    NafsChoiceChip(text = label, selected = adjustment == days, onClick = { onAdjust(days) })
+                }
+            }
+            Text(
+                "Saved on this device. Wherever NAFS shows the Hijri date, it uses this.",
+                style = MaterialTheme.typography.bodySmall,
+                color = muted,
+            )
+        }
+    }
+}
+
 @Composable
 private fun SourceNote() {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -611,47 +812,7 @@ private fun SourceNote() {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-private val HeroArabic = TextStyle(fontFamily = AmiriArabic, fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 34.sp)
-private val RowArabic = TextStyle(fontFamily = AmiriArabic, fontWeight = FontWeight.Bold, fontSize = 14.sp, lineHeight = 20.sp)
-
-private fun arabicName(name: String): String = when (name) {
-    "Fajr" -> "الفجر"
-    "Dhuhr" -> "الظهر"
-    "Asr" -> "العصر"
-    "Maghrib" -> "المغرب"
-    "Isha" -> "العشاء"
-    else -> ""
-}
-
-private fun prayerIcon(name: String): ImageVector = when (name) {
-    "Fajr", "Maghrib" -> Icons.Rounded.WbTwilight
-    "Dhuhr" -> Icons.Rounded.WbSunny
-    "Asr" -> Icons.Rounded.LightMode
-    else -> Icons.Rounded.NightsStay
-}
-
-private fun countdown(remaining: Duration): String {
-    val hours = remaining.toHours()
-    val minutes = remaining.toMinutes() % 60
-    return when {
-        hours > 0 -> "${hours}h ${minutes}m"
-        minutes > 0 -> "$minutes min"
-        else -> "under a minute"
-    }
-}
-
-/** The prayer before [next] and how far the day has moved from it towards [next], when both times are known. */
-private fun sinceLastPrayer(timings: Map<String, String>, next: String, now: LocalTime): Pair<String, Float>? {
-    val parsed = PrayerTimeRules.names.mapNotNull { prayer ->
-        timings[prayer]?.let { raw -> runCatching { PrayerTimeRules.time(raw) }.getOrNull() }?.let { time -> prayer to time }
-    }
-    val index = parsed.indexOfFirst { it.first == next }
-    if (index <= 0) return null
-    val (previous, start) = parsed[index - 1]
-    val total = Duration.between(start, parsed[index].second).seconds.toFloat()
-    if (total <= 0f) return null
-    return previous to (Duration.between(start, now).seconds / total).coerceIn(0f, 1f)
-}
+private val HijriArabic = TextStyle(fontFamily = AmiriArabic, fontWeight = FontWeight.Bold, fontSize = 16.sp, lineHeight = 24.sp)
 
 private fun shortDate(raw: String): String =
     runCatching { LocalDate.parse(raw).format(DateTimeFormatter.ofPattern("EEE d MMM", Locale.ENGLISH)) }.getOrDefault(raw)

@@ -1,5 +1,7 @@
 package com.ahmad.nafs.core.di
 
+import com.ahmad.nafs.core.habits.AlarmHabitReminderSync
+import com.ahmad.nafs.core.habits.HabitReminderSync
 import com.ahmad.nafs.core.habits.HabitRepository
 import com.ahmad.nafs.core.habits.SupabaseHabitRepository
 import dagger.Binds
@@ -12,4 +14,7 @@ import dagger.hilt.components.SingletonComponent
 abstract class HabitModule {
     @Binds
     abstract fun bindHabitRepository(repository: SupabaseHabitRepository): HabitRepository
+
+    @Binds
+    abstract fun bindHabitReminderSync(sync: AlarmHabitReminderSync): HabitReminderSync
 }

@@ -11,6 +11,7 @@ import com.ahmad.nafs.core.coach.CoachSendIntent
 import com.ahmad.nafs.core.coach.CoachSendResult
 import com.ahmad.nafs.core.coach.CoachErrors
 import com.ahmad.nafs.core.network.ApiFailure
+import com.ahmad.nafs.ui.checkin.DictationText
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.util.UUID
 import javax.inject.Inject
@@ -34,6 +35,8 @@ data class CoachUiState(
     val requiresReload: Boolean = false,
     val pendingReloaded: Boolean = false,
     val contextPartial: Boolean = false,
+    /** Feedback about voice input, shown under the composer. */
+    val voiceMessage: String? = null,
 ) {
     val conversation: CoachConversation? get() = conversations.find { it.id == selectedId }
     val messages: List<CoachMessage> get() = pending?.messages ?: conversation?.messages.orEmpty()
@@ -101,9 +104,22 @@ class CoachViewModel @Inject constructor(private val repository: CoachRepository
 
     fun updateDraft(value: String) {
         if (_uiState.value.pending == null && !_uiState.value.isSending) {
-            _uiState.update { it.copy(draft = value) }
+            _uiState.update { it.copy(draft = value, voiceMessage = null) }
         }
     }
+
+    /** Adds recognised speech to the message being written; nothing is sent until the user presses send. */
+    fun appendDictation(heard: String) {
+        val state = _uiState.value
+        if (heard.isBlank()) return
+        if (state.pending != null || state.isSending || state.isLoading) {
+            _uiState.update { it.copy(voiceMessage = "What you said wasn't added while your last message is waiting.") }
+            return
+        }
+        _uiState.update { it.copy(draft = DictationText.append(it.draft, heard), voiceMessage = null) }
+    }
+
+    fun voiceUnavailable() = _uiState.update { it.copy(voiceMessage = "Voice input isn't available on this phone.") }
 
     fun selectConversation(id: String) {
         val state = _uiState.value

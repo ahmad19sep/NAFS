@@ -11,6 +11,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.MarkEmailRead
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -24,7 +25,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,23 +35,27 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ahmad.nafs.core.auth.AuthCallbackController
+import com.ahmad.nafs.core.auth.PasswordRules
 import com.ahmad.nafs.ui.components.NafsBanner
 import com.ahmad.nafs.ui.components.NafsBannerKind
 import com.ahmad.nafs.ui.components.NafsTextField
 import com.ahmad.nafs.ui.theme.Nafs
-import kotlinx.coroutines.launch
 
+/**
+ * Shows the progress and result of an auth link. The work itself runs in [AuthCallbackController]'s own scope, so
+ * this dialog can be recreated (rotation) at any point and simply shows the latest state.
+ */
 @Composable
 fun AuthCallbackDialog(controller: AuthCallbackController) {
     val state by controller.state.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
+    // Passwords live only as long as this dialog; they are never saved to instance state.
     var password by remember(state.resetUserId) { mutableStateOf("") }
     var confirmation by remember(state.resetUserId) { mutableStateOf("") }
     var showPasswords by remember(state.resetUserId) { mutableStateOf(false) }
-    if (state.processing || state.resetUserId != null || state.error != null || state.message != null) {
+    if (state.processing || state.resetUserId != null || state.error != null || state.message != null || state.followUp != null) {
         val resetting = state.resetUserId != null
         val submit: () -> Unit = {
-            if (resetting) scope.launch { controller.updatePassword(password, confirmation) } else controller.dismiss()
+            if (resetting) controller.updatePassword(password, confirmation) else controller.dismiss()
         }
         val mismatch = confirmation.isNotEmpty() && confirmation != password
         val transformation = if (showPasswords) VisualTransformation.None else PasswordVisualTransformation()
@@ -63,6 +67,7 @@ fun AuthCallbackDialog(controller: AuthCallbackController) {
                     resetting -> Icon(Icons.Rounded.Key, contentDescription = null, tint = scheme.primary)
                     state.processing -> CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
                     state.error != null -> Icon(Icons.Rounded.ErrorOutline, contentDescription = null, tint = scheme.error)
+                    state.followUp != null -> Icon(Icons.Rounded.MarkEmailRead, contentDescription = null, tint = scheme.primary)
                     else -> Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Nafs.colors.success)
                 }
             },
@@ -72,6 +77,7 @@ fun AuthCallbackDialog(controller: AuthCallbackController) {
                         resetting -> "Set a new password"
                         state.processing -> "Verifying your link"
                         state.error != null -> "This link didn't work"
+                        state.followUp != null -> "One more step"
                         else -> "You're all set"
                     },
                 )
@@ -80,7 +86,7 @@ fun AuthCallbackDialog(controller: AuthCallbackController) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     when {
                         resetting -> Text(
-                            "Use 8–128 characters and enter the same password twice.",
+                            "Use ${PasswordRules.HINT} and enter the same password twice.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = scheme.onSurfaceVariant,
                         )
@@ -98,13 +104,15 @@ fun AuthCallbackDialog(controller: AuthCallbackController) {
                     }
                     state.error?.let { NafsBanner(it, kind = NafsBannerKind.ERROR) }
                     state.message?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
+                    state.followUp?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
                     if (resetting) {
                         NafsTextField(
                             value = password,
-                            onValueChange = { password = it.take(128) },
+                            onValueChange = { password = it.take(PasswordRules.MAX_LENGTH) },
                             label = "New password",
                             leadingIcon = Icons.Rounded.Lock,
                             enabled = !state.processing,
+                            supportingText = PasswordRules.HINT,
                             visualTransformation = transformation,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
                             trailingIcon = {
@@ -118,7 +126,7 @@ fun AuthCallbackDialog(controller: AuthCallbackController) {
                         )
                         NafsTextField(
                             value = confirmation,
-                            onValueChange = { confirmation = it.take(128) },
+                            onValueChange = { confirmation = it.take(PasswordRules.MAX_LENGTH) },
                             label = "Confirm password",
                             leadingIcon = Icons.Rounded.Lock,
                             enabled = !state.processing,

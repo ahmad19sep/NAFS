@@ -1,6 +1,9 @@
 package com.ahmad.nafs.ui.dashboard
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,20 +11,23 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Chat
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Apps
 import androidx.compose.material.icons.rounded.Autorenew
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.NightsStay
@@ -32,38 +38,57 @@ import androidx.compose.material.icons.rounded.TaskAlt
 import androidx.compose.material.icons.rounded.WbTwilight
 import androidx.compose.material.icons.rounded.Whatshot
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ahmad.nafs.core.goals.Goal
+import com.ahmad.nafs.core.habits.Habit
+import com.ahmad.nafs.core.habits.HabitLog
 import com.ahmad.nafs.core.profile.UserProfile
 import com.ahmad.nafs.core.tasks.NafsTask
 import com.ahmad.nafs.core.tasks.TaskPriority
+import com.ahmad.nafs.domain.habits.HabitType
+import com.ahmad.nafs.domain.habits.ScheduleKind
 import com.ahmad.nafs.ui.AccountDayRefreshEffects
 import com.ahmad.nafs.ui.components.NafsAvatar
 import com.ahmad.nafs.ui.components.NafsBanner
 import com.ahmad.nafs.ui.components.NafsBannerKind
 import com.ahmad.nafs.ui.components.NafsCard
+import com.ahmad.nafs.ui.components.NafsCelebration
+import com.ahmad.nafs.ui.components.NafsDivider
 import com.ahmad.nafs.ui.components.NafsEmojiBadge
 import com.ahmad.nafs.ui.components.NafsEyebrow
+import com.ahmad.nafs.ui.components.NafsGroup
 import com.ahmad.nafs.ui.components.NafsHeroSurface
 import com.ahmad.nafs.ui.components.NafsIconBadge
+import com.ahmad.nafs.ui.components.NafsListRow
 import com.ahmad.nafs.ui.components.NafsLoadingState
 import com.ahmad.nafs.ui.components.NafsPill
 import com.ahmad.nafs.ui.components.NafsProgressBar
@@ -71,6 +96,7 @@ import com.ahmad.nafs.ui.components.NafsProgressRing
 import com.ahmad.nafs.ui.components.NafsSectionTitle
 import com.ahmad.nafs.ui.components.NafsSpace
 import com.ahmad.nafs.ui.components.NafsStat
+import com.ahmad.nafs.ui.tasks.TaskLabels
 import com.ahmad.nafs.ui.theme.Nafs
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -94,16 +120,28 @@ fun DashboardRoute(
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    // Counts bursts asked for while Home is on screen; starting from 0 again (rotation) never replays one.
+    var celebration by remember { mutableIntStateOf(0) }
     LaunchedEffect(profile.userId, profile.timezone) {
         viewModel.initialize(profile.userId, profile.timezone)
     }
     AccountDayRefreshEffects(profile.timezone, viewModel::refresh)
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            when (event) {
+                DashboardUiEvent.DayComplete -> celebration += 1
+            }
+        }
+    }
     DashboardScreen(
         profile = profile,
         state = state,
         actions = DashboardActions(
             onRefresh = viewModel::refresh,
             onDismissMessage = viewModel::dismissMessage,
+            onDismissActionError = viewModel::dismissActionError,
+            onSetTaskCompleted = viewModel::setTaskCompleted,
+            onSetHabitCompleted = viewModel::setHabitCompleted,
             onOpenTasks = onOpenTasks,
             onOpenHabits = onOpenHabits,
             onOpenGoals = onOpenGoals,
@@ -117,13 +155,17 @@ fun DashboardRoute(
         ),
         insight = { DashboardInsightCard(profile, onOpenLibrary, onOpenCoach) },
         nudge = { NotificationNudge() },
+        celebration = celebration,
     )
 }
 
-/** Everything Home can open, grouped so the screen stays a pure function of its state. */
+/** Everything Home can open or change, grouped so the screen stays a pure function of its state. */
 internal data class DashboardActions(
     val onRefresh: () -> Unit = {},
     val onDismissMessage: () -> Unit = {},
+    val onDismissActionError: () -> Unit = {},
+    val onSetTaskCompleted: (NafsTask, Boolean) -> Unit = { _, _ -> },
+    val onSetHabitCompleted: (Habit, Boolean) -> Unit = { _, _ -> },
     val onOpenTasks: () -> Unit = {},
     val onOpenHabits: () -> Unit = {},
     val onOpenGoals: () -> Unit = {},
@@ -136,6 +178,10 @@ internal data class DashboardActions(
     val onOpenProfile: () -> Unit = {},
 )
 
+/** How many tasks or habits Home lists before pointing to the full screen. */
+private const val TODAY_ROWS = 6
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun DashboardScreen(
     profile: UserProfile,
@@ -143,6 +189,8 @@ internal fun DashboardScreen(
     actions: DashboardActions,
     insight: @Composable () -> Unit = {},
     nudge: @Composable () -> Unit = {},
+    /** Changes each time the last open item for today is completed here; plays a short burst. */
+    celebration: Int = 0,
 ) {
     val zone = runCatching { ZoneId.of(profile.timezone) }.getOrDefault(ZoneId.of("UTC"))
     val now by produceState(initialValue = ZonedDateTime.now(zone), zone) {
@@ -154,104 +202,140 @@ internal fun DashboardScreen(
     val metrics = state.metrics()
     val nextTask = state.nextTask()
     val leadingGoals = state.leadingGoals()
+    val agenda = state.todayAgenda()
+    val todayHabits = state.todayHabits()
 
     if (state.isLoading) {
         NafsLoadingState(Modifier.statusBarsPadding())
         return
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().statusBarsPadding(),
-        contentPadding = PaddingValues(start = NafsSpace.screen, end = NafsSpace.screen, top = 8.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item {
-            HomeHeader(
-                profile = profile,
-                now = now,
-                refreshing = state.isRefreshing,
-                canRefresh = !state.isLoading && !state.isRefreshing,
-                onRefresh = actions.onRefresh,
-                onOpenProfile = actions.onOpenProfile,
-            )
-        }
-
-        if (state.isOffline || profile.isFromCache) item {
-            NafsBanner(
-                "Showing your saved data. Changes need a connection.",
-                kind = NafsBannerKind.OFFLINE,
-                actionLabel = "Retry",
-                onAction = actions.onRefresh,
-            )
-        }
-        state.message?.let { message ->
-            item { NafsBanner(message, kind = NafsBannerKind.WARNING, onDismiss = actions.onDismissMessage) }
-        }
-
-        item {
-            // The nudge renders nothing once notifications work, so it shares the hero's item.
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                nudge()
-                TodayHero(metrics, now, profile.timezone, onOpenTasks = actions.onOpenTasks)
-            }
-        }
-
-        nextTask?.let { task -> item { NextUpCard(task, actions.onOpenTasks) } }
-
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                ShortcutTile(
-                    title = "Check-in",
-                    subtitle = if (now.hour < 15) "Plan today" else "Reflect",
-                    icon = Icons.Rounded.WbTwilight,
-                    tint = Nafs.colors.reflect,
-                    onClick = actions.onOpenCheckIn,
-                    modifier = Modifier.weight(1f),
-                )
-                ShortcutTile(
-                    title = "Coach",
-                    subtitle = "Talk it through",
-                    icon = Icons.AutoMirrored.Rounded.Chat,
-                    tint = Nafs.colors.coach,
-                    onClick = actions.onOpenCoach,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
-
-        item { NafsSectionTitle("Your areas", supporting = "Tap any area to log or plan.") }
-        item { AreaGrid(profile, metrics, actions) }
-
-        item { insight() }
-
-        if (leadingGoals.isNotEmpty()) {
-            item {
-                NafsSectionTitle(
-                    "Goals in motion",
-                    supporting = "Your nearest unfinished horizons.",
-                    actionLabel = "All goals",
-                    onAction = actions.onOpenGoals,
-                )
-            }
-            leadingGoals.forEach { goal ->
-                item(key = "dashboard-goal-${goal.id}") { GoalRow(goal, actions.onOpenGoals) }
-            }
-        }
-
-        item {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
+    Box(Modifier.fillMaxSize()) {
+        PullToRefreshBox(
+            isRefreshing = state.isRefreshing,
+            onRefresh = actions.onRefresh,
+            modifier = Modifier.fillMaxSize().statusBarsPadding(),
+        ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = NafsSpace.screen, end = NafsSpace.screen, top = 8.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Icon(Icons.Rounded.Shield, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
-                Text(
-                    "Private by design · days follow ${profile.timezone}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                item(key = "header") {
+                    HomeHeader(
+                        profile = profile,
+                        now = now,
+                        canRefresh = !state.isLoading && !state.isRefreshing,
+                        onRefresh = actions.onRefresh,
+                        onOpenProfile = actions.onOpenProfile,
+                    )
+                }
+
+                if (state.isOffline || profile.isFromCache) item(key = "offline") {
+                    NafsBanner(
+                        "Showing your saved data. Changes need a connection.",
+                        kind = NafsBannerKind.OFFLINE,
+                        actionLabel = "Retry",
+                        onAction = actions.onRefresh,
+                    )
+                }
+                state.message?.let { message ->
+                    item(key = "message") {
+                        NafsBanner(message, kind = NafsBannerKind.WARNING, onDismiss = actions.onDismissMessage)
+                    }
+                }
+
+                item(key = "hero") {
+                    // The nudge renders nothing once notifications work, so it shares the hero's item.
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        nudge()
+                        TodayHero(metrics, now, profile.timezone, onOpenTasks = actions.onOpenTasks)
+                    }
+                }
+
+                nextTask?.let { task -> item(key = "next-up") { NextUpCard(task, actions.onOpenTasks) } }
+
+                if (agenda.isNotEmpty() || todayHabits.isNotEmpty()) {
+                    item(key = "today-title") {
+                        val open = (metrics.totalTasks - metrics.completedTasks) + (metrics.totalHabits - metrics.completedHabits)
+                        NafsSectionTitle(
+                            "Today's list",
+                            supporting = if (open == 0) "Everything for today is done." else "$open open · tick them off as you go",
+                            actionLabel = "All tasks",
+                            onAction = actions.onOpenTasks,
+                        )
+                    }
+                    state.actionError?.let { error ->
+                        item(key = "today-error") {
+                            NafsBanner(
+                                error.message,
+                                kind = NafsBannerKind.ERROR,
+                                title = error.title,
+                                onDismiss = actions.onDismissActionError,
+                            )
+                        }
+                    }
+                    if (agenda.isNotEmpty()) item(key = "today-tasks") { TodayTasks(agenda, state, actions) }
+                    if (todayHabits.isNotEmpty()) item(key = "today-habits") { TodayHabits(todayHabits, state, actions) }
+                }
+
+                item(key = "shortcuts") {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ShortcutTile(
+                            title = "Check-in",
+                            subtitle = if (now.hour < 15) "Plan today" else "Reflect",
+                            icon = Icons.Rounded.WbTwilight,
+                            tint = Nafs.colors.reflect,
+                            onClick = actions.onOpenCheckIn,
+                            modifier = Modifier.weight(1f),
+                        )
+                        ShortcutTile(
+                            title = "Coach",
+                            subtitle = "Talk it through",
+                            icon = Icons.AutoMirrored.Rounded.Chat,
+                            tint = Nafs.colors.coach,
+                            onClick = actions.onOpenCoach,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+
+                item(key = "areas-title") { NafsSectionTitle("Your areas", supporting = "Tap any area to log or plan.") }
+                item(key = "areas") { AreaGrid(profile, metrics, state.challengeSummary(), actions) }
+
+                item(key = "insight") { insight() }
+
+                if (leadingGoals.isNotEmpty()) {
+                    item(key = "goals-title") {
+                        NafsSectionTitle(
+                            "Goals in motion",
+                            supporting = "Your nearest unfinished horizons.",
+                            actionLabel = "All goals",
+                            onAction = actions.onOpenGoals,
+                        )
+                    }
+                    leadingGoals.forEach { goal ->
+                        item(key = "dashboard-goal-${goal.id}") { GoalRow(goal, actions.onOpenGoals) }
+                    }
+                }
+
+                item(key = "footer") {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Rounded.Shield, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
+                        Text(
+                            "Private by design · days follow ${profile.timezone}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
+        NafsCelebration(trigger = celebration, modifier = Modifier.matchParentSize())
     }
 }
 
@@ -259,7 +343,6 @@ internal fun DashboardScreen(
 private fun HomeHeader(
     profile: UserProfile,
     now: ZonedDateTime,
-    refreshing: Boolean,
     canRefresh: Boolean,
     onRefresh: () -> Unit,
     onOpenProfile: () -> Unit,
@@ -277,9 +360,13 @@ private fun HomeHeader(
             Text("$greeting,", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(firstName, style = MaterialTheme.typography.headlineLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+        // Pull to refresh shows progress; the button stays for anyone who can't pull.
         IconButton(onClick = onRefresh, enabled = canRefresh) {
-            if (refreshing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-            else Icon(Icons.Rounded.Refresh, contentDescription = "Refresh dashboard", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(
+                Icons.Rounded.Refresh,
+                contentDescription = "Refresh dashboard",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (canRefresh) 1f else 0.38f),
+            )
         }
         Surface(
             onClick = onOpenProfile,
@@ -363,7 +450,7 @@ private fun NextUpCard(task: NafsTask, onOpenTasks: () -> Unit) {
                 NafsEyebrow("Next up", color = tint)
                 Text(task.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    NafsPill(task.dueTime?.let { "Due ${it.take(5)}" } ?: "No fixed time", color = tint)
+                    NafsPill(task.dueTime?.let { "Due ${TaskLabels.time(it)}" } ?: "No fixed time", color = tint)
                     NafsPill(task.priority.label(), color = task.priority.color())
                 }
             }
@@ -371,6 +458,200 @@ private fun NextUpCard(task: NafsTask, onOpenTasks: () -> Unit) {
         }
     }
 }
+
+// ─── Today's list ────────────────────────────────────────────────────────────
+
+@Composable
+private fun TodayTasks(tasks: List<NafsTask>, state: DashboardUiState, actions: DashboardActions) {
+    val shown = tasks.take(TODAY_ROWS)
+    NafsGroup(title = "Tasks · ${tasks.count(NafsTask::isCompleted)} of ${tasks.size} done") {
+        shown.forEachIndexed { index, task ->
+            if (index > 0) NafsDivider(inset = 18.dp)
+            TodayCheckRow(
+                title = task.title,
+                subtitle = listOfNotNull(
+                    task.dueTime?.let { "Due ${TaskLabels.time(it)}" },
+                    task.priority.label().takeIf { task.priority == TaskPriority.HIGH },
+                ).joinToString(" · ").ifEmpty { null },
+                checked = task.isCompleted,
+                pending = taskItemKey(task.id) in state.pendingItems,
+                accent = Nafs.colors.tasks,
+                onToggle = { completed -> actions.onSetTaskCompleted(task, completed) },
+            )
+        }
+        if (tasks.size > shown.size) {
+            NafsDivider(inset = 18.dp)
+            NafsListRow(
+                title = "${tasks.size - shown.size} more in Tasks",
+                titleColor = MaterialTheme.colorScheme.primary,
+                onClick = actions.onOpenTasks,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TodayHabits(habits: List<Habit>, state: DashboardUiState, actions: DashboardActions) {
+    val shown = habits.take(TODAY_ROWS)
+    val done = habits.count { habit -> isHabitDone(habit, state.todayLog(habit.id)) }
+    NafsGroup(title = "Habits · $done of ${habits.size} done") {
+        shown.forEachIndexed { index, habit ->
+            if (index > 0) NafsDivider(inset = 18.dp)
+            val log = state.todayLog(habit.id)
+            if (habit.type == HabitType.SIMPLE) {
+                val streak = state.liveStreak(habit)
+                val unit = if (habit.scheduleKind == ScheduleKind.PER_WEEK) "week" else "day"
+                TodayCheckRow(
+                    title = habit.name,
+                    subtitle = if (streak > 0) "$streak-$unit streak" else null,
+                    checked = log?.completed == true,
+                    pending = habitItemKey(habit.id) in state.pendingItems,
+                    accent = Nafs.colors.habits,
+                    leading = habit.emoji,
+                    onToggle = { completed -> actions.onSetHabitCompleted(habit, completed) },
+                )
+            } else {
+                // Counters, timers and reading progress need an amount, so they open the Habits screen.
+                TodayProgressRow(habit, log, onOpen = actions.onOpenHabits)
+            }
+        }
+        if (habits.size > shown.size) {
+            NafsDivider(inset = 18.dp)
+            NafsListRow(
+                title = "${habits.size - shown.size} more in Habits",
+                titleColor = MaterialTheme.colorScheme.primary,
+                onClick = actions.onOpenHabits,
+            )
+        }
+    }
+}
+
+/** A whole-row checkbox: the row is the touch target, and completing one gives a confirm haptic. */
+@Composable
+private fun TodayCheckRow(
+    title: String,
+    subtitle: String?,
+    checked: Boolean,
+    pending: Boolean,
+    accent: Color,
+    onToggle: (Boolean) -> Unit,
+    leading: String? = null,
+) {
+    val haptics = LocalHapticFeedback.current
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, enabled = !pending, role = Role.Checkbox) { completed ->
+                if (completed) haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                onToggle(completed)
+            }
+            .padding(start = 6.dp, end = 16.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CheckMark(checked = checked, pending = pending, accent = accent)
+        leading?.takeIf { it.isNotBlank() }?.let { emoji ->
+            Text(emoji, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(end = 10.dp))
+        }
+        Column(Modifier.weight(1f).padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (checked) scheme.onSurfaceVariant else scheme.onSurface,
+                textDecoration = if (checked) TextDecoration.LineThrough else TextDecoration.None,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            subtitle?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+/** The check fills at once (optimistic); a thin ring turns around it until the save is confirmed. */
+@Composable
+private fun CheckMark(checked: Boolean, pending: Boolean, accent: Color) {
+    val fill by animateColorAsState(if (checked) accent else Color.Transparent, label = "home-check-fill")
+    val ring by animateColorAsState(if (checked) accent else MaterialTheme.colorScheme.outline, label = "home-check-ring")
+    val markScale by animateFloatAsState(if (checked) 1f else 0f, label = "home-check-mark")
+    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.size(26.dp).clip(CircleShape).background(fill).border(2.dp, ring, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.size(17.dp).scale(markScale),
+            )
+        }
+        if (pending) CircularProgressIndicator(Modifier.size(36.dp), strokeWidth = 2.dp, color = accent)
+    }
+}
+
+@Composable
+private fun TodayProgressRow(habit: Habit, log: HabitLog?, onOpen: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val tint = Nafs.colors.habits
+    val (progress, detail) = habitProgress(habit, log)
+    Surface(onClick = onOpen, color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.padding(start = 6.dp, end = 12.dp, top = 2.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                NafsProgressRing(progress = progress, size = 28.dp, stroke = 3.dp, colors = listOf(tint, tint))
+            }
+            if (habit.emoji.isNotBlank()) {
+                Text(habit.emoji, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(end = 10.dp))
+            }
+            Column(Modifier.weight(1f).padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(habit.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = "Log ${habit.name} in Habits",
+                tint = scheme.onSurfaceVariant)
+        }
+    }
+}
+
+private fun isHabitDone(habit: Habit, log: HabitLog?): Boolean = when (habit.type) {
+    HabitType.SIMPLE, HabitType.SUBJECT -> log?.completed == true
+    HabitType.COUNTER -> log?.completed == true && log.value >= habit.targetValue
+    HabitType.DURATION -> log?.completed == true && log.durationMinutes >= habit.timeTargetMinutes
+}
+
+/** Today's progress for a habit that is logged with an amount, and a line saying how far along it is. */
+private fun habitProgress(habit: Habit, log: HabitLog?): Pair<Float, String> = when (habit.type) {
+    HabitType.COUNTER -> {
+        val value = log?.value ?: 0.0
+        val target = habit.targetValue
+        val share = if (target > 0.0) (value / target).toFloat() else 0f
+        share.coerceIn(0f, 1f) to "${amount(value)} of ${amount(target)} ${habit.unit}".trim()
+    }
+    HabitType.DURATION -> {
+        val minutes = log?.durationMinutes ?: 0
+        val target = habit.timeTargetMinutes
+        val share = if (target > 0) minutes.toFloat() / target else 0f
+        share.coerceIn(0f, 1f) to "$minutes of $target min"
+    }
+    HabitType.SUBJECT -> if (log?.completed == true) {
+        1f to "Logged today"
+    } else {
+        0f to "Log today's ${habit.subjectUnit?.takeIf { it.isNotBlank() } ?: "progress"}"
+    }
+    HabitType.SIMPLE -> if (log?.completed == true) 1f to "Done" else 0f to "Not yet"
+}
+
+private fun amount(value: Double): String =
+    if (value % 1.0 == 0.0) value.toLong().toString() else String.format(Locale.ENGLISH, "%.1f", value)
+
+// ─── Shortcuts and areas ─────────────────────────────────────────────────────
 
 @Composable
 private fun ShortcutTile(title: String, subtitle: String, icon: ImageVector, tint: Color, onClick: () -> Unit, modifier: Modifier) {
@@ -396,7 +677,7 @@ private data class Area(
 )
 
 @Composable
-private fun AreaGrid(profile: UserProfile, metrics: DashboardMetrics, actions: DashboardActions) {
+private fun AreaGrid(profile: UserProfile, metrics: DashboardMetrics, challenges: ChallengeSummary?, actions: DashboardActions) {
     val c = Nafs.colors
     val areas = buildList {
         add(Area("Tasks", "${metrics.completedTasks} of ${metrics.totalTasks} done", Icons.Rounded.TaskAlt, c.tasks,
@@ -405,7 +686,8 @@ private fun AreaGrid(profile: UserProfile, metrics: DashboardMetrics, actions: D
             fraction(metrics.completedHabits, metrics.totalHabits), actions.onOpenHabits))
         add(Area("Goals", "${metrics.averageGoalProgress}% avg · ${metrics.completedGoals} done", Icons.Rounded.Flag, c.goals,
             metrics.averageGoalProgress / 100f, actions.onOpenGoals))
-        add(Area("Challenges", "Keep the streak", Icons.Rounded.Whatshot, c.challenges, null, actions.onOpenChallenges))
+        add(Area("Challenges", challengeSubtitle(challenges), Icons.Rounded.Whatshot, c.challenges,
+            challengeProgress(challenges), actions.onOpenChallenges))
         add(Area("Health", "Sleep, water, meals", Icons.Rounded.Favorite, c.health, null, actions.onOpenHealth))
         if (profile.deenEnabled) add(Area("Deen", "Prayers and jamaat", Icons.Rounded.NightsStay, c.deen, null, actions.onOpenDeen))
         add(Area("Explore", "Reports, journals, more", Icons.Rounded.Apps, MaterialTheme.colorScheme.onSurfaceVariant, null, actions.onOpenLibrary))
@@ -418,6 +700,23 @@ private fun AreaGrid(profile: UserProfile, metrics: DashboardMetrics, actions: D
             }
         }
     }
+}
+
+/** Live numbers when challenges loaded; otherwise a plain description rather than a guess. */
+private fun challengeSubtitle(summary: ChallengeSummary?): String {
+    if (summary == null) return "Check-ins and streaks"
+    val running = summary.checkedIn + summary.needCheckIn
+    return when {
+        summary.active == 0 -> "No active challenge"
+        running == 0 -> "${summary.active} active · not started yet"
+        summary.needCheckIn == 0 -> "${summary.active} active · all checked in"
+        else -> "${summary.active} active · ${summary.needCheckIn} to check in"
+    }
+}
+
+private fun challengeProgress(summary: ChallengeSummary?): Float? {
+    val running = (summary ?: return null).checkedIn + summary.needCheckIn
+    return if (running == 0) null else summary.checkedIn.toFloat() / running
 }
 
 @Composable

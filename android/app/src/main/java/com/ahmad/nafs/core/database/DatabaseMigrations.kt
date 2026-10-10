@@ -3,6 +3,13 @@ package com.ahmad.nafs.core.database
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+/** Habit reminder times (`habits.reminder_time`), so a cached list keeps them offline. */
+val MIGRATION_14_15 = object : Migration(14, 15) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE cached_habits ADD COLUMN reminderTime TEXT")
+    }
+}
+
 val MIGRATION_12_13 = object : Migration(12, 13) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS cached_recovery (userId TEXT NOT NULL PRIMARY KEY, payloadCiphertext TEXT NOT NULL, payloadIv TEXT NOT NULL)")

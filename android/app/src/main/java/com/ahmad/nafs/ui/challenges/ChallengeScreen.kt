@@ -3,6 +3,7 @@ package com.ahmad.nafs.ui.challenges
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -40,9 +41,11 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Whatshot
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -75,6 +78,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -82,16 +88,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ahmad.nafs.core.challenges.Challenge
 import com.ahmad.nafs.core.challenges.ChallengeCheckIn
 import com.ahmad.nafs.core.challenges.ChallengeDefinitionValidator
+import com.ahmad.nafs.core.challenges.outcomeSummary
 import com.ahmad.nafs.core.profile.UserProfile
 import com.ahmad.nafs.domain.challenges.ChallengeCadence
 import com.ahmad.nafs.domain.challenges.ChallengeFrequency
+import com.ahmad.nafs.domain.challenges.ChallengePeriod
+import com.ahmad.nafs.domain.challenges.ChallengePeriodStatus
 import com.ahmad.nafs.domain.challenges.ChallengeStatus
+import com.ahmad.nafs.domain.challenges.ChallengeTimeline
 import com.ahmad.nafs.domain.challenges.displayName
 import com.ahmad.nafs.domain.challenges.unitName
 import com.ahmad.nafs.ui.AccountDayRefreshEffects
@@ -119,7 +130,6 @@ import com.ahmad.nafs.ui.components.NafsStat
 import com.ahmad.nafs.ui.components.NafsTextField
 import com.ahmad.nafs.ui.theme.Nafs
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 
 @Composable
 fun ChallengeRoute(
@@ -137,11 +147,20 @@ fun ChallengeRoute(
     ) { uri ->
         if (uri == null) viewModel.cancelPhotoPicker() else viewModel.submitPhotoEvidence(uri)
     }
-    LaunchedEffect(state.photoPickerChallengeId) {
-        if (state.photoPickerChallengeId != null) {
+    LaunchedEffect(state.photoRequest) {
+        if (state.photoRequest != null) {
             photoPicker.launch(
                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
             )
+        }
+    }
+    // A completion is confirmed with a haptic only once the server has accepted it.
+    val haptics = LocalHapticFeedback.current
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            when (event) {
+                ChallengeUiEvent.CheckInDone -> haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+            }
         }
     }
     AccountDayRefreshEffects(profile.timezone, viewModel::refresh)
@@ -160,6 +179,10 @@ fun ChallengeRoute(
             onCancelCheckIn = viewModel::cancelCheckIn,
             onCheckInSadqaPaidChange = viewModel::setCheckInSadqaPaid,
             onSadqaPaidChange = viewModel::setSadqaPaid,
+            onToggleHistory = viewModel::toggleHistory,
+            onOpenPhoto = viewModel::openPhoto,
+            onClosePhoto = viewModel::closePhoto,
+            onDismissCompletedNotice = viewModel::dismissCompletedNotice,
             onDismissError = viewModel::dismissError,
             editor = ChallengeEditorActions(
                 onClose = viewModel::closeEditor,
@@ -188,11 +211,17 @@ internal data class ChallengeActions(
     val onConfirmDelete: () -> Unit = {},
     val onCancelDelete: () -> Unit = {},
     val onRestart: (Challenge) -> Unit = {},
-    val onCheckIn: (Challenge, Boolean) -> Unit = { _, _ -> },
+    /** Challenge, done (or missed), and the date checked in for: today, or yesterday on a daily grace day. */
+    val onCheckIn: (Challenge, Boolean, LocalDate) -> Unit = { _, _, _ -> },
     val onConfirmCheckIn: () -> Unit = {},
     val onCancelCheckIn: () -> Unit = {},
     val onCheckInSadqaPaidChange: (Boolean) -> Unit = {},
     val onSadqaPaidChange: (Challenge, LocalDate, Boolean) -> Unit = { _, _, _ -> },
+    val onToggleHistory: (String) -> Unit = {},
+    /** Photo URL and its label. */
+    val onOpenPhoto: (String, String) -> Unit = { _, _ -> },
+    val onClosePhoto: () -> Unit = {},
+    val onDismissCompletedNotice: () -> Unit = {},
     val onDismissError: () -> Unit = {},
     val editor: ChallengeEditorActions = ChallengeEditorActions(),
 )
@@ -236,6 +265,7 @@ internal fun ChallengeScreen(state: ChallengeUiState, actions: ChallengeActions)
     state.checkInRequest?.let { request ->
         CheckInDialog(
             request = request,
+            today = state.today,
             onConfirm = actions.onConfirmCheckIn,
             onDismiss = actions.onCancelCheckIn,
             onSadqaPaidChange = actions.onCheckInSadqaPaidChange,
@@ -244,11 +274,15 @@ internal fun ChallengeScreen(state: ChallengeUiState, actions: ChallengeActions)
     state.deleteCandidate?.let { candidate ->
         ChallengeDeleteDialog(candidate, onConfirm = actions.onConfirmDelete, onDismiss = actions.onCancelDelete)
     }
+    state.photoViewer?.let { photo -> ProofPhotoDialog(photo, onDismiss = actions.onClosePhoto) }
 }
 
 @Composable
 private fun ChallengeList(state: ChallengeUiState, actions: ChallengeActions) {
     val visible = state.visibleChallenges()
+    val justCompleted = state.completedNoticeId
+        ?.takeIf { state.selectedStatus != ChallengeStatus.COMPLETED }
+        ?.let { id -> state.challenges.firstOrNull { it.id == id } }
     LazyColumn(
         modifier = Modifier.fillMaxSize().statusBarsPadding(),
         contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
@@ -281,6 +315,19 @@ private fun ChallengeList(state: ChallengeUiState, actions: ChallengeActions) {
                 NafsBanner(message = message, modifier = Modifier.gutter(), kind = NafsBannerKind.ERROR, onDismiss = actions.onDismissError)
             }
         }
+        justCompleted?.let { challenge ->
+            item(key = "challenges-completed") {
+                NafsBanner(
+                    message = "${challenge.title} · ${challenge.outcomeSummary(challenge.timeline(state.today))}",
+                    modifier = Modifier.gutter(),
+                    kind = NafsBannerKind.SUCCESS,
+                    title = "Challenge complete",
+                    actionLabel = "View",
+                    onAction = { actions.onSelectStatus(ChallengeStatus.COMPLETED) },
+                    onDismiss = actions.onDismissCompletedNotice,
+                )
+            }
+        }
 
         if (state.challenges.isNotEmpty()) item(key = "challenges-hero") {
             ChallengeHero(state.challenges, state.today, Modifier.gutter())
@@ -304,11 +351,14 @@ private fun ChallengeList(state: ChallengeUiState, actions: ChallengeActions) {
                     challenge = challenge,
                     today = state.today,
                     pending = challenge.id in state.pendingChallengeIds,
+                    historyOpen = challenge.id in state.expandedChallengeIds,
                     onEdit = { actions.onEdit(challenge) },
                     onDelete = { actions.onRequestDelete(challenge) },
                     onRestart = { actions.onRestart(challenge) },
-                    onCheckIn = { completed -> actions.onCheckIn(challenge, completed) },
+                    onCheckIn = { completed, date -> actions.onCheckIn(challenge, completed, date) },
                     onSadqaPaidChange = { date, paid -> actions.onSadqaPaidChange(challenge, date, paid) },
+                    onToggleHistory = { actions.onToggleHistory(challenge.id) },
+                    onOpenPhoto = actions.onOpenPhoto,
                     modifier = Modifier.gutter(),
                 )
             }
@@ -422,29 +472,31 @@ private fun ChallengeCard(
     challenge: Challenge,
     today: LocalDate,
     pending: Boolean,
+    historyOpen: Boolean,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onRestart: () -> Unit,
-    onCheckIn: (Boolean) -> Unit,
+    onCheckIn: (Boolean, LocalDate) -> Unit,
     onSadqaPaidChange: (LocalDate, Boolean) -> Unit,
+    onToggleHistory: () -> Unit,
+    onOpenPhoto: (String, String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = Nafs.colors
     val scheme = MaterialTheme.colorScheme
     val tint = c.challenges
     val unit = challenge.frequency.unitName()
-    val checkIns = challenge.currentCheckIns()
-    val explicitMiss = checkIns.any { it.date == today && !it.completed }
-    val checked = challenge.checkedThisPeriod(today)
-    val total = challenge.totalUnits()
+    val timeline = remember(challenge, today) { challenge.timeline(today) }
+    val total = timeline.periods.size
     val elapsed = challenge.elapsedUnits(today).coerceAtMost(total)
     val percent = challenge.progressPercent(today)
-    val periodStart = ChallengeCadence.periodStart(challenge.frequency, today)
-    val currentMiss = checkIns.firstOrNull { !it.completed && it.date in periodStart..today }
-    val completedCheckIn = checkIns.firstOrNull { it.completed && it.date in periodStart..today }
-    val proofUploaded = completedCheckIn?.photoUrl != null
     val active = challenge.status == ChallengeStatus.ACTIVE
-    val endDate = challenge.startDate.plusDays((challenge.durationDays - 1).coerceAtLeast(0).toLong())
+    // Streaks shown are derived from the check-ins, so a stored value can never go stale on screen.
+    val streak = timeline.currentStreak
+    val best = maxOf(challenge.longestStreak, timeline.longestStreak)
+    val currentProof = timeline.current?.let { period ->
+        challenge.currentCheckIns().firstOrNull { it.completed && it.date in period && !it.photoUrl.isNullOrBlank() }
+    }
 
     NafsCard(modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -467,12 +519,12 @@ private fun ChallengeCard(
 
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 NafsPill(challenge.frequency.displayName(), color = tint)
-                if (challenge.currentStreak > 0) {
-                    NafsPill("${challenge.currentStreak}-$unit streak", color = c.gold, icon = Icons.Rounded.Whatshot)
+                if (active && streak > 0) {
+                    NafsPill("$streak-$unit streak", color = c.gold, icon = Icons.Rounded.Whatshot)
                 }
                 when (challenge.status) {
                     ChallengeStatus.COMPLETED -> NafsPill("Complete", color = c.success, icon = Icons.Rounded.CheckCircle)
-                    ChallengeStatus.FAILED -> NafsPill("Needs a new attempt", color = scheme.error)
+                    ChallengeStatus.FAILED -> NafsPill("Ended", color = c.warning, icon = Icons.Rounded.Flag)
                     ChallengeStatus.ACTIVE -> {}
                 }
             }
@@ -482,7 +534,11 @@ private fun ChallengeCard(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
-                        "${unit.replaceFirstChar(Char::uppercase)} $elapsed of $total",
+                        if (timeline.hasStarted) {
+                            "${unit.replaceFirstChar(Char::uppercase)} $elapsed of $total"
+                        } else {
+                            "Starts ${dayLabel(challenge.startDate, today)}"
+                        },
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleSmall,
                     )
@@ -491,12 +547,12 @@ private fun ChallengeCard(
                 NafsProgressBar(percent / 100f, color = tint)
                 Row {
                     Text(
-                        "Started ${shortDate(challenge.startDate, today)} · ends ${shortDate(endDate, today)}",
+                        "Started ${shortDate(challenge.startDate, today)} · ends ${shortDate(timeline.endDate, today)}",
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.bodySmall,
                         color = scheme.onSurfaceVariant,
                     )
-                    Text("Best ${challenge.longestStreak}", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                    Text("Best $best", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                 }
             }
 
@@ -504,8 +560,8 @@ private fun ChallengeCard(
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (challenge.requiresPhoto) {
                         NafsPill(
-                            if (proofUploaded) "Proof uploaded" else "Photo proof",
-                            color = if (proofUploaded) c.success else scheme.onSurfaceVariant,
+                            if (currentProof != null) "Proof uploaded" else "Photo proof",
+                            color = if (currentProof != null) c.success else scheme.onSurfaceVariant,
                             icon = Icons.Rounded.CameraAlt,
                         )
                     }
@@ -519,36 +575,150 @@ private fun ChallengeCard(
                 }
             }
 
-            if (active) {
+            when (challenge.status) {
+                ChallengeStatus.ACTIVE -> {
+                    NafsDivider(inset = 0.dp)
+                    CheckInArea(challenge, timeline, pending, currentProof != null, onRestart, onCheckIn, onSadqaPaidChange)
+                }
+                ChallengeStatus.COMPLETED, ChallengeStatus.FAILED -> {
+                    ChallengeOutcomeWell(challenge, timeline, today)
+                    NafsSecondaryButton(
+                        if (challenge.status == ChallengeStatus.COMPLETED) "Start it again" else "Start a new attempt",
+                        onClick = onRestart,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !pending,
+                        icon = Icons.Rounded.Autorenew,
+                    )
+                }
+            }
+
+            Column {
                 NafsDivider(inset = 0.dp)
-                if (challenge.needsRestart(today)) RestartNotice(pending, onRestart)
-                if (checked) {
-                    CheckedInNotice(unit, proofUploaded)
-                } else {
-                    if (challenge.requiresPhoto) PhotoPrivacyNote()
-                    if (explicitMiss) {
-                        Text(
-                            "Miss recorded today. Return now if you still complete it.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = scheme.error,
-                        )
-                    }
-                    CheckInButtons(requiresPhoto = challenge.requiresPhoto, unit = unit, pending = pending, onCheckIn = onCheckIn)
-                    challenge.sadqaAmount?.let { amount ->
-                        currentMiss?.let { miss ->
-                            SadqaNotice(amount, challenge.sadqaCurrency, miss, pending, onSadqaPaidChange)
-                        }
+                ChallengeHistoryToggle(timeline, historyOpen, onToggleHistory)
+                AnimatedVisibility(visible = historyOpen) {
+                    Box(Modifier.padding(top = 8.dp)) {
+                        ChallengeHistoryPanel(challenge, timeline, pending, onSadqaPaidChange, onOpenPhoto)
                     }
                 }
-            } else {
-                NafsSecondaryButton(
-                    "Start a new attempt",
-                    onClick = onRestart,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !pending,
-                    icon = Icons.Rounded.Autorenew,
-                )
             }
+        }
+    }
+}
+
+/** What can be checked in right now: the current period and, for a daily challenge, an open yesterday. */
+@Composable
+private fun CheckInArea(
+    challenge: Challenge,
+    timeline: ChallengeTimeline,
+    pending: Boolean,
+    proofUploaded: Boolean,
+    onRestart: () -> Unit,
+    onCheckIn: (Boolean, LocalDate) -> Unit,
+    onSadqaPaidChange: (LocalDate, Boolean) -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val today = timeline.today
+    val unit = challenge.frequency.unitName()
+    val current = timeline.current
+    val grace = timeline.grace
+    if (!timeline.hasStarted) {
+        NoticeWell(
+            icon = Icons.Rounded.Schedule,
+            title = "Starts ${dayLabel(challenge.startDate, today)}",
+            body = "Check-ins open on the first day.",
+        )
+    } else {
+        if (timeline.needsRestart) RestartNotice(pending, onRestart)
+        if (current != null) {
+            val isFinal = current.index == timeline.last.index
+            if (current.status == ChallengePeriodStatus.DONE) {
+                CheckedInNotice(unit, proofUploaded, isFinal)
+            } else {
+                if (challenge.requiresPhoto) PhotoPrivacyNote()
+                if (current.missRecorded) {
+                    Text(
+                        "Miss recorded ${checkInTarget(today, today, challenge.frequency)}. If you still do it, mark it done " +
+                            "before ${windowCloses(current.end, challenge.frequency, today)}.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.error,
+                    )
+                } else if (isFinal) {
+                    Text(
+                        "Final $unit of this challenge.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant,
+                    )
+                }
+                CheckInButtons(
+                    doneLabel = when {
+                        challenge.requiresPhoto -> "Add proof"
+                        challenge.frequency == ChallengeFrequency.DAILY -> "Done today"
+                        else -> "Done this $unit"
+                    },
+                    requiresPhoto = challenge.requiresPhoto,
+                    pending = pending,
+                    showMissed = !current.missRecorded,
+                    onCheckIn = { done -> onCheckIn(done, today) },
+                )
+                challenge.sadqaAmount?.let { amount ->
+                    challenge.currentCheckIns()
+                        .firstOrNull { !it.completed && it.date in current }
+                        ?.let { miss -> SadqaNotice(amount, challenge.sadqaCurrency, miss, pending, onSadqaPaidChange) }
+                }
+            }
+        }
+        grace?.let { yesterday ->
+            GraceCheckIn(
+                period = yesterday,
+                today = today,
+                isFinal = yesterday.index == timeline.last.index,
+                requiresPhoto = challenge.requiresPhoto,
+                pending = pending,
+                onCheckIn = { done -> onCheckIn(done, yesterday.start) },
+            )
+        }
+    }
+}
+
+/** A daily challenge's yesterday, still open until the end of today (account timezone). */
+@Composable
+private fun GraceCheckIn(
+    period: ChallengePeriod,
+    today: LocalDate,
+    isFinal: Boolean,
+    requiresPhoto: Boolean,
+    pending: Boolean,
+    onCheckIn: (Boolean) -> Unit,
+) {
+    val c = Nafs.colors
+    val scheme = MaterialTheme.colorScheme
+    Surface(shape = MaterialTheme.shapes.medium, color = scheme.surfaceContainerHigh) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                NafsIconBadge(Icons.Rounded.Schedule, c.challenges, size = 36.dp, iconSize = 18.dp)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        if (isFinal) "Yesterday was the last day" else "Yesterday is still open",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        when {
+                            period.missRecorded -> "${dayLabel(period.start, today)} · miss recorded. Did it after all? Mark it done until the end of today."
+                            else -> "${dayLabel(period.start, today)} · check in until the end of today."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.onSurfaceVariant,
+                    )
+                }
+            }
+            CheckInButtons(
+                doneLabel = if (requiresPhoto) "Add proof for yesterday" else "Done yesterday",
+                requiresPhoto = requiresPhoto,
+                pending = pending,
+                showMissed = !period.missRecorded,
+                onCheckIn = onCheckIn,
+                height = 48.dp,
+            )
         }
     }
 }
@@ -583,14 +753,21 @@ private fun ChallengeMenu(title: String, pending: Boolean, onEdit: () -> Unit, o
 }
 
 @Composable
-private fun CheckInButtons(requiresPhoto: Boolean, unit: String, pending: Boolean, onCheckIn: (Boolean) -> Unit) {
+private fun CheckInButtons(
+    doneLabel: String,
+    requiresPhoto: Boolean,
+    pending: Boolean,
+    showMissed: Boolean,
+    onCheckIn: (Boolean) -> Unit,
+    height: Dp = 54.dp,
+) {
     val c = Nafs.colors
     val scheme = MaterialTheme.colorScheme
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(
             onClick = { onCheckIn(true) },
             enabled = !pending,
-            modifier = Modifier.weight(1.4f).height(54.dp),
+            modifier = Modifier.weight(1.4f).height(height),
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = c.success, contentColor = scheme.onPrimary),
             contentPadding = PaddingValues(horizontal = 14.dp),
@@ -601,28 +778,26 @@ private fun CheckInButtons(requiresPhoto: Boolean, unit: String, pending: Boolea
                 Icon(if (requiresPhoto) Icons.Rounded.CameraAlt else Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    when {
-                        requiresPhoto -> "Add proof"
-                        unit == "day" -> "Done today"
-                        else -> "Done this $unit"
-                    },
+                    doneLabel,
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         }
-        Button(
-            onClick = { onCheckIn(false) },
-            enabled = !pending,
-            modifier = Modifier.weight(1f).height(54.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = scheme.errorContainer, contentColor = scheme.onErrorContainer),
-            contentPadding = PaddingValues(horizontal = 14.dp),
-        ) {
-            Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Missed", style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (showMissed) {
+            Button(
+                onClick = { onCheckIn(false) },
+                enabled = !pending,
+                modifier = Modifier.weight(1f).height(height),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = scheme.errorContainer, contentColor = scheme.onErrorContainer),
+                contentPadding = PaddingValues(horizontal = 14.dp),
+            ) {
+                Icon(Icons.Rounded.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Missed", style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }
@@ -652,7 +827,7 @@ private fun RestartNotice(pending: Boolean, onRestart: () -> Unit) {
 }
 
 @Composable
-private fun CheckedInNotice(unit: String, proofUploaded: Boolean) {
+private fun CheckedInNotice(unit: String, proofUploaded: Boolean, isFinal: Boolean) {
     val c = Nafs.colors
     Surface(shape = MaterialTheme.shapes.medium, color = c.successContainer, contentColor = c.onSuccessContainer) {
         Row(
@@ -667,10 +842,31 @@ private fun CheckedInNotice(unit: String, proofUploaded: Boolean) {
                     style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
-                    if (proofUploaded) "Proof photo uploaded"
-                    else "Promise kept. Come back ${if (unit == "day") "tomorrow" else "next $unit"}.",
+                    when {
+                        isFinal -> "Final $unit done. Settle yesterday below to finish the challenge."
+                        proofUploaded -> "Proof photo uploaded"
+                        else -> "Promise kept. Come back ${if (unit == "day") "tomorrow" else "next $unit"}."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoticeWell(icon: ImageVector, title: String, body: String) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(shape = MaterialTheme.shapes.medium, color = scheme.surfaceContainerHigh) {
+        Row(
+            Modifier.fillMaxWidth().padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, contentDescription = null, tint = Nafs.colors.challenges, modifier = Modifier.size(22.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(body, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
             }
         }
     }
@@ -757,6 +953,7 @@ private fun ChallengeSkeleton() {
 @Composable
 private fun CheckInDialog(
     request: ChallengeCheckInRequest,
+    today: LocalDate,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
     onSadqaPaidChange: (Boolean) -> Unit,
@@ -764,6 +961,10 @@ private fun CheckInDialog(
     val c = Nafs.colors
     val scheme = MaterialTheme.colorScheme
     val challenge = request.challenge
+    val frequency = challenge.frequency
+    val target = checkInTarget(request.date, today, frequency)
+    val timeline = remember(challenge, today) { challenge.timeline(today) }
+    val period = timeline.periodOn(request.date)
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = {
@@ -772,14 +973,22 @@ private fun CheckInDialog(
                 if (request.completed) c.success else scheme.error,
             )
         },
-        title = { Text(if (request.completed) "Promise kept?" else "Record a missed period?") },
+        title = { Text(if (request.completed) "Promise kept?" else "Record a missed ${frequency.unitName()}?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
                     if (request.completed) {
-                        "Mark ${challenge.title} complete for this ${challenge.frequency.unitName()}?"
+                        "Mark ${challenge.title} done for $target?"
                     } else {
-                        "This records an honest miss for today. You can still return and check in before the current period ends."
+                        buildString {
+                            append("This records an honest miss for $target.")
+                            if (period != null) {
+                                append(" If you still do it, you can mark it done until ${windowCloses(period.end, frequency, today)}.")
+                            }
+                            if (period != null && period.index == timeline.last.index) {
+                                append(" It's the challenge's final ${frequency.unitName()}: if it stays missed, the challenge ends unfinished.")
+                            }
+                        }
                     },
                 )
                 if (!request.completed) {
@@ -864,6 +1073,8 @@ internal fun ChallengeEditorContent(draft: ChallengeEditorDraft, state: Challeng
     val isNew = draft.challengeId == null
     val frequencies = ChallengeFrequency.entries
     val sentences = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
+    // An edit keeps the challenge's start; a new challenge starts today.
+    val startDate = draft.challengeId?.let { id -> state.challenges.firstOrNull { it.id == id }?.startDate } ?: state.today
 
     Column(
         Modifier
@@ -879,7 +1090,7 @@ internal fun ChallengeEditorContent(draft: ChallengeEditorDraft, state: Challeng
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(if (isNew) "Start a challenge" else "Edit challenge", style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    "One honest promise, at a cadence you can keep.",
+                    if (isNew) "One honest promise, at a cadence you can keep." else "Your streak and past check-ins are kept.",
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant,
                 )
@@ -924,8 +1135,7 @@ internal fun ChallengeEditorContent(draft: ChallengeEditorDraft, state: Challeng
                 actions.onDurationChange,
                 label = "Duration in days",
                 modifier = Modifier.gutter(),
-                supportingText = "${ChallengeDefinitionValidator.minimumDuration(draft.frequency)}–" +
-                    "${ChallengeDefinitionValidator.maximumDuration(draft.frequency)} days",
+                supportingText = durationHint(draft, startDate, state.today),
                 enabled = enabled,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
@@ -953,7 +1163,7 @@ internal fun ChallengeEditorContent(draft: ChallengeEditorDraft, state: Challeng
                 label = "Amount (optional)",
                 modifier = Modifier.gutter(),
                 leadingIcon = Icons.Rounded.Favorite,
-                supportingText = "Recorded only when you mark a period missed",
+                supportingText = "Owed for each missed period; mark it paid from the check-in history",
                 enabled = enabled,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             )
@@ -1016,11 +1226,14 @@ private fun challengeSummary(state: ChallengeUiState): String {
     }
 }
 
-private fun shortDate(date: LocalDate, today: LocalDate): String =
-    date.format(if (date.year == today.year) DAY_MONTH else DAY_MONTH_YEAR)
-
-private fun formatMoney(amount: Double, currency: String): String =
-    "$currency ${if (amount % 1.0 == 0.0) amount.toLong() else amount}"
-
-private val DAY_MONTH: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM")
-private val DAY_MONTH_YEAR: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy")
+/** "7–365 days · ends 18 Nov · 40 daily check-ins": the range, and what the typed duration means from the start date. */
+private fun durationHint(draft: ChallengeEditorDraft, startDate: LocalDate, today: LocalDate): String {
+    val min = ChallengeDefinitionValidator.minimumDuration(draft.frequency)
+    val max = ChallengeDefinitionValidator.maximumDuration(draft.frequency)
+    val range = "$min–$max days"
+    val days = draft.durationDays.trim().toIntOrNull()?.takeIf { it in min..max } ?: return range
+    val count = ChallengeCadence.periodCount(draft.frequency, startDate, days)
+    val end = ChallengeCadence.endDate(startDate, days)
+    val cadence = draft.frequency.displayName().lowercase()
+    return "$range · ends ${shortDate(end, today)} · $count $cadence check-in${if (count == 1) "" else "s"}"
+}

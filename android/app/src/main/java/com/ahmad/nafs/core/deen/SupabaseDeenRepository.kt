@@ -6,7 +6,9 @@ import com.ahmad.nafs.core.health.HealthWriteRules
 import com.ahmad.nafs.core.network.SupabaseClientProvider
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.Order
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -88,6 +90,67 @@ class SupabaseDeenRepository @Inject constructor(
 
     override suspend fun clear(userId: String) = cache.clearForUser(userId)
 
+    override suspend fun history(userId: String, from: LocalDate, to: LocalDate): DeenHistoryResult {
+        if (to.isBefore(from) || ChronoUnit.DAYS.between(from, to) > MAX_HISTORY_DAYS) {
+            return DeenHistoryResult.Failure("Choose a shorter range of days.")
+        }
+        val days = try {
+            requireClient().from("prayer_logs").select(HISTORY_COLUMNS) {
+                filter { eq("user_id", userId); gte("date", from.toString()); lte("date", to.toString()) }
+                order("date", Order.ASCENDING)
+                limit(MAX_HISTORY_DAYS + 1)
+            }.decodeList<PrayerHistoryDay>()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            return cachedHistory(userId, from, to)
+        }
+        // The saved copy only serves offline reads; failing to write it must not hide fresh history.
+        try {
+            storeHistory(userId, from, to, days)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+        }
+        return DeenHistoryResult.Success(days, from, to, isOffline = false)
+    }
+
+    /** One encrypted snapshot per account, merged with what was saved before so a short read keeps a longer history. */
+    private suspend fun storeHistory(userId: String, from: LocalDate, to: LocalDate, days: List<PrayerHistoryDay>) {
+        val previous = readHistory(userId)?.takeIf { saved ->
+            // Only a snapshot that overlaps or touches this range can be joined without leaving an unknown gap.
+            !LocalDate.parse(saved.from).isAfter(to.plusDays(1)) && !LocalDate.parse(saved.to).isBefore(from.minusDays(1))
+        }
+        val start = listOfNotNull(from, previous?.let { LocalDate.parse(it.from) }).min()
+        val end = listOfNotNull(to, previous?.let { LocalDate.parse(it.to) }).max()
+        val kept = previous?.days.orEmpty().filter { day -> LocalDate.parse(day.date).let { it.isBefore(from) || it.isAfter(to) } }
+        val oldest = maxOf(start, end.minusDays(MAX_HISTORY_DAYS))
+        val merged = (kept + days).filter { !LocalDate.parse(it.date).isBefore(oldest) }.sortedBy { it.date }
+        val encrypted = cipher.encrypt(json.encodeToString(CachedPrayerHistory(oldest.toString(), end.toString(), merged)))
+        cache.upsert(CachedDeenLogEntity(userId, HISTORY_KEY, encrypted.ciphertext, encrypted.iv))
+    }
+
+    private suspend fun readHistory(userId: String): CachedPrayerHistory? {
+        val row = cache.get(userId, HISTORY_KEY) ?: return null
+        return json.decodeFromString<CachedPrayerHistory>(cipher.decrypt(EncryptedDeenValue(row.payloadCiphertext, row.payloadIv)))
+    }
+
+    private suspend fun cachedHistory(userId: String, from: LocalDate, to: LocalDate): DeenHistoryResult = try {
+        val saved = readHistory(userId)
+        val start = saved?.let { maxOf(from, LocalDate.parse(it.from)) }
+        val end = saved?.let { minOf(to, LocalDate.parse(it.to)) }
+        if (saved == null || start == null || end == null || end.isBefore(start)) {
+            DeenHistoryResult.Failure("Prayer history needs a connection. Reconnect and retry.")
+        } else {
+            val days = saved.days.filter { day -> LocalDate.parse(day.date).let { !it.isBefore(start) && !it.isAfter(end) } }
+            DeenHistoryResult.Success(days, start, end, isOffline = true)
+        }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        DeenHistoryResult.Failure("Saved prayer history could not be read. Reconnect and retry.")
+    }
+
     private suspend fun resolveReplay(desired: PrayerLog): DeenSaveResult {
         val current = fetch(desired.userId, desired.date)
         if (current == null || !DeenWriteRules.sameContent(current, desired)) return DeenSaveResult.Conflict
@@ -109,6 +172,11 @@ class SupabaseDeenRepository @Inject constructor(
 
     private companion object {
         val COLUMNS = Columns.list("id", "user_id", "date", "fajr", "dhuhr", "asr", "maghrib", "isha", "extra_prayers")
+        val HISTORY_COLUMNS = Columns.list("date", "fajr", "dhuhr", "asr", "maghrib", "isha")
+
+        /** Rows are keyed by ISO date; this key is never a date, so the history snapshot cannot replace a day. */
+        const val HISTORY_KEY = "history"
+        const val MAX_HISTORY_DAYS = 400L
     }
 }
 
@@ -120,3 +188,7 @@ object DeenWriteRules {
 
 @Serializable
 private data class CachedPrayerRecord(val log: PrayerLog?)
+
+/** History as last loaded online: every saved day from [from] to [to] (ISO dates). */
+@Serializable
+private data class CachedPrayerHistory(val from: String, val to: String, val days: List<PrayerHistoryDay>)

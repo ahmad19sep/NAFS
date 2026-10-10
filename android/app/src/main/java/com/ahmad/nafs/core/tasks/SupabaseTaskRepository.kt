@@ -4,11 +4,13 @@ import com.ahmad.nafs.core.database.CachedTaskDao
 import com.ahmad.nafs.core.database.CachedTaskEntity
 import com.ahmad.nafs.core.network.SupabaseClientProvider
 import com.ahmad.nafs.domain.tasks.TaskCompletionStatus
+import com.ahmad.nafs.domain.tasks.TaskDraftValidator
 import com.ahmad.nafs.domain.tasks.TaskPeriod
 import com.ahmad.nafs.domain.tasks.TaskPeriodType
 import com.ahmad.nafs.domain.tasks.TaskStatusRule
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.Order
 import java.time.Instant
 import java.time.LocalDate
 import javax.inject.Inject
@@ -25,15 +27,8 @@ class SupabaseTaskRepository @Inject constructor(
     override suspend fun load(userId: String, today: LocalDate): TaskLoadResult {
         val startDate = today.minusMonths(HISTORY_MONTHS)
         return try {
-            val tasks = requireClient().from("tasks")
-                .select(TASK_COLUMNS) {
-                    filter {
-                        eq("user_id", userId)
-                        gte("period_date", startDate.toString())
-                    }
-                }
-                .decodeList<TaskDto>()
-                .map(TaskDto::toModel)
+            // No upper bound: tasks planned for later days are part of the list (Upcoming, reminders).
+            val tasks = fetchSince(userId, startDate).map(TaskDto::toModel)
             val syncedAt = System.currentTimeMillis()
             cache.replaceForUser(userId, tasks.map(NafsTask::toEntity), syncedAt)
             TaskLoadResult.Success(tasks, isOffline = false, lastSyncedAtEpochMillis = syncedAt)
@@ -45,6 +40,9 @@ class SupabaseTaskRepository @Inject constructor(
     }
 
     override suspend fun create(intent: CreateTaskIntent): TaskActionResult {
+        TaskDraftValidator.plannedDateError(intent.type, intent.plannedDate, intent.today)?.let { message ->
+            return TaskActionResult.Failure(message)
+        }
         val normalized = intent.copy(
             title = intent.title.trim(),
             note = intent.note?.trim()?.takeIf(String::isNotEmpty),
@@ -128,6 +126,47 @@ class SupabaseTaskRepository @Inject constructor(
         TaskActionResult.Success(updated)
     }
 
+    override suspend fun reschedule(
+        userId: String,
+        taskId: String,
+        periodDate: LocalDate,
+    ): TaskActionResult = taskAction {
+        val current = findTask(userId, taskId)?.toModel()
+            ?: return@taskAction TaskActionResult.Failure("That task is no longer available.")
+        cache.upsert(current.toEntity())
+        if (current.isCompleted) {
+            return@taskAction TaskActionResult.Failure("That task is already done, so it stays on its day.")
+        }
+        val target = TaskPeriod.key(current.type, periodDate)
+        if (target == current.periodDate) return@taskAction TaskActionResult.Success(current)
+
+        val moved = requireClient().from("tasks")
+            .update(
+                // A fresh day for the web push alerts too, which skip alerts already sent for this task.
+                TaskMoveDto(
+                    periodDate = target.toString(),
+                    alertsSent = emptyList(),
+                    updatedAt = Instant.now().toString(),
+                ),
+            ) {
+                select(TASK_COLUMNS)
+                filter {
+                    eq("id", taskId)
+                    eq("user_id", userId)
+                    // Completed elsewhere since it was read: leave it where it was done.
+                    eq("status", TaskCompletionStatus.ACTIVE.toWireValue())
+                }
+            }
+            .decodeList<TaskDto>()
+            .firstOrNull()
+            ?.toModel()
+            ?: return@taskAction TaskActionResult.Failure(
+                "That task changed on another device, so it was not moved. Refresh and try again.",
+            )
+        cache.upsert(moved.toEntity())
+        TaskActionResult.Success(moved)
+    }
+
     override suspend fun softDelete(userId: String, taskId: String): TaskActionResult = taskAction {
         if (findTask(userId, taskId) == null) {
             return@taskAction TaskActionResult.Failure("That task is no longer available.")
@@ -206,6 +245,32 @@ class SupabaseTaskRepository @Inject constructor(
         TaskActionResult.Failure("Task not saved. Check your connection and retry safely.")
     }
 
+    /**
+     * Every task from [startDate] on, newest period first, in pages: the API caps a single response, and an
+     * unordered capped read could silently drop today's or upcoming tasks.
+     */
+    private suspend fun fetchSince(userId: String, startDate: LocalDate): List<TaskDto> {
+        val rows = mutableListOf<TaskDto>()
+        var offset = 0L
+        while (true) {
+            val page = requireClient().from("tasks")
+                .select(TASK_COLUMNS) {
+                    filter {
+                        eq("user_id", userId)
+                        gte("period_date", startDate.toString())
+                    }
+                    order("period_date", Order.DESCENDING)
+                    order("id", Order.ASCENDING)
+                    range(offset, offset + PAGE_SIZE - 1)
+                }
+                .decodeList<TaskDto>()
+            rows += page
+            if (page.size < PAGE_SIZE || rows.size >= MAX_ROWS) break
+            offset += PAGE_SIZE
+        }
+        return rows.distinctBy(TaskDto::id)
+    }
+
     private suspend fun findTask(userId: String, taskId: String): TaskDto? =
         requireClient().from("tasks")
             .select(TASK_COLUMNS) {
@@ -232,6 +297,8 @@ class SupabaseTaskRepository @Inject constructor(
 
     private companion object {
         const val HISTORY_MONTHS = 6L
+        const val PAGE_SIZE = 1_000L
+        const val MAX_ROWS = 10_000
         val TASK_COLUMNS = Columns.list(
             "id",
             "user_id",
@@ -296,7 +363,7 @@ private data class TaskDto(
                 note = intent.note,
                 type = intent.type,
                 priority = intent.priority,
-                periodDate = TaskPeriod.key(intent.type, intent.today),
+                periodDate = intent.periodDate,
                 dueTime = intent.dueTime,
             ),
         )
@@ -332,6 +399,13 @@ private data class EditTaskDto(
 )
 
 @Serializable
+private data class TaskMoveDto(
+    @SerialName("period_date") val periodDate: String,
+    @SerialName("alerts_sent") val alertsSent: List<String>,
+    @SerialName("updated_at") val updatedAt: String,
+)
+
+@Serializable
 private data class SoftDeleteDto(
     @SerialName("deleted_at") val deletedAt: String,
 )
@@ -350,7 +424,7 @@ private fun CreateTaskIntent.toInsertDto() = TaskInsertDto(
     type = type.toWireValue(),
     priority = priority.toWireValue(),
     status = TaskCompletionStatus.ACTIVE.toWireValue(),
-    periodDate = TaskPeriod.key(type, today).toString(),
+    periodDate = periodDate.toString(),
     dueTime = if (type == TaskPeriodType.DAILY) dueTime else null,
 )
 

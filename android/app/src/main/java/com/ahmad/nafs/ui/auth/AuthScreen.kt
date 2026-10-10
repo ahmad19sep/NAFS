@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Mail
+import androidx.compose.material.icons.rounded.MarkEmailUnread
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -52,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ahmad.nafs.BuildConfig
+import com.ahmad.nafs.core.auth.PasswordRules
 import com.ahmad.nafs.core.auth.SignUpGender
 import com.ahmad.nafs.ui.components.NafsBanner
 import com.ahmad.nafs.ui.components.NafsBannerKind
@@ -77,6 +79,7 @@ fun AuthRoute(viewModel: AuthViewModel = hiltViewModel()) {
         onTogglePasswordVisibility = viewModel::togglePasswordVisibility,
         onSubmit = viewModel::submit,
         onGoogle = viewModel::signInGoogle,
+        onResendConfirmation = viewModel::resendConfirmation,
     )
 }
 
@@ -92,6 +95,7 @@ fun AuthScreen(
     onSubmit: () -> Unit,
     onGoogle: () -> Unit = {},
     showGoogle: Boolean = BuildConfig.GOOGLE_AUTH_ENABLED,
+    onResendConfirmation: () -> Unit = {},
 ) {
     val focus = LocalFocusManager.current
     val scheme = MaterialTheme.colorScheme
@@ -214,7 +218,7 @@ fun AuthScreen(
                             label = "Password",
                             leadingIcon = Icons.Rounded.Lock,
                             enabled = !state.isSubmitting,
-                            supportingText = if (state.mode == AuthMode.SIGN_UP) "At least 6 characters" else null,
+                            supportingText = if (state.mode == AuthMode.SIGN_UP) PasswordRules.HINT else null,
                             visualTransformation = if (state.passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(onDone = { submit() }),
@@ -241,6 +245,9 @@ fun AuthScreen(
                     }
                     AnimatedVisibility(state.confirmationMessage != null) {
                         NafsBanner(state.confirmationMessage.orEmpty(), kind = NafsBannerKind.SUCCESS)
+                    }
+                    AnimatedVisibility(state.pendingConfirmationEmail != null && state.mode != AuthMode.FORGOT_PASSWORD) {
+                        ResendConfirmationButton(state, onResendConfirmation)
                     }
 
                     NafsPrimaryButton(
@@ -290,6 +297,23 @@ fun AuthScreen(
             }
         }
     }
+}
+
+/** Offered when sign-in was refused for an unconfirmed email, and after sign-up. Supabase allows one email a minute. */
+@Composable
+private fun ResendConfirmationButton(state: AuthUiState, onResend: () -> Unit) {
+    val waiting = state.resendCooldownSeconds > 0
+    NafsSecondaryButton(
+        text = when {
+            state.isResending -> "Sending…"
+            waiting -> "Resend available in ${state.resendCooldownSeconds} s"
+            else -> "Resend confirmation email"
+        },
+        onClick = onResend,
+        enabled = !state.isResending && !waiting && !state.isSubmitting,
+        icon = Icons.Rounded.MarkEmailUnread,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 private fun SignUpGender.label() = when (this) {

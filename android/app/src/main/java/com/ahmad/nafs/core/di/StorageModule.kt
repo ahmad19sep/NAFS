@@ -16,6 +16,7 @@ import com.ahmad.nafs.core.database.CachedLetterDao
 import com.ahmad.nafs.core.database.CachedRecoveryDao
 import com.ahmad.nafs.core.database.MIGRATION_12_13
 import com.ahmad.nafs.core.database.MIGRATION_13_14
+import com.ahmad.nafs.core.database.MIGRATION_14_15
 import com.ahmad.nafs.core.database.RecordCacheDao
 import com.ahmad.nafs.core.database.NafsDatabase
 import com.ahmad.nafs.core.database.PendingMutationDao
@@ -62,6 +63,7 @@ object StorageModule {
                 MIGRATION_11_12,
                 MIGRATION_12_13,
                 MIGRATION_13_14,
+                MIGRATION_14_15,
             )
             .build()
 

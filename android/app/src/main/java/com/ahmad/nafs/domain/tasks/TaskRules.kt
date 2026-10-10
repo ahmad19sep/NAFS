@@ -1,5 +1,7 @@
 package com.ahmad.nafs.domain.tasks
 
+import java.time.LocalDate
+
 enum class TaskCompletionStatus {
     ACTIVE,
     COMPLETED,
@@ -30,6 +32,16 @@ object TaskDraftValidator {
         dueTime.isBlank() -> null
         type != TaskPeriodType.DAILY -> "Only daily tasks can have a due time."
         !timePattern.matches(dueTime) -> "Use a 24-hour time such as 09:30."
+        else -> null
+    }
+
+    /** A new daily task may be planned from today up to [TaskPlanning.MAX_DAYS_AHEAD] days ahead. */
+    fun plannedDateError(type: TaskPeriodType, plannedDate: LocalDate?, today: LocalDate): String? = when {
+        plannedDate == null -> null
+        type != TaskPeriodType.DAILY -> "Only daily tasks can be planned for a later day."
+        plannedDate.isBefore(today) -> "That day has already passed. Choose today or a later day."
+        plannedDate.isAfter(TaskPlanning.latestPlannableDate(today)) ->
+            "Tasks can be planned up to ${TaskPlanning.MAX_DAYS_AHEAD} days ahead."
         else -> null
     }
 }

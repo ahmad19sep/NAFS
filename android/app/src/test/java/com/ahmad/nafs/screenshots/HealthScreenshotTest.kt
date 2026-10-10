@@ -9,19 +9,23 @@ import com.ahmad.nafs.core.health.HealthLog
 import com.ahmad.nafs.core.health.HealthMeal
 import com.ahmad.nafs.core.health.HealthMealRules
 import com.ahmad.nafs.core.health.HealthProfile
+import com.ahmad.nafs.core.health.HealthTrendMetric
 import com.ahmad.nafs.core.health.MealItem
 import com.ahmad.nafs.core.health.SleepSession
 import com.ahmad.nafs.ui.health.HealthActions
 import com.ahmad.nafs.ui.health.HealthScreen
+import com.ahmad.nafs.ui.health.HealthTrendsState
 import com.ahmad.nafs.ui.health.HealthUiState
+import kotlin.math.roundToInt
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Health screen with fixed sample state: first-run baseline setup, an empty (offline) day and a
- * filled-in day, the last one also scrolled to its check-in tiles, meals and custom metrics.
+ * Health screen with fixed sample state: first-run baseline setup (skippable), a skipped baseline, an empty
+ * (offline) day and a filled-in day scrolled to its tiles, meals, custom metrics and trends, plus a past
+ * day being edited and the 30-day weight trend.
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -42,15 +46,39 @@ class HealthScreenshotTest : ScreenshotTestBase() {
     }
 
     @Test fun healthTodayCheckIn() = captureScreen("60_health_today_checkin") {
-        HealthScreen(HealthSamples.todayState, HealthActions(), rememberLazyListState(initialFirstVisibleItemIndex = 3))
+        HealthScreen(HealthSamples.todayState, HealthActions(), rememberLazyListState(initialFirstVisibleItemIndex = 4))
     }
 
     @Test fun healthTodayMeals() = captureScreen("60_health_today_meals") {
-        HealthScreen(HealthSamples.todayState, HealthActions(), rememberLazyListState(initialFirstVisibleItemIndex = 8))
+        HealthScreen(HealthSamples.todayState, HealthActions(), rememberLazyListState(initialFirstVisibleItemIndex = 9))
     }
 
     @Test fun healthTodayMetrics() = captureScreen("60_health_today_metrics") {
-        HealthScreen(HealthSamples.todayState, HealthActions(), rememberLazyListState(initialFirstVisibleItemIndex = 14))
+        HealthScreen(HealthSamples.todayState, HealthActions(), rememberLazyListState(initialFirstVisibleItemIndex = 15))
+    }
+
+    @Test fun healthBaselineSkipped() = captureScreen("60_health_baseline_skipped") {
+        HealthScreen(HealthSamples.skippedState, HealthActions())
+    }
+
+    @Test fun healthPastDay() = captureScreen("60_health_past_day") {
+        HealthScreen(HealthSamples.pastDayState, HealthActions())
+    }
+
+    @Test fun healthTrendsWater() = captureScreen("60_health_trends_water") {
+        HealthScreen(HealthSamples.todayState, HealthActions(), rememberLazyListState(initialFirstVisibleItemIndex = 19))
+    }
+
+    @Test fun healthTrendsWeight() = captureScreen("60_health_trends_weight") {
+        HealthScreen(HealthSamples.weightTrendState, HealthActions(), rememberLazyListState(initialFirstVisibleItemIndex = 19))
+    }
+
+    @Test fun healthTrendsSleep() = captureScreen("60_health_trends_sleep") {
+        HealthScreen(HealthSamples.sleepTrendState, HealthActions(), rememberLazyListState(initialFirstVisibleItemIndex = 19))
+    }
+
+    @Test fun healthTrendsOfflineEmpty() = captureScreen("60_health_trends_offline_empty") {
+        HealthScreen(HealthSamples.emptyDayState, HealthActions(), rememberLazyListState(initialFirstVisibleItemIndex = 19))
     }
 }
 
@@ -114,15 +142,39 @@ private object HealthSamples {
 
     private val emptyMeals = HealthMealRules.ensureCore(null) { key -> "$key-sample" }
 
+    /** A month of realistic, uneven logging: some days skipped, steps and weight not logged every day. */
+    private val trendLogs: List<HealthLog> = (29 downTo 1).filter { it % 7 != 3 }.map { ago ->
+        val week = ago % 7
+        log.copy(
+            id = "log-$ago",
+            date = SampleData.today.minusDays(ago.toLong()),
+            waterGlasses = listOf(6, 8, 5, 9, 7, 4, 8)[week],
+            steps = listOf(6_420, 9_100, 4_300, 8_800, 10_200, 7_600, 5_100)[week].takeIf { ago % 5 != 2 },
+            sleepHours = listOf(7.5, 6.2, 8.1, 7.0, 5.8, 8.6, 7.3)[week],
+            sleepSessions = emptyList(),
+            meals = emptyList(),
+            weightKg = ((74.1 - (29 - ago) * 0.06) * 10).roundToInt().div(10.0).takeIf { ago % 3 == 0 },
+            mood = listOf(7, 6, 8, 5, 7, 8, 6)[week],
+            notes = null,
+        )
+    } + log
+
+    private val trends = HealthTrendsState(logs = trendLogs, end = SampleData.today)
+
     val setupState = HealthUiState(
         userId = SampleData.USER,
         timezone = "Asia/Karachi",
         today = SampleData.today,
         profile = HealthProfile(userId = SampleData.USER, heightCm = null, weightKg = null, customMetrics = emptyList()),
         isLoading = false,
-        showProfileEditor = true,
         profileHeight = "175",
         meals = emptyMeals,
+    ).saved()
+
+    val skippedState = setupState.copy(
+        profile = HealthProfile(userId = SampleData.USER, heightCm = null, weightKg = 72.5, customMetrics = emptyList()),
+        baselineSkipped = true,
+        trends = HealthTrendsState(logs = emptyList(), end = SampleData.today),
     )
 
     val emptyDayState = HealthUiState(
@@ -133,7 +185,8 @@ private object HealthSamples {
         isLoading = false,
         isOffline = true,
         meals = emptyMeals,
-    )
+        trends = HealthTrendsState(logs = emptyList(), end = SampleData.today, isOffline = true),
+    ).saved()
 
     val todayState = HealthUiState(
         userId = SampleData.USER,
@@ -154,5 +207,33 @@ private object HealthSamples {
         dailyWeight = "72.2",
         mood = 7,
         notes = notes,
-    )
+        trends = trends,
+    ).saved()
+
+    val weightTrendState = todayState.copy(trends = trends.copy(rangeDays = 30, metric = HealthTrendMetric.WEIGHT))
+
+    val sleepTrendState = todayState.copy(trends = trends.copy(metric = HealthTrendMetric.SLEEP))
+
+    /** Thursday's entry, opened from the day switcher, with one change not yet saved. */
+    val pastDayState: HealthUiState = trendLogs.first { it.date == SampleData.today.minusDays(2) }.let { day ->
+        HealthUiState(
+            userId = SampleData.USER,
+            timezone = "Asia/Karachi",
+            today = SampleData.today,
+            selectedDate = day.date,
+            profile = profile.copy(customMetrics = emptyList()),
+            log = day,
+            isLoading = false,
+            waterGlasses = day.waterGlasses,
+            steps = day.steps?.toString().orEmpty(),
+            legacySleepHours = day.sleepHours,
+            meals = emptyMeals,
+            dailyWeight = "",
+            mood = day.mood,
+            trends = trends,
+        ).saved().copy(waterGlasses = day.waterGlasses + 1)
+    }
+
+    /** Marks the shown values as the loaded entry, as the ViewModel does after a load. */
+    private fun HealthUiState.saved(): HealthUiState = copy(savedForm = form)
 }

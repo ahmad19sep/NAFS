@@ -2,7 +2,9 @@ package com.ahmad.nafs.core.challenges
 
 import com.ahmad.nafs.domain.challenges.ChallengeCadence
 import com.ahmad.nafs.domain.challenges.ChallengeFrequency
+import com.ahmad.nafs.domain.challenges.ChallengePeriodStatus
 import com.ahmad.nafs.domain.challenges.ChallengeStatus
+import com.ahmad.nafs.domain.challenges.ChallengeTimeline
 import com.ahmad.nafs.domain.challenges.DatedChallengeCheckIn
 import java.time.LocalDate
 
@@ -38,23 +40,51 @@ data class Challenge(
     val checkIns: List<ChallengeCheckIn>,
     val createdAt: String,
 ) {
-    fun checkedThisPeriod(today: LocalDate): Boolean = ChallengeCadence.hasCheckedThisPeriod(
+    fun checkedThisPeriod(today: LocalDate): Boolean = timeline(today).current?.status == ChallengePeriodStatus.DONE
+
+    /** Check-ins of the current attempt; a restart keeps earlier ones on record but they no longer count. */
+    fun currentCheckIns(): List<ChallengeCheckIn> = checkIns.filter { !it.date.isBefore(startDate) }
+
+    /** The current attempt's periods judged on [today] (account date). */
+    fun timeline(today: LocalDate): ChallengeTimeline = ChallengeTimeline.of(
         frequency,
+        startDate,
+        durationDays,
         currentCheckIns().map(ChallengeCheckIn::dated),
         today,
     )
 
-    fun currentCheckIns(): List<ChallengeCheckIn> = checkIns.filter { !it.date.isBefore(startDate) }
+    fun endDate(): LocalDate = ChallengeCadence.endDate(startDate, durationDays)
 
     fun needsRestart(today: LocalDate): Boolean = status == ChallengeStatus.FAILED ||
-        (status == ChallengeStatus.ACTIVE && ChallengeCadence.needsRestart(frequency, startDate, currentCheckIns().map(ChallengeCheckIn::dated), today))
+        (status == ChallengeStatus.ACTIVE && timeline(today).needsRestart)
 
-    fun totalUnits(): Int = ChallengeCadence.totalUnits(frequency, durationDays)
+    /** Periods in the current attempt, counting a partial first or last calendar period as one. */
+    fun totalUnits(): Int = ChallengeCadence.periodCount(frequency, startDate, durationDays)
 
     fun elapsedUnits(today: LocalDate): Int = ChallengeCadence.unitsElapsed(frequency, startDate, today)
 
     fun progressPercent(today: LocalDate): Int =
         ChallengeCadence.progressPercent(frequency, durationDays, startDate, today)
+
+    /**
+     * The challenge as its check-ins say it stands on [today]: an active attempt's status resolved (complete once its
+     * final period is done, ended once that period's window closes without a completion), the current streak recomputed
+     * and the longest streak raised to the longest run on record. The stored longest streak is never lowered — it can
+     * come from an earlier attempt — and a status other than active is never changed, so a challenge another client
+     * completed stays complete. Returns this same instance when nothing changes.
+     */
+    fun reconciled(today: LocalDate): Challenge {
+        val timeline = timeline(today)
+        val resolvedStatus = if (status == ChallengeStatus.ACTIVE) timeline.outcome else status
+        val streak = timeline.currentStreak
+        val longest = maxOf(longestStreak, timeline.longestStreak, streak)
+        return if (resolvedStatus == status && streak == currentStreak && longest == longestStreak) {
+            this
+        } else {
+            copy(status = resolvedStatus, currentStreak = streak, longestStreak = longest)
+        }
+    }
 }
 
 data class SaveChallengeIntent(

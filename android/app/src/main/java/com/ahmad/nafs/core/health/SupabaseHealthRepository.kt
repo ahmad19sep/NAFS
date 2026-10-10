@@ -6,6 +6,7 @@ import com.ahmad.nafs.core.database.CachedHealthProfileEntity
 import com.ahmad.nafs.core.network.SupabaseClientProvider
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
+import io.github.jan.supabase.postgrest.query.Order
 import java.time.Instant
 import java.time.LocalDate
 import javax.inject.Inject
@@ -50,6 +51,27 @@ class SupabaseHealthRepository @Inject constructor(
         throw cancellation
     } catch (_: Exception) {
         loadCached(userId, date)
+    }
+
+    override suspend fun loadRange(userId: String, from: LocalDate, to: LocalDate): HealthRangeResult = try {
+        require(!from.isAfter(to) && !from.isBefore(to.minusDays(RANGE_MAX_DAYS - 1L))) { "Unsupported health range" }
+        val logs = requireClient().from("health_logs").select(LOG_COLUMNS) {
+            filter {
+                eq("user_id", userId)
+                gte("date", from.toString())
+                lte("date", to.toString())
+            }
+            order("date", Order.ASCENDING)
+            limit(40)
+        }.decodeList<HealthLogDto>().map { it.toModel() }
+            .filter { it.userId == userId && !it.date.isBefore(from) && !it.date.isAfter(to) }
+            .sortedBy { it.date }
+        cacheRange(userId, logs)
+        HealthRangeResult.Success(logs, isOffline = false)
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        loadCachedRange(userId, from, to)
     }
 
     override suspend fun saveProfile(intent: SaveHealthProfileIntent): HealthActionResult {
@@ -142,8 +164,77 @@ class SupabaseHealthRepository @Inject constructor(
                     ?: return@healthAction HealthActionResult.LogConflict
             }
             cache.replaceLog(log.toEntity(cacheCipher, json))
-            HealthActionResult.LogSaved(log)
+            val sync = log.weightKg?.let { syncProfileWeight(log.userId, log.date, it) } ?: WeightSync()
+            HealthActionResult.LogSaved(log, profile = sync.profile, profileWeightFailed = sync.failed)
         }
+    }
+
+    private data class WeightSync(val profile: HealthProfile? = null, val failed: Boolean = false)
+
+    /**
+     * Mirrors the web: a saved daily weight becomes the profile weight so BMI follows it. Editing an older day
+     * must not move BMI backwards, so the profile only changes when no later day carries a weight.
+     */
+    private suspend fun syncProfileWeight(userId: String, date: LocalDate, weightKg: Double): WeightSync {
+        val profile = try {
+            val laterWeighIn = requireClient().from("health_logs").select(Columns.list("date", "weight_kg")) {
+                filter {
+                    eq("user_id", userId)
+                    gt("date", date.toString())
+                }
+                limit(400)
+            }.decodeList<HealthWeightDto>().any { it.weightKg != null }
+            if (laterWeighIn) return WeightSync()
+            requireClient().from("users").update(HealthWeightUpdateDto(weightKg)) {
+                select(PROFILE_COLUMNS)
+                filter { eq("id", userId) }
+            }.decodeSingle<HealthProfileDto>().toModel()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            return WeightSync(failed = true)
+        }
+        try {
+            cache.replaceProfile(profile.toEntity(cacheCipher, json))
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            // The server profile is authoritative; the next load refreshes the cached copy.
+        }
+        return WeightSync(profile = profile)
+    }
+
+    private suspend fun cacheRange(userId: String, logs: List<HealthLog>) {
+        try {
+            if (cache.getMetadata(userId) == null) return
+            logs.forEach { log ->
+                if (cache.getLog(userId, log.date.toString())?.updatedAt != log.updatedAt) {
+                    cache.replaceLog(log.toEntity(cacheCipher, json))
+                }
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (_: Exception) {
+            // Online results stay authoritative even if this device cannot keep a copy.
+        }
+    }
+
+    private suspend fun loadCachedRange(userId: String, from: LocalDate, to: LocalDate): HealthRangeResult = try {
+        if (cache.getMetadata(userId) == null || from.isAfter(to) || from.isBefore(to.minusDays(RANGE_MAX_DAYS - 1L))) {
+            HealthRangeResult.Failure(RANGE_OFFLINE_MESSAGE)
+        } else {
+            val logs = mutableListOf<HealthLog>()
+            var date = from
+            while (!date.isAfter(to)) {
+                cache.getLog(userId, date.toString())?.toModel(cacheCipher, json)?.let(logs::add)
+                date = date.plusDays(1)
+            }
+            HealthRangeResult.Success(logs, isOffline = true)
+        }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (_: Exception) {
+        HealthRangeResult.Failure(RANGE_OFFLINE_MESSAGE)
     }
 
     override suspend fun clear(userId: String) = cache.clearForUser(userId)
@@ -179,6 +270,8 @@ class SupabaseHealthRepository @Inject constructor(
     private fun requireClient() = checkNotNull(clientProvider.client) { "Supabase is not configured." }
 
     private companion object {
+        const val RANGE_MAX_DAYS = 31
+        const val RANGE_OFFLINE_MESSAGE = "Trends need a connection the first time. Reconnect and retry."
         val PROFILE_COLUMNS = Columns.list("id", "height_cm", "weight_kg", "health_extras_config")
         val LOG_COLUMNS = Columns.list(
             "id", "user_id", "date", "water_glasses", "steps", "sleep_hours",
@@ -202,6 +295,17 @@ private data class HealthProfileDto(
 private data class HealthProfileUpdateDto(
     @SerialName("height_cm") val heightCm: Double,
     @SerialName("weight_kg") val weightKg: Double,
+)
+
+@Serializable
+private data class HealthWeightUpdateDto(
+    @SerialName("weight_kg") val weightKg: Double,
+)
+
+@Serializable
+private data class HealthWeightDto(
+    val date: String,
+    @SerialName("weight_kg") val weightKg: Double? = null,
 )
 
 @Serializable

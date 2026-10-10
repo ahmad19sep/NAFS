@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,21 +23,34 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,7 +61,11 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.ahmad.nafs.core.checkin.CheckInDraft
+import com.ahmad.nafs.core.checkin.CheckInDraftRules
 import com.ahmad.nafs.core.checkin.CheckInRules
 import com.ahmad.nafs.core.checkin.CheckInTask
 import com.ahmad.nafs.core.checkin.DailyCheckIn
@@ -79,10 +97,17 @@ import java.util.Locale
 fun CheckInRoute(profile: UserProfile, viewModel: CheckInViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     LaunchedEffect(profile.userId, profile.timezone) { viewModel.initialize(profile.userId, profile.timezone) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.flushDraft() }
     AccountDayRefreshEffects(profile.timezone) { viewModel.refresh() }
+    val speech = rememberSpeechInput(
+        prompt = "Tell NAFS how your day went",
+        onResult = viewModel::appendDictation,
+        onUnavailable = viewModel::voiceUnavailable,
+    )
     CheckInScreen(
         profile = profile,
         state = state,
+        voiceAvailable = speech.isAvailable,
         actions = CheckInActions(
             onReload = { viewModel.refresh(force = true) },
             onShowEvening = viewModel::showEvening,
@@ -93,6 +118,8 @@ fun CheckInRoute(profile: UserProfile, viewModel: CheckInViewModel = hiltViewMod
             onEveningTextChange = viewModel::setEveningText,
             onSave = viewModel::save,
             onGenerateVerdict = viewModel::generateVerdict,
+            onDictate = speech::start,
+            onDiscardPreviousDraft = viewModel::discardPreviousDraft,
         ),
     )
 }
@@ -108,16 +135,25 @@ internal data class CheckInActions(
     val onEveningTextChange: (String) -> Unit = {},
     val onSave: () -> Unit = {},
     val onGenerateVerdict: () -> Unit = {},
+    val onDictate: () -> Unit = {},
+    val onDiscardPreviousDraft: () -> Unit = {},
 )
 
 @Composable
-internal fun CheckInScreen(profile: UserProfile, state: CheckInUiState, actions: CheckInActions) {
+internal fun CheckInScreen(
+    profile: UserProfile,
+    state: CheckInUiState,
+    actions: CheckInActions,
+    voiceAvailable: Boolean = false,
+) {
     if (state.isLoading && state.draft == null) {
         NafsLoadingState(Modifier.statusBarsPadding())
         return
     }
     val record = state.draft
-    val canReload = !state.isLoading && !state.isSaving && !state.isGenerating && (!state.hasChanges || state.hasConflict)
+    val canReload = !state.isLoading && !state.isSaving && !state.isGenerating &&
+        (!state.hasChanges || state.hasConflict || state.isOffline)
+    var confirmDiscardPrevious by rememberSaveable(profile.userId) { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().statusBarsPadding(),
@@ -138,8 +174,23 @@ internal fun CheckInScreen(profile: UserProfile, state: CheckInUiState, actions:
             )
         }
         statusItems(state, actions)
-        if (record != null) recordItems(profile, state, record, actions)
+        state.previousDraft?.let { previous ->
+            item(key = "previous-draft") { PreviousDraftCard(previous, onDiscard = { confirmDiscardPrevious = true }) }
+        }
+        if (record != null) recordItems(profile, state, record, actions, voiceAvailable)
     }
+
+    if (confirmDiscardPrevious && state.previousDraft != null) AlertDialog(
+        onDismissRequest = { confirmDiscardPrevious = false },
+        title = { Text("Discard these notes?") },
+        text = { Text("They'll be removed from this device. They were never saved to your account.") },
+        confirmButton = {
+            TextButton(onClick = { confirmDiscardPrevious = false; actions.onDiscardPreviousDraft() }) {
+                Text("Discard", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = { confirmDiscardPrevious = false }) { Text("Keep") } },
+    )
 }
 
 private fun LazyListScope.statusItems(state: CheckInUiState, actions: CheckInActions) {
@@ -166,9 +217,20 @@ private fun LazyListScope.statusItems(state: CheckInUiState, actions: CheckInAct
         }
     }
     state.message?.let { message -> item { NafsBanner(message, kind = NafsBannerKind.SUCCESS) } }
+    state.draftNotice?.let { notice ->
+        item(key = "draft-notice") {
+            NafsBanner(notice, kind = if (state.draftBehindSaved) NafsBannerKind.WARNING else NafsBannerKind.INFO)
+        }
+    }
 }
 
-private fun LazyListScope.recordItems(profile: UserProfile, state: CheckInUiState, record: DailyCheckIn, actions: CheckInActions) {
+private fun LazyListScope.recordItems(
+    profile: UserProfile,
+    state: CheckInUiState,
+    record: DailyCheckIn,
+    actions: CheckInActions,
+    voiceAvailable: Boolean,
+) {
     item {
         NafsSegmented(
             options = listOf("Morning plan", "Evening review"),
@@ -201,17 +263,28 @@ private fun LazyListScope.recordItems(profile: UserProfile, state: CheckInUiStat
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
             )
         }
+        if (voiceAvailable || state.voiceMessage != null) item(key = "dictate") {
+            DictationRow(
+                available = voiceAvailable,
+                enabled = state.canEdit && (record.eveningText?.length ?: 0) < CheckInDraftRules.MAX_TEXT,
+                message = state.voiceMessage,
+                onDictate = actions.onDictate,
+            )
+        }
     }
 
     item {
-        NafsPrimaryButton(
-            text = if (state.isEvening) "Save evening review" else "Save morning plan",
-            onClick = actions.onSave,
-            enabled = state.canEdit && state.hasChanges,
-            loading = state.isSaving,
-            icon = Icons.Rounded.Check,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            NafsPrimaryButton(
+                text = if (state.isEvening) "Save evening review" else "Save morning plan",
+                onClick = actions.onSave,
+                enabled = state.canEdit && state.hasChanges,
+                loading = state.isSaving,
+                icon = Icons.Rounded.Check,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            DraftStatusLine(state)
+        }
     }
 
     if (state.isEvening) {
@@ -220,6 +293,94 @@ private fun LazyListScope.recordItems(profile: UserProfile, state: CheckInUiStat
             item(key = "verdict") { CoachNote(verdict, stale = state.generatedVersion != record.updatedAt || state.hasChanges) }
         }
         item { VerdictAction(state, actions.onGenerateVerdict) }
+    }
+}
+
+// ─── Drafts and dictation ────────────────────────────────────────────────────
+
+/** Where unsaved text stands on this device. Silent when there is nothing unsaved. */
+@Composable
+private fun DraftStatusLine(state: CheckInUiState) {
+    val (text, icon, tint) = when {
+        !state.hasUnsavedText && state.draftStatus != DraftStatus.FAILED -> return
+        state.draftStatus == DraftStatus.FAILED ->
+            Triple("Draft couldn't be saved on this device. Keep this screen open and save.", Icons.Rounded.ErrorOutline, MaterialTheme.colorScheme.error)
+        state.draftStatus == DraftStatus.SAVED ->
+            Triple("Draft saved on this device · not yet in your account", Icons.Rounded.CheckCircle, Nafs.colors.success)
+        else -> Triple("Saving draft…", Icons.Rounded.Schedule, MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(14.dp))
+        Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun DictationRow(available: Boolean, enabled: Boolean, message: String?, onDictate: () -> Unit) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (available) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilledTonalButton(
+                    onClick = onDictate,
+                    enabled = enabled,
+                    shape = CircleShape,
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = Nafs.colors.reflect.copy(alpha = if (Nafs.colors.isDark) 0.16f else 0.12f),
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+                ) {
+                    Icon(Icons.Rounded.Mic, contentDescription = null, tint = Nafs.colors.reflect, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Dictate", style = MaterialTheme.typography.labelLarge)
+                }
+                Text("Speak, and the words are added to your notes.", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = muted)
+            }
+        }
+        message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = muted) }
+    }
+}
+
+/** Notes from an earlier day that were never saved: readable and selectable so nothing is silently lost. */
+@Composable
+private fun PreviousDraftCard(draft: CheckInDraft, onDiscard: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val day = runCatching { LocalDate.parse(draft.date) }.getOrNull()
+        ?.format(DateTimeFormatter.ofPattern("EEEE, d MMMM", Locale.ENGLISH)) ?: draft.date
+    NafsCard(borderColor = Nafs.colors.warning.copy(alpha = 0.4f), contentPadding = PaddingValues(16.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+            NafsIconBadge(Icons.Rounded.History, Nafs.colors.warning, size = 36.dp, iconSize = 18.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Unsaved notes from $day", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "The day ended before they were saved. Copy anything you want to keep, then discard them.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        SelectionContainer {
+            Column(
+                Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small).background(scheme.surfaceContainerHigh).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                draft.tasks.forEach { task ->
+                    Text("${if (task.done) "✓" else "•"} ${task.text}", style = MaterialTheme.typography.bodyMedium)
+                }
+                draft.newTask.takeIf(String::isNotBlank)?.let { Text("• $it", style = MaterialTheme.typography.bodyMedium) }
+                draft.eveningText?.takeIf(String::isNotBlank)?.let { notes ->
+                    if (draft.tasks.isNotEmpty()) Spacer(Modifier.height(4.dp))
+                    Text(notes, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        TextButton(onClick = onDiscard) { Text("Discard these notes") }
     }
 }
 

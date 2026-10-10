@@ -2,6 +2,7 @@ package com.ahmad.nafs.ui.tasks
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ahmad.nafs.core.reminders.ReminderPreferences
 import com.ahmad.nafs.core.reminders.TaskReminderScheduler
 import com.ahmad.nafs.core.tasks.CreateTaskIntent
 import com.ahmad.nafs.core.tasks.EditTaskIntent
@@ -14,6 +15,7 @@ import com.ahmad.nafs.core.time.AccountDate
 import com.ahmad.nafs.domain.tasks.TaskDraftValidator
 import com.ahmad.nafs.domain.tasks.TaskPeriod
 import com.ahmad.nafs.domain.tasks.TaskPeriodType
+import com.ahmad.nafs.domain.tasks.TaskReminderPlanner
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -32,6 +34,8 @@ data class TaskDraftState(
     val note: String = "",
     val priority: TaskPriority = TaskPriority.MEDIUM,
     val dueTime: String = "",
+    /** A later day for a new daily task; null keeps it in the current period (today). */
+    val plannedDate: LocalDate? = null,
     val requestId: String? = null,
 )
 
@@ -41,6 +45,8 @@ data class TaskUiState(
     val today: LocalDate = LocalDate.now(ZoneOffset.UTC),
     val selectedType: TaskPeriodType = TaskPeriodType.DAILY,
     val tasks: List<NafsTask> = emptyList(),
+    /** A load has succeeded at least once, so a later one is a refresh rather than a first load. */
+    val hasLoaded: Boolean = false,
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
     val isOffline: Boolean = false,
@@ -52,18 +58,28 @@ data class TaskUiState(
     val isSaving: Boolean = false,
     val formError: String? = null,
     val pendingTaskIds: Set<String> = emptySet(),
+    /** How long before a due time this device reminds; null when task reminders are switched off. */
+    val reminderLeadMinutes: Int? = TaskReminderPlanner.DEFAULT_LEAD_MINUTES,
+    val isSearching: Boolean = false,
+    val searchQuery: String = "",
 )
 
 sealed interface TaskUiEvent {
     data class Deleted(val taskId: String, val title: String) : TaskUiEvent
 
     data object RequestNotificationPermission : TaskUiEvent
+
+    /** A short confirmation of where a planned or moved task went. */
+    data class Notice(val message: String) : TaskUiEvent
 }
+
+private data class TaskLoadKey(val userId: String, val timezone: String, val today: LocalDate)
 
 @HiltViewModel
 class TaskViewModel @Inject constructor(
     private val repository: TaskRepository,
     private val reminderScheduler: TaskReminderScheduler,
+    private val reminderPreferences: ReminderPreferences,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(TaskUiState())
     val uiState: StateFlow<TaskUiState> = _uiState.asStateFlow()
@@ -71,42 +87,57 @@ class TaskViewModel @Inject constructor(
     private val eventChannel = Channel<TaskUiEvent>(capacity = Channel.BUFFERED)
     val events = eventChannel.receiveAsFlow()
 
+    private val loads = LoadGate<TaskLoadKey>()
+
+    /** Tasks changed here while a load was in flight: the load's older copy must not overwrite them. */
+    private val changedDuringLoad = mutableSetOf<String>()
+
     fun initialize(userId: String, timezone: String) {
         if (_uiState.value.userId == userId && _uiState.value.timezone == timezone) return
-        val today = runCatching { AccountDate.today(timezone) }
-            .getOrElse { LocalDate.now(ZoneOffset.UTC) }
-        _uiState.value = TaskUiState(userId = userId, timezone = timezone, today = today)
+        _uiState.value = TaskUiState(userId = userId, timezone = timezone, today = accountToday(timezone))
         refresh()
     }
 
     fun refresh() {
         val current = _uiState.value
         val userId = current.userId ?: return
-        if (current.isRefreshing) return
-        val today = runCatching { AccountDate.today(current.timezone) }
-            .getOrElse { LocalDate.now(ZoneOffset.UTC) }
+        val timezone = current.timezone
+        val today = accountToday(timezone)
+        val key = TaskLoadKey(userId, timezone, today)
+        // Opening the screen asks twice (initialize, then the resume effect); one load answers both.
+        if (loads.isRunning(key)) return
+        changedDuringLoad.clear()
         _uiState.update {
             it.copy(
                 today = today,
-                isLoading = it.tasks.isEmpty(),
-                isRefreshing = it.tasks.isNotEmpty(),
+                isLoading = !it.hasLoaded,
+                isRefreshing = it.hasLoaded,
                 loadError = null,
                 actionError = null,
             )
         }
-        viewModelScope.launch {
-            when (val result = repository.load(userId, today)) {
+        loads.launch(viewModelScope, key) {
+            val result = repository.load(userId, today)
+            if (_uiState.value.userId != userId) return@launch
+            when (result) {
                 is TaskLoadResult.Success -> {
                     _uiState.update {
                         it.copy(
-                            tasks = result.tasks,
+                            tasks = mergeLoaded(
+                                loaded = result.tasks,
+                                local = it.tasks,
+                                keepLocal = changedDuringLoad + it.pendingTaskIds,
+                                id = NafsTask::id,
+                            ),
+                            hasLoaded = true,
                             isLoading = false,
                             isRefreshing = false,
                             isOffline = result.isOffline,
                             loadError = null,
                         )
                     }
-                    reminderScheduler.reconcile(userId, result.tasks, current.timezone)
+                    // Every loaded task goes to the scheduler, so days planned ahead keep their reminders.
+                    reminderScheduler.reconcile(userId, _uiState.value.tasks, timezone)
                 }
                 is TaskLoadResult.Failure -> _uiState.update {
                     it.copy(
@@ -132,18 +163,21 @@ class TaskViewModel @Inject constructor(
     }
 
     fun openCreate() {
+        val lead = reminderLead()
         _uiState.update {
             it.copy(
                 showCreateDialog = true,
                 editingTaskId = null,
                 draft = TaskDraftState(),
                 formError = null,
+                reminderLeadMinutes = lead,
             )
         }
     }
 
     fun openEdit(task: NafsTask) {
         if (task.id in _uiState.value.pendingTaskIds) return
+        val lead = reminderLead()
         _uiState.update {
             it.copy(
                 selectedType = task.type,
@@ -156,6 +190,7 @@ class TaskViewModel @Inject constructor(
                     dueTime = task.dueTime.orEmpty(),
                 ),
                 formError = null,
+                reminderLeadMinutes = lead,
             )
         }
     }
@@ -180,26 +215,26 @@ class TaskViewModel @Inject constructor(
 
     fun setDueTime(value: String) = updateDraft { copy(dueTime = value, requestId = null) }
 
+    fun setPlannedDate(value: LocalDate?) = updateDraft { copy(plannedDate = value, requestId = null) }
+
     fun save() {
         val current = _uiState.value
         val userId = current.userId ?: return
         if (current.isSaving) return
-        val titleError = TaskDraftValidator.titleError(current.draft.title)
-        val dueTimeError = TaskDraftValidator.dueTimeError(
-            current.selectedType,
-            current.draft.dueTime,
-        )
-        val validationError = titleError ?: dueTimeError
+        val isNew = current.editingTaskId == null
+        // The account's day at the moment of saving, so "today" is right even if the sheet stayed open overnight.
+        val today = accountToday(current.timezone)
+        val plannedDate = current.draft.plannedDate
+            ?.takeIf { isNew && current.selectedType == TaskPeriodType.DAILY && it != today }
+        val validationError = TaskDraftValidator.titleError(current.draft.title)
+            ?: TaskDraftValidator.dueTimeError(current.selectedType, current.draft.dueTime)
+            ?: TaskDraftValidator.plannedDateError(current.selectedType, plannedDate, today)
         if (validationError != null) {
             _uiState.update { it.copy(formError = validationError) }
             return
         }
 
-        val requestId = if (current.editingTaskId == null) {
-            current.draft.requestId ?: UUID.randomUUID().toString()
-        } else {
-            null
-        }
+        val requestId = if (isNew) current.draft.requestId ?: UUID.randomUUID().toString() else null
         _uiState.update {
             it.copy(
                 isSaving = true,
@@ -229,16 +264,17 @@ class TaskViewModel @Inject constructor(
                     type = current.selectedType,
                     priority = current.draft.priority,
                     dueTime = current.draft.dueTime,
-                    today = current.today,
+                    today = today,
+                    plannedDate = plannedDate,
                 ),
             )
             when (result) {
                 is TaskActionResult.Success -> {
                     val task = result.task
-                    val tasks = if (task == null) _uiState.value.tasks else _uiState.value.tasks.upsert(task)
+                    task?.let { changedDuringLoad += it.id }
                     _uiState.update {
                         it.copy(
-                            tasks = tasks,
+                            tasks = if (task == null) it.tasks else it.tasks.upsert(task),
                             isSaving = false,
                             isOffline = false,
                             showCreateDialog = false,
@@ -246,9 +282,13 @@ class TaskViewModel @Inject constructor(
                             draft = TaskDraftState(),
                         )
                     }
-                    reminderScheduler.reconcile(userId, tasks, current.timezone)
+                    reminderScheduler.reconcile(userId, _uiState.value.tasks, current.timezone)
                     if (task?.type == TaskPeriodType.DAILY && task.dueTime != null) {
                         eventChannel.send(TaskUiEvent.RequestNotificationPermission)
+                    }
+                    if (isNew && task != null && TaskPeriod.isUpcoming(task.type, task.periodDate, today)) {
+                        val day = TaskLabels.periodPhrase(task.type, task.periodDate, today)
+                        eventChannel.send(TaskUiEvent.Notice("Planned for $day. It's listed under Upcoming."))
                     }
                 }
                 is TaskActionResult.Failure -> _uiState.update {
@@ -266,19 +306,45 @@ class TaskViewModel @Inject constructor(
             when (val result = repository.setCompleted(userId, task.id, completed)) {
                 is TaskActionResult.Success -> {
                     val updated = result.task
-                    val tasks = if (updated == null) {
-                        _uiState.value.tasks
-                    } else {
-                        _uiState.value.tasks.upsert(updated)
-                    }
+                    changedDuringLoad += task.id
                     _uiState.update {
                         it.copy(
-                            tasks = tasks,
+                            tasks = if (updated == null) it.tasks else it.tasks.upsert(updated),
                             pendingTaskIds = it.pendingTaskIds - task.id,
                             isOffline = false,
                         )
                     }
-                    reminderScheduler.reconcile(userId, tasks, _uiState.value.timezone)
+                    reminderScheduler.reconcile(userId, _uiState.value.tasks, _uiState.value.timezone)
+                }
+                is TaskActionResult.Failure -> actionFailed(task.id, result.message)
+            }
+        }
+    }
+
+    /** Moves an open task to the period containing [periodDate], for example a missed task to today. */
+    fun moveTask(task: NafsTask, periodDate: LocalDate) {
+        val state = _uiState.value
+        val userId = state.userId ?: return
+        if (task.id in state.pendingTaskIds || task.isCompleted) return
+        setPending(task.id, pending = true)
+        viewModelScope.launch {
+            when (val result = repository.reschedule(userId, task.id, periodDate)) {
+                is TaskActionResult.Success -> {
+                    val moved = result.task
+                    changedDuringLoad += task.id
+                    _uiState.update {
+                        it.copy(
+                            tasks = if (moved == null) it.tasks else it.tasks.upsert(moved),
+                            pendingTaskIds = it.pendingTaskIds - task.id,
+                            isOffline = false,
+                        )
+                    }
+                    // The due time now falls on another day, so its reminder moves with it.
+                    reminderScheduler.reconcile(userId, _uiState.value.tasks, _uiState.value.timezone)
+                    if (moved != null && moved.periodDate != task.periodDate) {
+                        val where = TaskLabels.periodPhrase(moved.type, moved.periodDate, _uiState.value.today)
+                        eventChannel.send(TaskUiEvent.Notice("Moved “${moved.title}” to $where."))
+                    }
                 }
                 is TaskActionResult.Failure -> actionFailed(task.id, result.message)
             }
@@ -292,6 +358,7 @@ class TaskViewModel @Inject constructor(
         viewModelScope.launch {
             when (val result = repository.softDelete(userId, task.id)) {
                 is TaskActionResult.Success -> {
+                    changedDuringLoad += task.id
                     _uiState.update {
                         it.copy(
                             tasks = it.tasks.filterNot { item -> item.id == task.id },
@@ -314,24 +381,26 @@ class TaskViewModel @Inject constructor(
             when (val result = repository.restore(userId, taskId)) {
                 is TaskActionResult.Success -> {
                     val restored = result.task
-                    val tasks = if (restored == null) {
-                        _uiState.value.tasks
-                    } else {
-                        _uiState.value.tasks.upsert(restored)
-                    }
+                    changedDuringLoad += taskId
                     _uiState.update {
                         it.copy(
-                            tasks = tasks,
+                            tasks = if (restored == null) it.tasks else it.tasks.upsert(restored),
                             pendingTaskIds = it.pendingTaskIds - taskId,
                             isOffline = false,
                         )
                     }
-                    reminderScheduler.reconcile(userId, tasks, _uiState.value.timezone)
+                    reminderScheduler.reconcile(userId, _uiState.value.tasks, _uiState.value.timezone)
                 }
                 is TaskActionResult.Failure -> actionFailed(taskId, result.message)
             }
         }
     }
+
+    fun openSearch() = _uiState.update { it.copy(isSearching = true) }
+
+    fun setSearchQuery(value: String) = _uiState.update { it.copy(searchQuery = value) }
+
+    fun closeSearch() = _uiState.update { it.copy(isSearching = false, searchQuery = "") }
 
     fun dismissActionError() {
         _uiState.update { it.copy(actionError = null) }
@@ -345,6 +414,13 @@ class TaskViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    /** The device's task reminder setting, read when the editor opens so a change in Profile shows at once. */
+    private fun reminderLead(): Int? {
+        val userId = _uiState.value.userId ?: return TaskReminderPlanner.DEFAULT_LEAD_MINUTES
+        val options = reminderPreferences.read(userId)
+        return options.taskLeadMinutes.takeIf { options.tasks }
     }
 
     private fun updateDraft(transform: TaskDraftState.() -> TaskDraftState) {
@@ -371,20 +447,19 @@ class TaskViewModel @Inject constructor(
     }
 }
 
+/** Current and grace-period tasks of the selected type: the current period first, open before done. */
 fun visibleTasksFor(state: TaskUiState): List<NafsTask> {
     val currentKey = TaskPeriod.key(state.selectedType, state.today)
     return state.tasks
         .asSequence()
         .filter { it.type == state.selectedType }
         .filter { TaskPeriod.isCurrentOrGrace(it.type, it.periodDate, state.today) }
-        .sortedWith(
-            compareBy<NafsTask> { if (it.periodDate == currentKey) 0 else 1 }
-                .thenBy { it.priority.rank }
-                .thenBy { if (it.isCompleted) 1 else 0 }
-                .thenByDescending { it.createdAt },
-        )
+        .sortedWith(compareBy<NafsTask> { if (it.periodDate == currentKey) 0 else 1 }.then(taskListOrder))
         .toList()
 }
+
+private fun accountToday(timezone: String): LocalDate =
+    runCatching { AccountDate.today(timezone) }.getOrElse { LocalDate.now(ZoneOffset.UTC) }
 
 private fun List<NafsTask>.upsert(task: NafsTask): List<NafsTask> =
     filterNot { it.id == task.id } + task

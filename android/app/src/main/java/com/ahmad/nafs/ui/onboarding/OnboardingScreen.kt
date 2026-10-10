@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Insights
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.WbTwilight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -342,6 +343,32 @@ private fun habitSummary(habit: StarterHabit): String {
 
 // ─── Pinned actions ──────────────────────────────────────────────────────────
 
+/** Finishing setup saves this phone's timezone, so the last step says which one before it happens. */
+@Composable
+private fun TimezoneNote(label: String) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .background(scheme.surfaceContainerHigh)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .semantics(mergeDescendants = true) {},
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        NafsIconBadge(Icons.Rounded.Schedule, Nafs.colors.tasks, size = 34.dp, iconSize = 18.dp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Your days follow $label", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Taken from this phone. You can change it in Profile.",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 @Composable
 private fun BottomActions(state: OnboardingUiState, onNext: () -> Unit, onFinish: () -> Unit) {
     Column(
@@ -356,6 +383,7 @@ private fun BottomActions(state: OnboardingUiState, onNext: () -> Unit, onFinish
             NafsPrimaryButton("Choose starter habits", onClick = onNext, modifier = Modifier.fillMaxWidth())
         } else {
             state.errorMessage?.let { NafsBanner(it, kind = NafsBannerKind.ERROR) }
+            state.deviceTimezoneLabel?.let { TimezoneNote(it) }
             val count = state.selectedHabitKeys.size
             val points = starterHabits.filter { it.key in state.selectedHabitKeys }.sumOf(StarterHabit::scoreWeight)
             Text(

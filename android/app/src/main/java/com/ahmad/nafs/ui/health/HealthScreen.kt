@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.FitnessCenter
 import androidx.compose.material.icons.rounded.MonitorWeight
 import androidx.compose.material.icons.rounded.Mood
@@ -89,7 +90,10 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ahmad.nafs.core.health.CustomHealthMetric
 import com.ahmad.nafs.core.health.CustomMetricType
+import com.ahmad.nafs.core.health.HealthGoalRules
 import com.ahmad.nafs.core.health.HealthMealRules
+import com.ahmad.nafs.core.health.HealthTrendMetric
+import com.ahmad.nafs.core.health.SleepFeedback
 import com.ahmad.nafs.core.health.SleepSession
 import com.ahmad.nafs.core.health.SleepSessionRules
 import com.ahmad.nafs.core.profile.UserProfile
@@ -113,8 +117,10 @@ import com.ahmad.nafs.ui.components.NafsSectionTitle
 import com.ahmad.nafs.ui.components.NafsSpace
 import com.ahmad.nafs.ui.components.NafsTextField
 import com.ahmad.nafs.ui.theme.Nafs
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun HealthRoute(
@@ -129,7 +135,7 @@ fun HealthRoute(
     HealthScreen(
         state = state,
         actions = HealthActions(
-            onRefresh = viewModel::refresh,
+            onRefresh = viewModel::reload,
             onDismissMessage = viewModel::dismissMessage,
             onReloadAfterConflict = viewModel::reloadAfterConflict,
             onOpenProfileEditor = viewModel::openProfileEditor,
@@ -172,6 +178,19 @@ fun HealthRoute(
             onMoodChange = viewModel::setMood,
             onNotesChange = viewModel::setNotes,
             onSaveLog = viewModel::saveLog,
+            onSelectDate = viewModel::selectDate,
+            onConfirmDiscard = viewModel::confirmDiscardChanges,
+            onCancelDiscard = viewModel::cancelDiscardChanges,
+            onSkipBaseline = viewModel::skipBaseline,
+            onOpenGoalEditor = viewModel::openGoalEditor,
+            onCloseGoalEditor = viewModel::closeGoalEditor,
+            onWaterGoalChange = viewModel::adjustWaterGoal,
+            onStepsGoalChange = viewModel::adjustStepsGoal,
+            onResetGoals = viewModel::resetGoalInputs,
+            onSaveGoals = viewModel::saveGoals,
+            onTrendRangeChange = viewModel::setTrendRange,
+            onTrendMetricChange = viewModel::setTrendMetric,
+            onRetryTrends = viewModel::retryTrends,
         ),
     )
 }
@@ -217,6 +236,19 @@ internal data class HealthActions(
     val onMoodChange: (Int?) -> Unit = {},
     val onNotesChange: (String) -> Unit = {},
     val onSaveLog: () -> Unit = {},
+    val onSelectDate: (LocalDate) -> Unit = {},
+    val onConfirmDiscard: () -> Unit = {},
+    val onCancelDiscard: () -> Unit = {},
+    val onSkipBaseline: () -> Unit = {},
+    val onOpenGoalEditor: () -> Unit = {},
+    val onCloseGoalEditor: () -> Unit = {},
+    val onWaterGoalChange: (amount: Int) -> Unit = {},
+    val onStepsGoalChange: (amount: Int) -> Unit = {},
+    val onResetGoals: () -> Unit = {},
+    val onSaveGoals: () -> Unit = {},
+    val onTrendRangeChange: (days: Int) -> Unit = {},
+    val onTrendMetricChange: (HealthTrendMetric) -> Unit = {},
+    val onRetryTrends: () -> Unit = {},
 )
 
 @Composable
@@ -236,8 +268,9 @@ internal fun HealthScreen(
         else -> HealthContent(state, actions, listState)
     }
 
-    // While the baseline is missing it is collected inline by the setup card instead of a dialog.
-    if (state.showProfileEditor && !state.setupRequired) HealthProfileDialog(state, actions)
+    if (state.showProfileEditor) HealthProfileDialog(state, actions)
+    if (state.showGoalEditor) HealthGoalDialog(state, actions)
+    state.pendingDate?.let { date -> DiscardChangesDialog(state, date, actions) }
     CustomMetricDialogs(state, actions)
 }
 
@@ -254,9 +287,8 @@ private fun HealthContent(state: HealthUiState, actions: HealthActions, listStat
         if (state.isOffline) item {
             NafsBanner("Showing cached health data. Saving requires a connection.", kind = NafsBannerKind.OFFLINE)
         }
-        if (state.hasSaveConflict) item { ConflictCard(state.isRefreshing, actions.onReloadAfterConflict) }
-        // During setup the baseline error sits inside the setup card, next to the fields it is about.
-        if (!state.setupRequired) state.actionError?.let { error ->
+        if (state.hasSaveConflict) item { ConflictCard(state, actions.onReloadAfterConflict) }
+        state.actionError?.let { error ->
             item { NafsBanner(error, kind = NafsBannerKind.ERROR, onDismiss = actions.onDismissMessage) }
         }
         state.loadError?.let { error ->
@@ -266,50 +298,72 @@ private fun HealthContent(state: HealthUiState, actions: HealthActions, listStat
             item { NafsBanner(note, kind = NafsBannerKind.SUCCESS, onDismiss = actions.onDismissMessage) }
         }
 
-        if (state.setupRequired) {
-            item { BaselineSetupCard(state, actions) }
+        item(key = "days") { HealthDaySwitcher(state, actions.onSelectDate) }
+        item(key = "hero") { DayHero(state) }
+        if (state.showBaselineSetup) {
+            item(key = "baseline-setup") { BaselineSetupCard(state, actions) }
         } else {
-            item { TodayHero(state) }
-            item { BaselineCard(state, actions.onOpenProfileEditor) }
-            item {
-                NafsSectionTitle(
-                    "Today's check-in",
-                    Modifier.padding(top = 16.dp),
-                    supporting = "Save partial data; only track what is useful.",
-                )
-            }
-            item {
-                TileRow {
-                    WaterTile(state.waterGlasses, actions.onWaterChange, Modifier.weight(1f).fillMaxHeight())
-                    StepsTile(state.steps, actions.onStepsChange, Modifier.weight(1f).fillMaxHeight())
-                }
-            }
-            item {
-                TileRow {
-                    ExerciseTile(
-                        done = state.exerciseDone,
-                        minutes = state.exerciseMinutes,
-                        onDoneChange = actions.onExerciseDoneChange,
-                        onMinutesChange = actions.onExerciseMinutesChange,
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                    )
-                    WeightTile(
-                        weight = state.dailyWeight,
-                        baselineKg = state.profile?.weightKg,
-                        onWeightChange = actions.onDailyWeightChange,
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                    )
-                }
-            }
-            item { SleepCard(state, actions) }
-            item { MoodCard(state.mood, actions.onMoodChange) }
-            healthMealItems(state, actions)
-            customMetricItems(state, actions)
-            item { NotesCard(state.notes, actions.onNotesChange) }
-            item { SaveCheckIn(state, actions.onSaveLog) }
+            item(key = "baseline") { BaselineCard(state, actions.onOpenProfileEditor) }
         }
+        item(key = "checkin-title") { CheckInTitle(state, actions.onOpenGoalEditor) }
+        when {
+            state.isLoadingDay -> item(key = "day-loading") { HealthDayLoading(state) }
+            state.dayError != null -> item(key = "day-error") { HealthDayError(state, state.dayError.orEmpty(), actions.onRefresh) }
+            else -> {
+                item {
+                    TileRow {
+                        WaterTile(state.waterGlasses, state.goals.waterGlasses, actions.onWaterChange, Modifier.weight(1f).fillMaxHeight())
+                        StepsTile(state.steps, state.goals.steps, actions.onStepsChange, Modifier.weight(1f).fillMaxHeight())
+                    }
+                }
+                item {
+                    TileRow {
+                        ExerciseTile(
+                            done = state.exerciseDone,
+                            minutes = state.exerciseMinutes,
+                            onDoneChange = actions.onExerciseDoneChange,
+                            onMinutesChange = actions.onExerciseMinutesChange,
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                        WeightTile(
+                            weight = state.dailyWeight,
+                            latestKg = state.profile?.weightKg,
+                            onWeightChange = actions.onDailyWeightChange,
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                    }
+                }
+                item { SleepCard(state, actions) }
+                item { MoodCard(state.mood, actions.onMoodChange) }
+                healthMealItems(state, actions)
+                customMetricItems(state, actions)
+                item { NotesCard(state.notes, actions.onNotesChange) }
+                item { SaveCheckIn(state, actions.onSaveLog) }
+            }
+        }
+        healthTrendItems(state, actions)
 
         item { HealthDisclaimer() }
+    }
+}
+
+@Composable
+private fun CheckInTitle(state: HealthUiState, onOpenGoals: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 16.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        NafsSectionTitle(
+            "${HealthDays.possessive(state.selectedDate, state.today)} check-in",
+            Modifier.weight(1f),
+            supporting = if (state.isToday) {
+                "Save partial data; only track what is useful."
+            } else {
+                "Editing ${HealthDays.long(state.selectedDate)}. Save partial data."
+            },
+        )
+        HealthPillButton(text = "Goals", icon = Icons.Rounded.Flag, tint = Nafs.colors.health, onClick = onOpenGoals)
     }
 }
 
@@ -338,8 +392,10 @@ private fun HealthHeader(state: HealthUiState, onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun ConflictCard(isRefreshing: Boolean, onReload: () -> Unit) {
+private fun ConflictCard(state: HealthUiState, onReload: () -> Unit) {
     val c = Nafs.colors
+    val isRefreshing = state.isRefreshing
+    val day = if (state.isToday) "Today's health entry" else "The entry for ${HealthDays.long(state.selectedDate)}"
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
@@ -350,7 +406,7 @@ private fun ConflictCard(isRefreshing: Boolean, onReload: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(Icons.Rounded.WarningAmber, contentDescription = null, modifier = Modifier.size(20.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Today's health entry changed elsewhere", style = MaterialTheme.typography.titleSmall)
+                    Text("$day changed elsewhere", style = MaterialTheme.typography.titleSmall)
                     Text(
                         "Another device saved after this screen loaded. Reload the latest entry before saving so " +
                             "neither version is silently overwritten.",
@@ -385,7 +441,6 @@ private fun ConflictCard(isRefreshing: Boolean, onReload: () -> Unit) {
 
 // ─── Baseline (setup and BMI) ────────────────────────────────────────────────
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BaselineSetupCard(state: HealthUiState, actions: HealthActions) {
     val c = Nafs.colors
@@ -398,11 +453,10 @@ private fun BaselineSetupCard(state: HealthUiState, actions: HealthActions) {
         ) {
             NafsIconBadge(Icons.Rounded.Favorite, c.health, size = 64.dp, iconSize = 30.dp)
             Spacer(Modifier.height(4.dp))
-            NafsEyebrow("Before your first check-in", color = c.health)
-            Text("Set your health baseline", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+            NafsEyebrow("Optional baseline", color = c.health)
+            Text("Add height and weight for BMI", style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
             Text(
-                "Height and current weight are used only for your personal BMI baseline. " +
-                    "Add them once before saving daily health signals.",
+                "They're used only for your personal BMI. You can log every other signal below without them.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = scheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -410,7 +464,7 @@ private fun BaselineSetupCard(state: HealthUiState, actions: HealthActions) {
         }
         Spacer(Modifier.height(22.dp))
         BaselineFields(state, actions)
-        state.actionError?.let { error ->
+        state.profileError?.let { error ->
             Spacer(Modifier.height(10.dp))
             Text(error, color = scheme.error, style = MaterialTheme.typography.bodySmall)
         }
@@ -422,17 +476,13 @@ private fun BaselineSetupCard(state: HealthUiState, actions: HealthActions) {
             loading = state.isSavingProfile,
             icon = Icons.Rounded.Check,
         )
-        Spacer(Modifier.height(22.dp))
-        NafsDivider(inset = 0.dp)
-        Spacer(Modifier.height(18.dp))
-        NafsEyebrow("Then, each day, log what helps")
-        Spacer(Modifier.height(10.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            NafsPill("Water", color = c.tasks, icon = Icons.Rounded.WaterDrop)
-            NafsPill("Sleep", color = c.deen, icon = Icons.Rounded.Bedtime)
-            NafsPill("Meals", color = c.reflect, icon = Icons.Rounded.Restaurant)
-            NafsPill("Movement", color = c.habits, icon = Icons.Rounded.FitnessCenter)
-            NafsPill("Mood", color = c.reflect, icon = Icons.Rounded.Mood)
+        Spacer(Modifier.height(6.dp))
+        TextButton(
+            onClick = actions.onSkipBaseline,
+            enabled = !state.isSavingProfile,
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+        ) {
+            Text("Skip for now", style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -479,16 +529,17 @@ private fun BaselineCard(state: HealthUiState, onEdit: () -> Unit) {
             NafsIconBadge(Icons.Rounded.MonitorWeight, Nafs.colors.gold, size = 40.dp, iconSize = 20.dp)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("Body baseline", style = MaterialTheme.typography.titleMedium)
+                // The profile weight follows the latest saved daily weight, as on the web.
                 Text(
                     "${profile?.heightCm?.let(::formatHealthNumber) ?: "—"} cm  ·  " +
-                        "${profile?.weightKg?.let(::formatHealthNumber) ?: "—"} kg",
+                        "${profile?.weightKg?.let(::formatHealthNumber) ?: "—"} kg latest",
                     style = MaterialTheme.typography.bodySmall,
                     color = muted,
                 )
             }
             HealthPillButton(
-                text = "Edit",
-                icon = Icons.Rounded.Edit,
+                text = if (state.baselineMissing) "Add" else "Edit",
+                icon = if (state.baselineMissing) Icons.Rounded.Add else Icons.Rounded.Edit,
                 tint = MaterialTheme.colorScheme.primary,
                 onClick = onEdit,
                 enabled = profile != null,
@@ -518,7 +569,7 @@ private fun BaselineCard(state: HealthUiState, onEdit: () -> Unit) {
                 color = muted,
             )
         } else {
-            Text("BMI appears once height and weight are saved.", style = MaterialTheme.typography.bodyMedium, color = muted)
+            Text(bmiMissingText(profile?.heightCm, profile?.weightKg), style = MaterialTheme.typography.bodyMedium, color = muted)
         }
         Spacer(Modifier.height(10.dp))
         Text(
@@ -527,6 +578,13 @@ private fun BaselineCard(state: HealthUiState, onEdit: () -> Unit) {
             color = muted,
         )
     }
+}
+
+private fun bmiMissingText(heightCm: Double?, weightKg: Double?): String = when {
+    heightCm == null && weightKg == null -> "Add height and weight to see BMI"
+    heightCm == null -> "Add your height to see BMI"
+    weightKg == null -> "Add your weight to see BMI"
+    else -> "Add height and weight to see BMI"
 }
 
 private enum class BmiBand(val label: String, val from: Double, val to: Double) {
@@ -603,18 +661,24 @@ private fun healthSignals(state: HealthUiState): List<HealthSignal> = listOf(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TodayHero(state: HealthUiState) {
+private fun DayHero(state: HealthUiState) {
     val c = Nafs.colors
     val signals = healthSignals(state)
-    val logged = signals.count { it.logged }
-    val headline = when (logged) {
-        0 -> "A fresh page. Log only what helps."
-        signals.size -> "Every signal logged today."
+    val logged = if (state.isLoadingDay || state.dayError != null) 0 else signals.count { it.logged }
+    val headline = when {
+        state.isLoadingDay -> "Opening ${HealthDays.long(state.selectedDate)}…"
+        state.dayError != null -> "This day couldn't be opened."
+        logged == 0 -> "A fresh page. Log only what helps."
+        logged == signals.size -> if (state.isToday) "Every signal logged today." else "Every signal logged."
         else -> "Good start. Log what's useful, skip the rest."
     }
     val status = when {
+        state.isLoadingDay -> "Loading saved entry…"
+        state.dayError != null -> "Retry below"
         state.isSaving -> "Saving…"
-        state.log == null -> "Not saved yet today"
+        state.hasChanges -> "Unsaved changes"
+        state.log == null && state.isOffline -> "Nothing for this day is saved on this device"
+        state.log == null -> if (state.isToday) "Not saved yet today" else "Nothing saved for this day yet"
         else -> "Saved · update any time"
     }
     NafsHeroSurface {
@@ -633,7 +697,7 @@ private fun TodayHero(state: HealthUiState) {
                     }
                 }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    NafsEyebrow("Today's check-in", color = c.heroGold)
+                    NafsEyebrow("${HealthDays.possessive(state.selectedDate, state.today)} check-in", color = c.heroGold)
                     Text(headline, style = MaterialTheme.typography.titleLarge, color = c.onHero)
                     Text(status, style = MaterialTheme.typography.labelMedium, color = c.onHeroMuted)
                 }
@@ -700,21 +764,28 @@ private fun MetricTile(
 }
 
 @Composable
-private fun WaterTile(glasses: Int, onChange: (Int) -> Unit, modifier: Modifier) {
+private fun WaterTile(glasses: Int, goal: Int, onChange: (Int) -> Unit, modifier: Modifier) {
     val tint = Nafs.colors.tasks
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val met = glasses >= goal
     MetricTile("Water", Icons.Rounded.WaterDrop, tint, modifier) {
         Row {
             Text("$glasses", Modifier.alignByBaseline(), style = MaterialTheme.typography.headlineMedium)
             Text(
-                if (glasses == 1) "glass" else "glasses",
+                "/ $goal ${if (goal == 1) "glass" else "glasses"}",
                 Modifier.alignByBaseline().padding(start = 6.dp),
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = muted,
             )
         }
         Spacer(Modifier.height(10.dp))
-        GlassDots(glasses, tint)
-        Spacer(Modifier.height(14.dp))
+        GlassDots(glasses, goal, tint)
+        Spacer(Modifier.height(8.dp))
+        GoalCaption(
+            text = if (met) "Goal reached" else "${goal - glasses} to your goal",
+            met = met,
+        )
+        Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             WaterStepButton(
                 icon = Icons.Rounded.Remove,
@@ -738,21 +809,30 @@ private fun WaterTile(glasses: Int, onChange: (Int) -> Unit, modifier: Modifier)
     }
 }
 
-/** One small cup per glass for the first eight, then a count. */
+/** A quiet progress line under a goal tile; a check only when the goal is met. */
 @Composable
-private fun GlassDots(glasses: Int, tint: Color) {
+private fun GoalCaption(text: String, met: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (met) Icon(Icons.Rounded.Check, contentDescription = null, tint = Nafs.colors.success, modifier = Modifier.size(14.dp))
+        Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+    }
+}
+
+/** One small cup per glass of the goal, eight to a row, then a count of any extra glasses. */
+@Composable
+private fun GlassDots(glasses: Int, goal: Int, tint: Color) {
     val empty = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
     val cup = RoundedCornerShape(topStart = 2.dp, topEnd = 2.dp, bottomStart = 5.dp, bottomEnd = 5.dp)
-    Row(
-        modifier = Modifier.clearAndSetSemantics {},
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        repeat(WATER_DOTS) { index ->
-            Box(Modifier.size(width = 9.dp, height = 14.dp).clip(cup).background(if (index < glasses) tint else empty))
-        }
-        if (glasses > WATER_DOTS) {
-            Text("+${glasses - WATER_DOTS}", style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
+    Column(Modifier.clearAndSetSemantics {}, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        (0 until goal).chunked(WATER_DOTS).forEachIndexed { row, indices ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                indices.forEach { index ->
+                    Box(Modifier.size(width = 9.dp, height = 14.dp).clip(cup).background(if (index < glasses) tint else empty))
+                }
+                if (row == (goal - 1) / WATER_DOTS && glasses > goal) {
+                    Text("+${glasses - goal}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+            }
         }
     }
 }
@@ -793,7 +873,7 @@ private fun WaterStepButton(
 }
 
 @Composable
-private fun StepsTile(steps: String, onStepsChange: (String) -> Unit, modifier: Modifier) {
+private fun StepsTile(steps: String, goal: Int, onStepsChange: (String) -> Unit, modifier: Modifier) {
     val tint = Nafs.colors.habits
     val count = steps.trim().toIntOrNull()?.coerceAtLeast(0)
     MetricTile("Steps", Icons.AutoMirrored.Rounded.DirectionsWalk, tint, modifier) {
@@ -805,12 +885,15 @@ private fun StepsTile(steps: String, onStepsChange: (String) -> Unit, modifier: 
             keyboardType = KeyboardType.Number,
         )
         Spacer(Modifier.height(14.dp))
-        NafsProgressBar((count ?: 0) / STEP_REFERENCE.toFloat(), color = tint, height = 6.dp)
+        NafsProgressBar(HealthGoalRules.progress(count?.toDouble(), goal.toDouble()), color = tint, height = 6.dp)
         Spacer(Modifier.height(6.dp))
-        Text(
-            if (count == null) "Reference: 10k steps" else "${count.coerceAtMost(1_000_000) * 100L / STEP_REFERENCE}% of a 10k day",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        GoalCaption(
+            text = when {
+                count == null -> "Goal ${formatCount(goal)}"
+                count >= goal -> "Goal reached"
+                else -> "${HealthGoalRules.percent(count, goal)}% of ${formatCount(goal)}"
+            },
+            met = count != null && count >= goal,
         )
     }
 }
@@ -852,18 +935,18 @@ private fun ExerciseTile(
 }
 
 @Composable
-private fun WeightTile(weight: String, baselineKg: Double?, onWeightChange: (String) -> Unit, modifier: Modifier) {
-    MetricTile("Today's weight", Icons.Rounded.MonitorWeight, Nafs.colors.gold, modifier) {
+private fun WeightTile(weight: String, latestKg: Double?, onWeightChange: (String) -> Unit, modifier: Modifier) {
+    MetricTile("Weight", Icons.Rounded.MonitorWeight, Nafs.colors.gold, modifier) {
         HealthNumberInput(
             value = weight,
             onValueChange = onWeightChange,
             unit = "kg",
-            label = "Today's weight in kilograms",
+            label = "Weight in kilograms",
             keyboardType = KeyboardType.Decimal,
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            baselineKg?.let { "Baseline ${formatHealthNumber(it)} kg" } ?: "Optional",
+            latestKg?.let { "Latest ${formatHealthNumber(it)} kg · used for BMI" } ?: "Optional · used for BMI",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -890,6 +973,11 @@ private fun SleepCard(state: HealthUiState, actions: HealthActions) {
         legacy != null -> "Saved total: ${formatHealthNumber(legacy)} hours"
         else -> "Not recorded"
     }
+    val totalMinutes = when {
+        sessions.isNotEmpty() && total != null -> durations.filterNotNull().sum()
+        sessions.isEmpty() && legacy != null -> (legacy * 60.0).roundToInt()
+        else -> null
+    }
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingStart by rememberSaveable { mutableStateOf(true) }
 
@@ -902,6 +990,8 @@ private fun SleepCard(state: HealthUiState, actions: HealthActions) {
             }
             HealthPillButton(text = "Add", icon = Icons.Rounded.Add, tint = tint, onClick = actions.onAddSleepSession)
         }
+        Spacer(Modifier.height(12.dp))
+        SleepGuide(HealthGoalRules.sleepFeedback(totalMinutes))
         if (sessions.isNotEmpty()) {
             Spacer(Modifier.height(14.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -954,6 +1044,35 @@ private fun SleepCard(state: HealthUiState, actions: HealthActions) {
                 },
             )
         }
+    }
+}
+
+/** Gentle feedback against the 7–9 hour guide most adults are advised to aim for. */
+@Composable
+private fun SleepGuide(feedback: SleepFeedback) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val text = when (feedback) {
+        SleepFeedback.NONE -> "Guide: 7–9 hours for most adults."
+        SleepFeedback.IN_RANGE -> "Within the 7–9 hour guide."
+        SleepFeedback.SHORT -> "Under the 7–9 hour guide. An earlier night or a short nap may help."
+        SleepFeedback.LONG -> "Over 9 hours. Fine now and then; notice if it happens often."
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(
+            if (feedback == SleepFeedback.IN_RANGE) Icons.Rounded.Check else Icons.Rounded.Bedtime,
+            contentDescription = null,
+            tint = if (feedback == SleepFeedback.IN_RANGE) Nafs.colors.success else muted,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(text, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = muted)
     }
 }
 
@@ -1182,17 +1301,23 @@ private fun NotesCard(notes: String, onNotesChange: (String) -> Unit) {
 @Composable
 private fun SaveCheckIn(state: HealthUiState, onSave: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        val day = when {
+            state.isToday -> "today's"
+            state.selectedDate == state.today.minusDays(1) -> "yesterday's"
+            else -> HealthDays.possessive(state.selectedDate, state.today)
+        }
         NafsPrimaryButton(
-            text = if (state.log == null) "Save today's check-in" else "Update today's check-in",
+            text = if (state.log == null) "Save $day check-in" else "Update $day check-in",
             onClick = onSave,
             modifier = Modifier.fillMaxWidth(),
-            enabled = !state.setupRequired && !state.isOffline && !state.hasSaveConflict,
+            enabled = state.canSave,
             loading = state.isSaving,
             icon = Icons.Rounded.Check,
         )
         val hint = when {
             state.isOffline -> "Saving needs a connection."
             state.hasSaveConflict -> "Reload the latest entry above before saving."
+            state.hasChanges -> "You have unsaved changes."
             else -> null
         }
         hint?.let {
@@ -1227,12 +1352,12 @@ private fun HealthProfileDialog(state: HealthUiState, actions: HealthActions) {
     AlertDialog(
         onDismissRequest = actions.onCloseProfileEditor,
         icon = { Icon(Icons.Rounded.Favorite, contentDescription = null, tint = Nafs.colors.health) },
-        title = { Text("Edit health baseline") },
+        title = { Text(if (state.baselineMissing) "Add height and weight" else "Edit health baseline") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Height and current weight are used only for your personal BMI baseline.")
+                Text("Height and current weight are used only for your personal BMI. Saving a daily weight also updates it.")
                 BaselineFields(state, actions)
-                state.actionError?.let { error ->
+                state.profileError?.let { error ->
                     Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -1331,11 +1456,12 @@ internal fun HealthPillButton(
     }
 }
 
+internal fun formatCount(value: Int): String = String.format(Locale.ENGLISH, "%,d", value)
+
 internal fun formatHealthNumber(value: Double): String =
     if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
 
 private val HeaderDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE, d MMMM", Locale.ENGLISH)
-private const val STEP_REFERENCE = 10_000
 private const val WATER_DOTS = 8
 private const val BMI_SCALE_MIN = 15.0
 private const val BMI_SCALE_MAX = 40.0

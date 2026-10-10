@@ -40,6 +40,8 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Healing
@@ -48,7 +50,9 @@ import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.Inventory2
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.MailOutline
+import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,15 +70,22 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -91,6 +102,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ahmad.nafs.core.coach.CoachConversation
 import com.ahmad.nafs.core.coach.CoachMessage
 import com.ahmad.nafs.core.coach.CoachRules
+import com.ahmad.nafs.core.coach.CoachText
 import com.ahmad.nafs.core.plans.RecoveryRules
 import com.ahmad.nafs.core.profile.UserProfile
 import com.ahmad.nafs.core.time.ServerTimestamp
@@ -105,6 +117,7 @@ import com.ahmad.nafs.ui.components.NafsHeroSurface
 import com.ahmad.nafs.ui.components.NafsIconBadge
 import com.ahmad.nafs.ui.components.NafsSpace
 import com.ahmad.nafs.ui.components.NafsTopBar
+import com.ahmad.nafs.ui.checkin.rememberSpeechInput
 import com.ahmad.nafs.ui.reports.ReportText
 import com.ahmad.nafs.ui.reports.ReportTextKind
 import com.ahmad.nafs.ui.reports.ReportTextLine
@@ -112,17 +125,31 @@ import com.ahmad.nafs.ui.theme.Nafs
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.delay
+
+private const val COPIED_MILLIS = 2_000L
 
 @Composable
 fun CoachRoute(profile: UserProfile, onBack: () -> Unit, onOpenReports: () -> Unit, onOpenLetters: () -> Unit,
     onOpenRecovery: () -> Unit, onPlanFromChat: (CoachConversation) -> Unit, viewModel: CoachViewModel = hiltViewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     LaunchedEffect(profile.userId) { viewModel.initialize(profile.userId) }
     AccountDayRefreshEffects(profile.timezone, viewModel::refresh)
+    val speech = rememberSpeechInput(
+        prompt = "Speak your message",
+        onResult = viewModel::appendDictation,
+        onUnavailable = viewModel::voiceUnavailable,
+    )
     CoachScreen(state, onBack, onOpenReports, onOpenLetters, onOpenRecovery, {
         state.conversation?.takeIf { RecoveryRules.canUseChat(profile.userId, it) }?.let(onPlanFromChat)
     }, viewModel::reload, viewModel::newConversation,
-        viewModel::selectConversation, viewModel::updateDraft, viewModel::send, viewModel::keepMessageAsDraft)
+        viewModel::selectConversation, viewModel::updateDraft, viewModel::send, viewModel::keepMessageAsDraft,
+        onCopyReply = { reply -> copyPlainText(context, "Coach reply", CoachText.plain(reply)) },
+        onShareReply = { reply -> sharePlainText(context, "Share coach reply", CoachText.plain(reply)) },
+        voiceAvailable = speech.isAvailable,
+        onVoice = speech::start,
+    )
 }
 
 /** One row of the chat timeline, so the list and its auto-scroll agree on which row is last. */
@@ -193,8 +220,22 @@ internal fun CoachScreen(
     onDraft: (String) -> Unit,
     onSend: () -> Unit,
     onKeepDraft: () -> Unit,
+    /** Copies a reply as plain text; returns whether the clipboard accepted it, so "Copied" is never shown falsely. */
+    onCopyReply: (String) -> Boolean = { false },
+    /** Opens the share sheet for a reply; returns false when no app can receive it. */
+    onShareReply: (String) -> Boolean = { false },
+    voiceAvailable: Boolean = false,
+    onVoice: () -> Unit = {},
 ) {
     val listState = rememberLazyListState()
+    var copiedIndex by remember { mutableStateOf<Int?>(null) }
+    var replyActionError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(copiedIndex) {
+        if (copiedIndex != null) {
+            delay(COPIED_MILLIS)
+            copiedIndex = null
+        }
+    }
     val keyboard = LocalSoftwareKeyboardController.current
     val focus = LocalFocusManager.current
     val send = {
@@ -277,7 +318,26 @@ internal fun CoachScreen(
                         when (row) {
                             is ChatRow.Started -> StartedLabel(row.label)
                             is ChatRow.Bubble -> {
-                                if (row.message.role == "user") UserBubble(row.message.content) else CoachBubble(row.message.content)
+                                if (row.message.role == "user") {
+                                    UserBubble(row.message.content)
+                                } else {
+                                    CoachBubble(
+                                        text = row.message.content,
+                                        copied = copiedIndex == row.index,
+                                        onCopy = {
+                                            if (onCopyReply(row.message.content)) {
+                                                copiedIndex = row.index
+                                                replyActionError = null
+                                            } else {
+                                                replyActionError = "This reply couldn't be copied. Select the text to copy it instead."
+                                            }
+                                        },
+                                        onShare = {
+                                            replyActionError = if (onShareReply(row.message.content)) null
+                                            else "No app on this phone can share text."
+                                        },
+                                    )
+                                }
                             }
                             ChatRow.Pending -> PendingMessage(state, onRetry = send, onReload = onReload, onKeepDraft = onKeepDraft)
                             ChatRow.Typing -> TypingBubble()
@@ -308,7 +368,15 @@ internal fun CoachScreen(
             }
         }
 
-        CoachComposer(state, composerEnabled, onDraft, send)
+        replyActionError?.let { error ->
+            NafsBanner(
+                error,
+                Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                kind = NafsBannerKind.WARNING,
+                onDismiss = { replyActionError = null },
+            )
+        }
+        CoachComposer(state, composerEnabled, onDraft, send, voiceAvailable, onVoice)
     }
 }
 
@@ -372,21 +440,58 @@ private fun UserBubble(text: String) {
 }
 
 @Composable
-private fun CoachBubble(text: String) {
+private fun CoachBubble(text: String, copied: Boolean, onCopy: () -> Unit, onShare: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(end = 28.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.Top,
     ) {
         CoachAvatar()
-        Surface(
-            shape = RoundedCornerShape(topStart = 6.dp, topEnd = 22.dp, bottomEnd = 22.dp, bottomStart = 22.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            border = BorderStroke(1.dp, Nafs.colors.cardBorder),
-        ) {
-            SelectionContainer { CoachRichText(text, Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Surface(
+                shape = RoundedCornerShape(topStart = 6.dp, topEnd = 22.dp, bottomEnd = 22.dp, bottomStart = 22.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                border = BorderStroke(1.dp, Nafs.colors.cardBorder),
+            ) {
+                SelectionContainer { CoachRichText(text, Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                ReplyAction(
+                    icon = if (copied) Icons.Rounded.Check else Icons.Rounded.ContentCopy,
+                    label = if (copied) "Copied" else "Copy",
+                    description = if (copied) "Reply copied" else "Copy reply",
+                    highlighted = copied,
+                    onClick = onCopy,
+                )
+                ReplyAction(
+                    icon = Icons.Rounded.Share,
+                    label = "Share",
+                    description = "Share reply",
+                    highlighted = false,
+                    onClick = onShare,
+                )
+            }
         }
+    }
+}
+
+/** A quiet text action under a coach reply; 48 dp tall to keep the tap target comfortable. */
+@Composable
+private fun ReplyAction(icon: ImageVector, label: String, description: String, highlighted: Boolean, onClick: () -> Unit) {
+    val tint = if (highlighted) Nafs.colors.success else MaterialTheme.colorScheme.onSurfaceVariant
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.heightIn(min = 48.dp).semantics {
+            contentDescription = description
+            liveRegion = LiveRegionMode.Polite
+        },
+        contentPadding = PaddingValues(horizontal = 10.dp),
+        colors = ButtonDefaults.textButtonColors(contentColor = tint),
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -630,7 +735,14 @@ private fun PromptTile(icon: ImageVector, prompt: String, enabled: Boolean, modi
 // ─── Composer ────────────────────────────────────────────────────────────────
 
 @Composable
-private fun CoachComposer(state: CoachUiState, enabled: Boolean, onDraft: (String) -> Unit, onSend: () -> Unit) {
+private fun CoachComposer(
+    state: CoachUiState,
+    enabled: Boolean,
+    onDraft: (String) -> Unit,
+    onSend: () -> Unit,
+    voiceAvailable: Boolean,
+    onVoice: () -> Unit,
+) {
     val scheme = MaterialTheme.colorScheme
     val hint = if (state.draft.isNotBlank()) CoachRules.messageError(state.conversation?.messages.orEmpty(), state.draft) else null
     Surface(Modifier.fillMaxWidth(), color = scheme.surfaceContainerLow) {
@@ -648,6 +760,15 @@ private fun CoachComposer(state: CoachUiState, enabled: Boolean, onDraft: (Strin
                     enabled = enabled,
                     placeholder = { Text(if (state.pending != null) "Waiting on your last message" else "Message your coach") },
                     maxLines = 5,
+                    trailingIcon = if (voiceAvailable) {
+                        {
+                            IconButton(onClick = onVoice, enabled = enabled) {
+                                Icon(Icons.Rounded.Mic, contentDescription = "Dictate a message")
+                            }
+                        }
+                    } else {
+                        null
+                    },
                     shape = RoundedCornerShape(26.dp),
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -668,6 +789,14 @@ private fun CoachComposer(state: CoachUiState, enabled: Boolean, onDraft: (Strin
                     Text(hint.orEmpty(), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = scheme.error)
                     Text("${state.draft.length}/4,000", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
                 }
+            }
+            state.voiceMessage?.let { message ->
+                Text(
+                    message,
+                    Modifier.fillMaxWidth().padding(start = 28.dp, end = 28.dp, bottom = 10.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = scheme.onSurfaceVariant,
+                )
             }
         }
     }

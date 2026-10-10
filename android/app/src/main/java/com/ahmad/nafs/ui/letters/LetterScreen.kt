@@ -1,6 +1,7 @@
 package com.ahmad.nafs.ui.letters
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,17 +43,23 @@ import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -60,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -69,6 +77,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ahmad.nafs.core.letters.FutureLetter
+import com.ahmad.nafs.core.letters.LetterDates
 import com.ahmad.nafs.core.letters.LetterDraft
 import com.ahmad.nafs.core.letters.LetterReplyRules
 import com.ahmad.nafs.core.letters.LetterRules
@@ -94,6 +103,8 @@ import com.ahmad.nafs.ui.components.NafsTopBar
 import com.ahmad.nafs.ui.reports.ReportMarkdown
 import com.ahmad.nafs.ui.theme.Nafs
 import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Composable
 fun LetterRoute(profile: UserProfile, onBack: () -> Unit, viewModel: LetterViewModel = hiltViewModel()) {
@@ -148,6 +159,7 @@ internal data class LetterActions(
 internal fun LettersScreen(state: LetterUiState, profile: UserProfile, actions: LetterActions) {
     var confirmDiscard by rememberSaveable(profile.userId) { mutableStateOf(false) }
     var confirmSaved by rememberSaveable(profile.userId) { mutableStateOf(false) }
+    var pickingDate by rememberSaveable(profile.userId) { mutableStateOf(false) }
     val draft = state.draft
     val selected = state.selected
     val replyAvailable = selected?.let { letter ->
@@ -193,7 +205,9 @@ internal fun LettersScreen(state: LetterUiState, profile: UserProfile, actions: 
             if (state.isLoading) item(key = "loading") { LoadingRow() }
             when (state.screen) {
                 LetterScreen.ARCHIVE -> archiveItems(state, profile.timezone, actions)
-                LetterScreen.EDITOR -> draft?.let { editing -> editorItems(state, editing, profile.timezone, actions) }
+                LetterScreen.EDITOR -> draft?.let { editing ->
+                    editorItems(state, editing, profile.timezone, actions, onPickDate = { pickingDate = true })
+                }
                 LetterScreen.DETAIL -> selected?.let { letter -> detailItems(state, letter, profile.timezone, replyAvailable) }
             }
         }
@@ -237,6 +251,15 @@ internal fun LettersScreen(state: LetterUiState, profile: UserProfile, actions: 
         title = { Text("Discard this draft?") }, text = { Text("This removes the unsaved letter from this device.") },
         confirmButton = { TextButton(onClick = { confirmDiscard = false; actions.onDiscardDraft() }, enabled = state.canEdit) { Text("Discard") } },
         dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("Keep writing") } },
+    )
+    if (pickingDate && draft != null && state.screen == LetterScreen.EDITOR) RevisitDatePicker(
+        today = state.today,
+        targetDate = draft.targetDate,
+        onDismiss = { pickingDate = false },
+        onConfirm = { date ->
+            pickingDate = false
+            actions.onTargetDateChange(date.toString())
+        },
     )
     if (confirmSaved) AlertDialog(
         onDismissRequest = { confirmSaved = false },
@@ -381,7 +404,13 @@ private fun ResumeCard(icon: ImageVector, title: String, body: String, enabled: 
 
 // ─── Editor ──────────────────────────────────────────────────────────────────
 
-private fun LazyListScope.editorItems(state: LetterUiState, draft: LetterDraft, timezone: String, actions: LetterActions) {
+private fun LazyListScope.editorItems(
+    state: LetterUiState,
+    draft: LetterDraft,
+    timezone: String,
+    actions: LetterActions,
+    onPickDate: () -> Unit,
+) {
     item(key = "prompt") {
         Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             NafsIconBadge(Icons.Rounded.Lightbulb, Nafs.colors.reflect, size = 36.dp, iconSize = 18.dp)
@@ -421,14 +450,7 @@ private fun LazyListScope.editorItems(state: LetterUiState, draft: LetterDraft, 
                     )
                 }
             }
-            NafsTextField(
-                value = draft.targetDate,
-                onValueChange = actions.onTargetDateChange,
-                label = "Revisit date (YYYY-MM-DD)",
-                leadingIcon = Icons.Rounded.CalendarMonth,
-                supportingText = "After today · $timezone",
-                enabled = state.canEdit,
-            )
+            RevisitDateField(draft.targetDate, timezone, enabled = state.canEdit, onClick = onPickDate)
         }
     }
     if (state.pending == null) LetterRules.error(draft, state.today)?.let { hint ->
@@ -440,6 +462,75 @@ private fun LazyListScope.editorItems(state: LetterUiState, draft: LetterDraft, 
         }
     }
 }
+
+/** The chosen revisit day as a tappable field; the calendar opens in a dialog. */
+@Composable
+private fun RevisitDateField(targetDate: String, timezone: String, enabled: Boolean, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val date = runCatching { LocalDate.parse(targetDate) }.getOrNull()
+    val shown = date?.format(REVISIT_FORMAT) ?: "Choose a date"
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Surface(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Revisit date, $shown. Choose another date" },
+            shape = RoundedCornerShape(16.dp),
+            color = scheme.surfaceContainer,
+            border = BorderStroke(1.dp, scheme.outlineVariant),
+        ) {
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.CalendarMonth, contentDescription = null, tint = if (enabled) scheme.primary else scheme.onSurfaceVariant)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Revisit date", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+                    Text(shown, style = MaterialTheme.typography.titleMedium, color = if (date == null) scheme.primary else scheme.onSurface)
+                }
+                Text("Change", style = MaterialTheme.typography.labelLarge, color = if (enabled) scheme.primary else scheme.onSurfaceVariant)
+            }
+        }
+        Text(
+            "Any day after today · $timezone",
+            Modifier.padding(start = 16.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = scheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Material date picker limited to days after the account's today. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RevisitDatePicker(today: LocalDate, targetDate: String, onDismiss: () -> Unit, onConfirm: (LocalDate) -> Unit) {
+    val selectable = remember(today) { FutureDates(today) }
+    val pickerState = rememberDatePickerState(
+        initialSelectedDateMillis = LetterDates.toPickerMillis(LetterDates.initial(targetDate, today)),
+        yearRange = today.year..(today.year + LetterDates.MAX_YEARS_AHEAD),
+        selectableDates = selectable,
+    )
+    val chosen = pickerState.selectedDateMillis?.let(LetterDates::fromPickerMillis)?.takeIf { LetterDates.selectable(it, today) }
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { chosen?.let(onConfirm) }, enabled = chosen != null) { Text("Choose date") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    ) {
+        DatePicker(state = pickerState)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+private class FutureDates(private val today: LocalDate) : SelectableDates {
+    override fun isSelectableDate(utcTimeMillis: Long): Boolean =
+        LetterDates.selectable(LetterDates.fromPickerMillis(utcTimeMillis), today)
+
+    override fun isSelectableYear(year: Int): Boolean = LetterDates.selectableYear(year, today)
+}
+
+private val REVISIT_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy", Locale.ENGLISH)
 
 @Composable
 private fun EditorActions(state: LetterUiState, actions: LetterActions, onDiscard: () -> Unit) {

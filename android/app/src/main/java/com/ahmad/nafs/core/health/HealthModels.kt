@@ -300,9 +300,25 @@ sealed interface HealthLoadResult {
     data class Failure(val message: String) : HealthLoadResult
 }
 
+sealed interface HealthRangeResult {
+    /** Saved days inside the requested range, oldest first. Offline results contain only days cached on this device. */
+    data class Success(val logs: List<HealthLog>, val isOffline: Boolean) : HealthRangeResult
+
+    data class Failure(val message: String) : HealthRangeResult
+}
+
 sealed interface HealthActionResult {
     data class ProfileSaved(val profile: HealthProfile) : HealthActionResult
-    data class LogSaved(val log: HealthLog) : HealthActionResult
+
+    /**
+     * [profile] is the account profile after a saved weight became the latest weigh-in (so BMI follows it).
+     * [profileWeightFailed] means the day was saved but that profile update did not go through.
+     */
+    data class LogSaved(
+        val log: HealthLog,
+        val profile: HealthProfile? = null,
+        val profileWeightFailed: Boolean = false,
+    ) : HealthActionResult
     data object LogConflict : HealthActionResult
     data class Failure(val message: String) : HealthActionResult
 }
