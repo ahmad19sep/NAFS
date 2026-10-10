@@ -54,6 +54,11 @@ describe('shiftDate — pure calendar arithmetic', () => {
 })
 
 describe('todayInTZ — the account decides what day it is', () => {
+  it('dates a stored review timestamp in the account zone across UTC midnight', () => {
+    const instant = new Date('2026-10-09T20:30:00Z')
+    expect(todayInTZ('Asia/Karachi', instant)).toBe('2026-10-10')
+    expect(todayInTZ('America/Los_Angeles', instant)).toBe('2026-10-09')
+  })
   it('returns a well-formed date for a valid zone', () => {
     expect(todayInTZ('Asia/Karachi')).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     expect(todayInTZ('America/Los_Angeles')).toMatch(/^\d{4}-\d{2}-\d{2}$/)

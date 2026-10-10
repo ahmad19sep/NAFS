@@ -45,3 +45,16 @@ public/worker-*.js
 web-legacy/node_modules/
 web-legacy/.next/
 web-legacy/out/
+
+/.idea/
+/.legacy-lint-install.log
+/.legacy-lint-check.log
+/web-legacy/.next-build-check.log
+/output/android/*.apk
+/output/android/*.aab
+.env*
+!/web-legacy/.env.local.example
+/supabase/.temp/
+
+# Local deployment evidence and scripts (kept out of the public repo)
+/output/

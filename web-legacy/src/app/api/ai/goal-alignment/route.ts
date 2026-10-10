@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/request'
+import { ApiRouteError } from '@/lib/api-errors'
+import { saveAdvice } from '@/lib/advice-save'
+import { readFaithPreference, adviceSystem } from '@/lib/advice-faith'
 import { aiStructured } from '@/lib/ai'
 import { GOAL_ALIGNMENT_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
 
@@ -74,9 +77,8 @@ function fmtChallenges(rows: any[]) {
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { supabase, user } = await authenticateRequest(req)
+    const faithEnabled = await readFaithPreference(supabase, user.id)
 
     const { goalId } = await req.json()
     if (!goalId) return NextResponse.json({ error: 'goalId required' }, { status: 400 })
@@ -134,7 +136,7 @@ Interests: ${(aboutMe.interests ?? []).join(', ') || '(none)'}
 
 USER'S LAST 7 DAYS OF ACTIVITY
 ──────────────────────────────
-Prayers: ${fmtPrayers(prayerLogs ?? [])}
+${faithEnabled ? `Prayers: ${fmtPrayers(prayerLogs ?? [])}` : ""}
 Habits:
 ${fmtHabits(habits ?? [], habitLogs ?? [])}
 Tasks (last 7 days): ${fmtTasks(tasks ?? [])}
@@ -146,11 +148,11 @@ Return JSON only.`
     // AI-01: the shape is checked at runtime, with one corrective retry, so a
     // malformed reply produces an explicit failure instead of a silent null.
     const result = await aiStructured<Omit<AlignmentResult, 'analyzed_at'>>(
-      prompt, GOAL_ALIGNMENT_SCHEMA, SYSTEM,
+      prompt, GOAL_ALIGNMENT_SCHEMA, adviceSystem(SYSTEM, faithEnabled),
     )
 
     if (!result.ok) {
-      return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
+      return NextResponse.json({ error: result.message, code: "generation_failed" }, { status: statusForAiFailure(result.code) })
     }
 
     const stored: AlignmentResult = {
@@ -161,11 +163,12 @@ Return JSON only.`
       analyzed_at: new Date().toISOString(),
     }
 
-    await supabase.from('goals').update({ ai_alignment: stored }).eq('id', goalId).eq('user_id', user.id)
+    await saveAdvice(supabase, 'goals', user.id, goalId, { ai_alignment: stored }, req.headers.get("x-nafs-request-id"))
 
     return NextResponse.json({ alignment: stored })
   } catch (err: any) {
+    if (err instanceof ApiRouteError) return NextResponse.json({ error: err.message, code: err.code }, { status: err.status })
     console.error('goal-alignment error:', err)
-    return NextResponse.json({ error: err?.message || 'Failed' }, { status: 500 })
+    return NextResponse.json({ error: 'Advice is temporarily unavailable. Please retry.', code: 'unavailable' }, { status: 500 })
   }
 }

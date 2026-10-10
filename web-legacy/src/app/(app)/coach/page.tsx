@@ -4,7 +4,7 @@ import CoachClient from './CoachClient'
 import { deepProvider } from '@/lib/ai'
 
 export default async function CoachPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const user = await requireUser(supabase)
 
   // The latest growth review on its own, so it is found however many
@@ -35,7 +35,7 @@ export default async function CoachPage() {
     .from('ai_conversations')
     .select('*')
     .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
+    .order('updated_at', { ascending: false })
     .limit(1)
     .single()
 

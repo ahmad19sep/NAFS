@@ -1,53 +1,45 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { createServerClient } from '@supabase/ssr'
+﻿import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
+import { authenticateRequest } from '@/lib/supabase/request'
+import { ApiRouteError } from '@/lib/api-errors'
 
-/**
- * Permanently delete the signed-in user.
- *
- * 1. Always: removes their public.users row (which CASCADEs to habits, tasks,
- *    goals, challenges, prayer_logs, etc — all their data).
- * 2. If SUPABASE_SERVICE_ROLE_KEY is set in env: also removes their auth.users
- *    row, so they can't log back in. Otherwise the auth user remains (they could
- *    sign in again, but they'd start fresh with no data).
- * 3. Signs them out.
- */
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const body = await req.json().catch(() => ({}))
-  if (body?.confirm !== 'DELETE') {
-    return NextResponse.json({ error: 'Type DELETE to confirm' }, { status: 400 })
-  }
-
-  // Step 1: delete the public.users row (cascades to all child tables)
-  const { error: rowErr } = await supabase.from('users').delete().eq('id', user.id)
-  if (rowErr) {
-    console.error('[delete-account] row delete failed:', rowErr.message)
-    return NextResponse.json({ error: rowErr.message }, { status: 500 })
-  }
-
-  // Step 2: if service role key is configured, also delete the auth user
-  const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
-  const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
-  let authDeleted = false
-  if (SERVICE_KEY && SUPABASE_URL) {
-    try {
-      const admin = createServerClient(SUPABASE_URL, SERVICE_KEY, {
-        cookies: { getAll: () => [], setAll: () => {} },
-      })
-      const { error: authErr } = await admin.auth.admin.deleteUser(user.id)
-      if (authErr) console.warn('[delete-account] auth delete failed:', authErr.message)
-      else authDeleted = true
-    } catch (err: any) {
-      console.warn('[delete-account] auth delete threw:', err?.message)
+  try {
+    const { user } = await authenticateRequest(req)
+    const body = await req.json().catch(() => null)
+    if (body?.confirm !== 'DELETE') throw new ApiRouteError(400, 'invalid_request', 'Type DELETE to confirm.')
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!url || !key) throw new ApiRouteError(503, 'not_configured', 'Account deletion is not configured. Your account is unchanged.')
+    const admin = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
+    // Paths come from the verified identity and Storage, never the request body.
+    for (const bucket of ['avatars', 'challenge-photos', 'log-photos', 'screentime-shots']) {
+      const cleanFolder = async (folder: string, depth = 0): Promise<void> => {
+        if (depth > 8) throw new ApiRouteError(503, 'unavailable', 'Unable to finish upload cleanup. Please contact support.')
+        for (let page = 0; page < 100; page++) {
+          const { data, error } = await admin.storage.from(bucket).list(folder, { limit: 100 })
+          if (error) {
+            if (/not found|does not exist/i.test(error.message)) return
+            throw new ApiRouteError(503, 'unavailable', 'Unable to finish account deletion. Please retry.')
+          }
+          if (!data?.length) return
+          for (const item of data.filter(item => !item.id)) await cleanFolder(`${folder}/${item.name}`, depth + 1)
+          const paths = data.filter(item => item.id).map(item => `${folder}/${item.name}`)
+          if (paths.length) {
+            const { error: removeError } = await admin.storage.from(bucket).remove(paths)
+            if (removeError) throw new ApiRouteError(503, 'unavailable', 'Unable to finish account deletion. Please retry.')
+          }
+        }
+        throw new ApiRouteError(503, 'unavailable', 'Upload cleanup is incomplete. Please retry.')
+      }
+      await cleanFolder(user.id)
     }
+    // Deleting Auth cascades through public.users. Never delete only the profile.
+    const { error } = await admin.auth.admin.deleteUser(user.id)
+    if (error) throw new ApiRouteError(503, 'unavailable', 'Unable to finish account deletion. Please retry.')
+    return NextResponse.json({ ok: true, authDeleted: true })
+  } catch (error) {
+    if (error instanceof ApiRouteError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status })
+    return NextResponse.json({ error: 'Account deletion failed. Please retry.', code: 'unavailable' }, { status: 503 })
   }
-
-  // Step 3: sign out
-  await supabase.auth.signOut()
-
-  return NextResponse.json({ ok: true, authDeleted })
 }

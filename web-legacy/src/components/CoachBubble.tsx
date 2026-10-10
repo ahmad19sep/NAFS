@@ -67,7 +67,7 @@ export default function CoachBubble() {
         headers: { 'Content-Type': 'application/json' },
         // The route rebuilds the data context itself and reads the last
         // message as the question; it keeps only the recent turns.
-        body: JSON.stringify({ messages: next.slice(-8) }),
+        body: JSON.stringify({ messages: next.slice(-7) }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok || typeof data?.reply !== 'string') {

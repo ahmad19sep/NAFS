@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/request'
+import { ApiRouteError } from '@/lib/api-errors'
+import { saveAdvice } from '@/lib/advice-save'
+import { readFaithPreference, adviceSystem } from '@/lib/advice-faith'
 import { aiStructured } from '@/lib/ai'
 import { HEALTH_RECOMMENDATION_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
 import { computeBMI } from '@/lib/bmi'
@@ -75,11 +78,10 @@ function ageFrom(birth_date?: string): number | null {
   return age >= 0 && age < 150 ? age : null
 }
 
-export async function POST(_req: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { supabase, user } = await authenticateRequest(req)
+    const faithEnabled = await readFaithPreference(supabase, user.id)
 
     const { data: profile } = await supabase
       .from('users')
@@ -137,11 +139,11 @@ Now generate the personalized health plan as JSON.`
     // AI-01: the shape is checked at runtime, with one corrective retry, so a
     // malformed reply produces an explicit failure instead of a silent null.
     const result = await aiStructured<Omit<HealthRecommendation, 'generated_at'>>(
-      prompt, HEALTH_RECOMMENDATION_SCHEMA, SYSTEM,
+      prompt, HEALTH_RECOMMENDATION_SCHEMA, adviceSystem(SYSTEM, faithEnabled),
     )
 
     if (!result.ok) {
-      return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
+      return NextResponse.json({ error: result.message, code: "generation_failed" }, { status: statusForAiFailure(result.code) })
     }
 
     const stored: HealthRecommendation = {
@@ -152,12 +154,11 @@ Now generate the personalized health plan as JSON.`
       generated_at: new Date().toISOString(),
     }
 
-    await supabase.from('users')
-      .update({ ai_health_recommendation: stored })
-      .eq('id', user.id)
+    await saveAdvice(supabase, 'users', user.id, user.id, { ai_health_recommendation: stored }, req.headers.get("x-nafs-request-id"))
 
     return NextResponse.json({ recommendation: stored })
-  } catch {
+  } catch (error) {
+    if (error instanceof ApiRouteError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status })
     return NextResponse.json({ error: 'Could not generate a plan right now.' }, { status: 500 })
   }
 }

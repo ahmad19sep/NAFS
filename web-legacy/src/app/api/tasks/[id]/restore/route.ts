@@ -14,15 +14,15 @@ import { createClient } from '@/lib/supabase/server'
  * Reaching a soft-deleted row depends on the UPDATE policy from
  * task_soft_delete.sql, which deliberately does not filter on deleted_at.
  */
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient()
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { data, error } = await supabase
     .from('tasks')
     .update({ deleted_at: null, updated_at: new Date().toISOString() })
-    .eq('id', params.id).eq('user_id', user.id)
+    .eq('id', (await params).id).eq('user_id', user.id)
     .select().maybeSingle()
 
   if (error) {

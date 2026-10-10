@@ -4,7 +4,7 @@ import TasksClient from './TasksClient'
 import { todayString } from '@/lib/utils'
 
 export default async function TasksPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const user = await requireUser(supabase)
 
   // Pull enough history to render 30 days daily, 12 weeks weekly, 6 months monthly.

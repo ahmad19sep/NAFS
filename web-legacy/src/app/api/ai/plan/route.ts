@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/request'
 import { aiStructured } from '@/lib/ai'
-import { PLAN_SCHEMA, RECOVERY_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
-import { normalizeProposal, normalizeRecovery, type PlanProposal, type RecoveryPlan } from '@/lib/plan'
-import { buildCoachContext } from '@/lib/coach-context'
+import { PLAN_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
+import { normalizeProposal, type PlanProposal } from '@/lib/plan'
+import { ApiRouteError } from '@/lib/api-errors'
+import { generateRecovery, intentSource, planningRequestId } from '@/lib/recovery-planning'
+import { withStrictIdempotency } from '@/lib/strict-idempotency'
 
 // A structured plan is slow on purpose: the model reasons before it writes,
 // and a rich context makes it reason longer. Measured live at 36.6s, so the
@@ -76,64 +78,32 @@ A step whose fields are written flat, beside "kind" instead of inside the block,
 Reply with a single valid JSON value and nothing else.`
 
 export async function POST(req: NextRequest) {
+  const headers = { 'Cache-Control': 'no-store' }
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-    const body = await req.json().catch(() => ({}))
-    const intent = typeof body?.intent === 'string' ? body.intent.trim() : ''
-    const mode: 'plan' | 'overcome' = body?.mode === 'overcome' ? 'overcome' : 'plan'
-
-    if (intent.length < 3) {
-      return NextResponse.json({
-        error: mode === 'overcome' ? 'Say what you have slipped into.' : 'Say what you want to do.',
-      }, { status: 400 })
+    const auth = await authenticateRequest(req)
+    const text = await req.text()
+    if (text.length > 12_000) throw new ApiRouteError(413, 'invalid_request', 'This planning request is too long.')
+    let body: any
+    try { body = JSON.parse(text) } catch { throw new ApiRouteError(400, 'invalid_request', 'Provide a valid planning request.') }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ApiRouteError(400, 'invalid_request', 'Provide a valid planning request.')
+    const source = intentSource(body.intent)
+    const requestId = planningRequestId(body.request_id, auth.mode === 'bearer')
+    const mode = body.mode === 'overcome' ? 'overcome' : 'plan'
+    if (mode === 'overcome') return NextResponse.json(await generateRecovery(auth, source, requestId, RECOVERY_SYSTEM), { headers })
+    const generate = async () => {
+      const result = await aiStructured<PlanProposal>(JSON.stringify({ intent: 'intent' in source ? source.intent : '' }), PLAN_SCHEMA, PLAN_SYSTEM)
+      if (!result.ok) throw new ApiRouteError(statusForAiFailure(result.code), result.code === 'not_configured' ? 'not_configured' : 'ai_unavailable', 'The coach could not propose an item right now.')
+      const checked = normalizeProposal(result.data)
+      if (!checked.ok) throw new ApiRouteError(502, 'invalid_response', 'The coach returned an unusable proposal. Try rephrasing.')
+      return { proposal: checked.proposal }
     }
-    if (intent.length > 500) {
-      return NextResponse.json({ error: 'Keep it under 500 characters.' }, { status: 400 })
+    if (requestId) {
+      const { result, replayed } = await withStrictIdempotency(auth.supabase, auth.user.id, requestId, { operation: 'single-plan-v1', source }, generate)
+      return NextResponse.json({ ...result, replayed, request_id: requestId }, { headers })
     }
-
-    // The user's text is data, not instructions — fenced so the model reads
-    // it as content rather than a directive.
-    const fenced = `The person wrote:\n"""\n${intent}\n"""`
-
-    if (mode === 'overcome') {
-      // Ground the plan in what the app knows. The full coach context is
-      // built once and only the slices that bear on a slip are passed on.
-      const { context } = await buildCoachContext(supabase, user.id)
-      const c = context as any
-      const known = {
-        existing_habits: (c.last_30_days?.habits ?? []).map((h: any) => h.name),
-        repeated_misses: c.last_30_days?.repeated_misses ?? [],
-        possible_causes: c.last_30_days?.possible_causes ?? [],
-        phone_screen_time: c.last_30_days?.phone_screen_time,
-        sleep: c.last_30_days?.health?.sleep,
-        coach_memory: c.coach_memory,
-      }
-      const prompt =
-        `${fenced}\n\nWHAT THE APP KNOWS (real; absent means unknown, not zero):\n${JSON.stringify(known, null, 1)}\n\nProduce the JSON plan.`
-
-      const result = await aiStructured<RecoveryPlan>(prompt, RECOVERY_SCHEMA, RECOVERY_SYSTEM)
-      if (!result.ok) {
-        return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
-      }
-      const checked = normalizeRecovery(result.data)
-      if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 502 })
-
-      return NextResponse.json({ recovery: checked.plan, dropped: checked.dropped })
-    }
-
-    const result = await aiStructured<PlanProposal>(`${fenced}\n\nProduce the JSON proposal.`, PLAN_SCHEMA, PLAN_SYSTEM)
-    if (!result.ok) {
-      return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
-    }
-
-    const checked = normalizeProposal(result.data)
-    if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 502 })
-
-    return NextResponse.json({ proposal: checked.proposal })
-  } catch {
-    return NextResponse.json({ error: 'Could not plan that right now.' }, { status: 500 })
+    return NextResponse.json(await generate(), { headers })
+  } catch (error) {
+    if (error instanceof ApiRouteError) return NextResponse.json({ code: error.code, error: error.message }, { status: error.status, headers })
+    return NextResponse.json({ code: 'backend_unavailable', error: 'The plan could not be confirmed. Retry the same request.' }, { status: 503, headers })
   }
 }

@@ -42,18 +42,17 @@ function dueMinutes(due_time: string): number {
 }
 
 export async function GET(req: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET
+  if (!cronSecret || req.headers.get('authorization') !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
   if (process.env.VAPID_EMAIL && process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
     webpush.setVapidDetails(
       process.env.VAPID_EMAIL,
       process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
       process.env.VAPID_PRIVATE_KEY
     )
-  }
-
-  // Verify this is a legitimate Vercel Cron call
-  const authHeader = req.headers.get('authorization')
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   // SAFE-02: no session on a cron request, so the cookie client reads

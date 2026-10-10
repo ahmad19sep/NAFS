@@ -27,6 +27,7 @@ create index if not exists app_notes_user_idx
   on public.app_notes (user_id, status, created_at desc);
 
 alter table public.app_notes enable row level security;
+grant select, insert, update, delete on public.app_notes to authenticated;
 
 drop policy if exists "app_notes: own rows" on public.app_notes;
 create policy "app_notes: own rows" on public.app_notes

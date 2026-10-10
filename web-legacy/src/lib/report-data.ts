@@ -10,13 +10,14 @@
  * growth review compares a week and a month) queries once and builds twice.
  */
 
-import type { createClient } from '@/lib/supabase/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import type { CustomMetric } from '@/lib/health'
 import type { ReportInput, ReportPeriod } from '@/lib/report'
 
-type Db = ReturnType<typeof createClient>
+type Db = Pick<SupabaseClient, 'from'>
 
 export interface ReportRows {
+  unavailable?: string[]
   profile: any
   habits: any[]
   habitLogs: any[]
@@ -61,6 +62,8 @@ export async function fetchReportRows(
     results[i].status === 'fulfilled' ? ((results[i] as any).value?.data ?? null) : null
 
   return {
+    unavailable: ['profile', 'habits', 'habitLogs', 'prayerLogs', 'tasks', 'healthLogs', 'quranLogs', 'checkins', 'challenges', 'challengeCheckins', 'goals']
+      .filter((_, i) => results[i].status === 'rejected' || (results[i].status === 'fulfilled' && (results[i] as PromiseFulfilledResult<any>).value?.error)),
     profile: data(0),
     habits: data(1) ?? [],
     habitLogs: data(2) ?? [],

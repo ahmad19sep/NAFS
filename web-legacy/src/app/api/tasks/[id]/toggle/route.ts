@@ -14,8 +14,8 @@ import { resolveTaskStatus } from '@/lib/task-status'
  * repeating the request is harmless. The flip is kept only as a fallback for
  * a client that sends no body, so an older build keeps working.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const supabase = createClient()
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: task } = await supabase
     .from('tasks').select('status')
-    .eq('id', params.id).eq('user_id', user.id).single()
+    .eq('id', (await params).id).eq('user_id', user.id).single()
   if (!task) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const decision = resolveTaskStatus(task.status, body?.completed)
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // replay cannot move completed_at and make the task look freshly done.
   if (!decision.changed) {
     const { data } = await supabase
-      .from('tasks').select().eq('id', params.id).eq('user_id', user.id).single()
+      .from('tasks').select().eq('id', (await params).id).eq('user_id', user.id).single()
     return NextResponse.json({ task: data, unchanged: true })
   }
 
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       completed_at: decision.status === 'completed' ? new Date().toISOString() : null,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', params.id).eq('user_id', user.id)
+    .eq('id', (await params).id).eq('user_id', user.id)
     .select().single()
   if (error) return NextResponse.json({ error: 'Could not update the task.' }, { status: 500 })
   return NextResponse.json({ task: data })

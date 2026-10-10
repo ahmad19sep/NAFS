@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/request'
+import { ApiRouteError } from '@/lib/api-errors'
+import { saveAdvice } from '@/lib/advice-save'
+import { readFaithPreference, adviceSystem } from '@/lib/advice-faith'
 import { aiStructured } from '@/lib/ai'
 import { GOAL_STARTER_SCHEMA, statusForAiFailure } from '@/lib/ai-schemas'
 
@@ -71,9 +74,8 @@ Rules:
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { supabase, user } = await authenticateRequest(req)
+    const faithEnabled = await readFaithPreference(supabase, user.id)
 
     const body = await req.json()
     const { goalId, goalDraft } = body
@@ -126,11 +128,11 @@ Now generate the starter pack as JSON. Be specific to THIS goal.`
     // AI-01: the shape is checked at runtime, with one corrective retry, so a
     // malformed reply produces an explicit failure instead of a silent null.
     const result = await aiStructured<Omit<StarterPack, 'generated_at'>>(
-      prompt, GOAL_STARTER_SCHEMA, SYSTEM,
+      prompt, GOAL_STARTER_SCHEMA, adviceSystem(SYSTEM, faithEnabled),
     )
 
     if (!result.ok) {
-      return NextResponse.json({ error: result.message }, { status: statusForAiFailure(result.code) })
+      return NextResponse.json({ error: result.message, code: "generation_failed" }, { status: statusForAiFailure(result.code) })
     }
 
     const stored: StarterPack = {
@@ -143,12 +145,13 @@ Now generate the starter pack as JSON. Be specific to THIS goal.`
 
     // Persist only when we have a real goal
     if (!isDraft && goalId) {
-      await supabase.from('goals').update({ ai_starter_pack: stored }).eq('id', goalId).eq('user_id', user.id)
+      await saveAdvice(supabase, 'goals', user.id, goalId, { ai_starter_pack: stored }, req.headers.get("x-nafs-request-id"))
     }
 
     return NextResponse.json({ starter: stored })
   } catch (err: any) {
+    if (err instanceof ApiRouteError) return NextResponse.json({ error: err.message, code: err.code }, { status: err.status })
     console.error('goal-starter error:', err)
-    return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 })
+    return NextResponse.json({ error: 'Advice is temporarily unavailable. Please retry.', code: 'unavailable' }, { status: 500 })
   }
 }

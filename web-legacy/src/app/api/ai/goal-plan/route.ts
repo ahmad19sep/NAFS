@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { authenticateRequest } from '@/lib/supabase/request'
+import { ApiRouteError } from '@/lib/api-errors'
 import { aiText } from '@/lib/ai'
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { supabase, user } = await authenticateRequest(req)
 
     const { title, description, deadline, linkedHabits } = await req.json()
     const daysLeft = deadline ? Math.ceil((new Date(deadline).getTime() - Date.now()) / 86400000) : null
@@ -26,6 +25,7 @@ Write a plan with:
     const plan = await aiText('chat', prompt, system)
     return NextResponse.json({ plan })
   } catch (err: any) {
-    return NextResponse.json({ error: err?.message ?? 'Failed' }, { status: 500 })
+    if (err instanceof ApiRouteError) return NextResponse.json({ error: err.message, code: err.code }, { status: err.status })
+    return NextResponse.json({ error: 'Advice is temporarily unavailable. Please retry.', code: 'unavailable' }, { status: 500 })
   }
 }

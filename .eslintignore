@@ -1,0 +1,5 @@
+web-legacy/
+android/
+android-capacitor-legacy/
+output/
+capacitor.config.ts

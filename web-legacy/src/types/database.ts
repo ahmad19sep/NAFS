@@ -280,12 +280,14 @@ export interface Database {
           user_id: string
           messages: Json
           created_at: string
+          updated_at: string
         }
         Insert: {
           id?: string
           user_id: string
           messages: Json
           created_at?: string
+          updated_at?: string
         }
         Update: {
           messages?: Json
@@ -327,7 +329,10 @@ export interface Database {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      complete_future_self_reply: {
+        Args: { p_letter_id: string; p_content: string; p_written_at: string; p_target_date: string; p_reply_text?: string | null }
+        Returns: Database['public']['Tables']['future_self_letters']['Row'][]
+      }
     }
     Enums: {
       [_ in never]: never

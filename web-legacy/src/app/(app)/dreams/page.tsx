@@ -3,7 +3,7 @@ import { requireUser } from '@/lib/supabase/require-user'
 import DreamsClient from './DreamsClient'
 
 export default async function DreamsPage() {
-  const supabase = createClient()
+  const supabase = await createClient()
   const user = await requireUser(supabase)
 
   const [{ data: dream }, { data: logs }] = await Promise.all([

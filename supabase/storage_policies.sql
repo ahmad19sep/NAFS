@@ -33,7 +33,32 @@ DROP POLICY IF EXISTS "auth upload challenge" ON storage.objects;
 CREATE POLICY "auth upload challenge"
 ON storage.objects FOR INSERT
 TO authenticated
-WITH CHECK (bucket_id = 'challenge-photos');
+WITH CHECK (
+  bucket_id = 'challenge-photos'
+  AND (storage.foldername(name))[1] = auth.uid()::text
+);
+
+DROP POLICY IF EXISTS "auth update challenge" ON storage.objects;
+CREATE POLICY "auth update challenge"
+ON storage.objects FOR UPDATE
+TO authenticated
+USING (
+  bucket_id = 'challenge-photos'
+  AND (storage.foldername(name))[1] = auth.uid()::text
+)
+WITH CHECK (
+  bucket_id = 'challenge-photos'
+  AND (storage.foldername(name))[1] = auth.uid()::text
+);
+
+DROP POLICY IF EXISTS "auth delete challenge" ON storage.objects;
+CREATE POLICY "auth delete challenge"
+ON storage.objects FOR DELETE
+TO authenticated
+USING (
+  bucket_id = 'challenge-photos'
+  AND (storage.foldername(name))[1] = auth.uid()::text
+);
 
 DROP POLICY IF EXISTS "public read challenge" ON storage.objects;
 CREATE POLICY "public read challenge"

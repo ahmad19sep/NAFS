@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
-import { aiText } from '@/lib/ai'
+import { authenticateRequest } from '@/lib/supabase/request'
+import { ApiRouteError } from '@/lib/api-errors'
+import { aiText, aiProviderInfo } from '@/lib/ai'
 import { TRIBUNAL_SYSTEM, buildTribunalPrompt } from '@/lib/ai-prompts'
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { supabase, user } = await authenticateRequest(req)
 
     const sevenDaysAgo = new Date()
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
@@ -32,6 +31,7 @@ export async function POST(req: NextRequest) {
     const weekScoreAvg = Math.round(thisWeekLogs.reduce((s, l) => s + l.identity_score, 0) / thisWeekLogs.length)
     const weekStart = thisWeekLogs[0]?.date
 
+    const providerInfo = aiProviderInfo()
     const verdict = await aiText('verdict', buildTribunalPrompt({
       dream_statement: dream?.statement ?? 'Not set',
       week_score_avg: weekScoreAvg,
@@ -53,11 +53,12 @@ export async function POST(req: NextRequest) {
       type: 'tribunal',
       week_start: weekStart,
       content_md: verdict,
-      model_used: 'gemini-2.0-flash',
+      model_used: providerInfo.model,
     })
 
     return NextResponse.json({ verdict })
   } catch (err: any) {
+    if (err instanceof ApiRouteError) return NextResponse.json({ error: err.message, code: err.code }, { status: err.status })
     return NextResponse.json({ error: err.message }, { status: 500 })
   }
 }

@@ -880,7 +880,7 @@ function AlignmentCard({ alignment, loading, onCheck }: {
       {alignment.missing && (
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-wider text-red-400 mb-0.5 flex items-center gap-1">
-            <AlertTriangle size={9} /> What's missing
+            <AlertTriangle size={9} /> What&apos;s missing
           </p>
           <p className="text-sm text-foreground leading-snug">{alignment.missing}</p>
         </div>

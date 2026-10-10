@@ -9,15 +9,16 @@ import ReportsClient from './ReportsClient'
 export const dynamic = 'force-dynamic'
 
 interface Props {
-  searchParams: { period?: string; offset?: string }
+  searchParams: Promise<{ period?: string; offset?: string }>
 }
 
 export default async function ReportsPage({ searchParams }: Props) {
-  const supabase = createClient()
+  const query = await searchParams
+  const supabase = await createClient()
   const user = await requireUser(supabase)
 
-  const period: ReportPeriod = searchParams.period === 'monthly' ? 'monthly' : 'weekly'
-  const offset = Math.min(60, Math.max(0, parseInt(searchParams.offset ?? '0', 10) || 0))
+  const period: ReportPeriod = query.period === 'monthly' ? 'monthly' : 'weekly'
+  const offset = Math.min(60, Math.max(0, parseInt(query.offset ?? '0', 10) || 0))
 
   const today = todayString()
   const current = periodRange(period, offset, today)

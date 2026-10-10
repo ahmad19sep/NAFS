@@ -1,7 +1,5 @@
-<?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Ascend</string>
-    <string name="title_activity_main">Ascend</string>
-    <string name="package_name">com.ahmad.nafs</string>
-    <string name="custom_url_scheme">com.ahmad.nafs</string>
+    <string name="app_name">NAFS</string>
+    <string name="task_reminder_channel_name">Task due reminders</string>
+    <string name="task_reminder_channel_description">Alerts before daily tasks are due</string>
 </resources>
