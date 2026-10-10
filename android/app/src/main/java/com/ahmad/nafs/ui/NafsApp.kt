@@ -120,6 +120,15 @@ fun NafsApp(
     }
 }
 
+/** Screens a notification, app shortcut or home-screen widget may open. Anything else is ignored. */
+internal val externalDestinations = setOf(
+    "coach", "coach/letters", "deen", "prayer-times", "qibla", "tasbih", "progress", "checkin", "health",
+    "challenges", "library", "tasks/new", "habits/new",
+)
+
+internal fun isExternalDestination(route: String): Boolean =
+    route in tabRoutes || route in externalDestinations || Regex("^progress\\?weekStart=\\d{4}-\\d{2}-\\d{2}$").matches(route)
+
 /** Full-screen flows where the tab bar would crowd a composer or editor. */
 private fun hidesBottomBar(route: String?): Boolean =
     route != null && (route == "coach" || route.startsWith("coach/") || route.startsWith("advice"))
@@ -149,13 +158,13 @@ private fun AuthenticatedNafsApp(
     )
 
     LaunchedEffect(requestedDestination) {
-        val route = requestedDestination?.takeIf { requested ->
-            requested in tabRoutes || requested in setOf("coach/letters", "deen", "progress") ||
-                Regex("^progress\\?weekStart=\\d{4}-\\d{2}-\\d{2}$").matches(requested)
-        } ?: return@LaunchedEffect
-        if (route in tabRoutes) navController.navigateTopDestination(route)
-        // A notification opens a fresh screen (for example this week's report), never an older saved one.
-        else navController.navigate(route) { popUpTo("dashboard") { saveState = true }; launchSingleTop = true }
+        val route = requestedDestination?.takeIf(::isExternalDestination) ?: return@LaunchedEffect
+        // A stale shortcut or notification must never crash the app; at worst it leaves Home open.
+        runCatching {
+            if (route in tabRoutes) navController.navigateTopDestination(route)
+            // A notification opens a fresh screen (for example this week's report), never an older saved one.
+            else navController.navigate(route) { popUpTo("dashboard") { saveState = true }; launchSingleTop = true }
+        }
         onDestinationHandled()
     }
 

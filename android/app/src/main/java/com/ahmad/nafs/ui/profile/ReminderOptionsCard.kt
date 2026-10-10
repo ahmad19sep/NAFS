@@ -22,6 +22,13 @@ import androidx.compose.material.icons.rounded.MailOutline
 import androidx.compose.material.icons.rounded.NightsStay
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.TaskAlt
+import androidx.compose.material.icons.rounded.WbSunny
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
+import java.time.LocalTime
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -142,7 +149,7 @@ fun ReminderOptionsCard(profile: UserProfile, onOpenPrayerTimes: () -> Unit, vie
     }
     fun update(value: ReminderOptions) {
         val before = options
-        val turnedOn = listOf(value.tasks to options.tasks, value.habits to options.habits, value.letters to options.letters,
+        val turnedOn = listOf(value.tasks to options.tasks, value.habits to options.habits, value.letters to options.letters, value.morning to options.morning,
             value.prayers to options.prayers, value.daily to options.daily, value.weekly to options.weekly).any { (now, before) -> now && !before }
         runCatching { viewModel.save(profile, value) }
             .onSuccess {
@@ -160,12 +167,29 @@ fun ReminderOptionsCard(profile: UserProfile, onOpenPrayerTimes: () -> Unit, vie
             .onFailure { message = "Reminder settings could not be saved. Retry." }
     }
     val clock = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
-    val anyTimed = options.tasks || options.prayers && profile.deenEnabled || options.daily || options.weekly
+    val anyTimed = options.tasks || options.prayers && profile.deenEnabled || options.daily || options.weekly || options.morning || options.habits
     val c = Nafs.colors
+    var picking by remember { mutableStateOf<TimeSetting?>(null) }
+    picking?.let { setting ->
+        ReminderTimeDialog(setting.label, setting.read(options), onDismiss = { picking = null }) { time ->
+            picking = null; update(setting.write(options, time))
+        }
+    }
     NafsCard(contentPadding = PaddingValues(vertical = 6.dp)) {
-        ReminderSwitch("Tasks", "30 minutes before each due time", Icons.Rounded.TaskAlt, c.tasks, options.tasks) { update(options.copy(tasks = it)) }
+        ReminderSwitch("Morning plan", "Your day at ${options.morningTime.format(clock)}", Icons.Rounded.WbSunny, c.gold, options.morning) { update(options.copy(morning = it)) }
+        if (options.morning) TimeChip(options.morningTime.format(clock)) { picking = TimeSetting.MORNING }
         NafsDivider()
-        ReminderSwitch("Habits", "Nudges for unfinished scheduled habits", Icons.Rounded.Autorenew, c.habits, options.habits) { update(options.copy(habits = it)) }
+        ReminderSwitch("Tasks", "${options.taskLeadMinutes} minutes before each due time, with Mark done and Snooze", Icons.Rounded.TaskAlt, c.tasks,
+            options.tasks) { update(options.copy(tasks = it)) }
+        if (options.tasks) Row(Modifier.padding(start = 68.dp, end = 16.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ReminderOptions.taskLeadChoices.forEach { minutes ->
+                NafsChoiceChip("$minutes min", selected = options.taskLeadMinutes == minutes, onClick = { update(options.copy(taskLeadMinutes = minutes)) })
+            }
+        }
+        NafsDivider()
+        ReminderSwitch("Evening habit check", "At ${options.habitCheckTime.format(clock)} if habits are still open · set per-habit times on each habit",
+            Icons.Rounded.Autorenew, c.habits, options.habits) { update(options.copy(habits = it)) }
+        if (options.habits) TimeChip(options.habitCheckTime.format(clock)) { picking = TimeSetting.HABIT_CHECK }
         NafsDivider()
         ReminderSwitch("Letters", "When a future-self letter is ready", Icons.Rounded.MailOutline, c.coach, options.letters) { update(options.copy(letters = it)) }
         if (profile.deenEnabled) {
@@ -187,8 +211,9 @@ fun ReminderOptionsCard(profile: UserProfile, onOpenPrayerTimes: () -> Unit, vie
             }
         }
         NafsDivider()
-        ReminderSwitch("End-of-day summary", "Every day at ${ScheduledReminderRules.dailySummaryTime.format(clock)}", Icons.Rounded.Bedtime, c.reflect,
+        ReminderSwitch("End-of-day summary", "Every day at ${options.dailyTime.format(clock)}", Icons.Rounded.Bedtime, c.reflect,
             options.daily) { update(options.copy(daily = it)) }
+        if (options.daily) TimeChip(options.dailyTime.format(clock)) { picking = TimeSetting.DAILY }
         NafsDivider()
         ReminderSwitch("Weekly report", "Sundays at ${ScheduledReminderRules.weeklyReportTime.format(clock)}", Icons.Rounded.CalendarMonth, c.gold,
             options.weekly) { update(options.copy(weekly = it)) }
@@ -217,8 +242,8 @@ fun ReminderOptionsCard(profile: UserProfile, onOpenPrayerTimes: () -> Unit, vie
                 },
             )
             Text(
-                "Times follow your account timezone (${profile.timezone}). Habit and letter reminders are checked several times a day when " +
-                    "you're online. Battery settings can delay delivery.",
+                "Times follow your account timezone (${profile.timezone}). Letters are checked several times a day when you're online. " +
+                    "Battery settings can delay delivery.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -234,5 +259,31 @@ private fun ReminderSwitch(label: String, detail: String, icon: ImageVector, tin
         icon = icon,
         tint = tint,
         trailing = { Switch(checked, onChange, Modifier.semantics { contentDescription = "$label · $detail" }) },
+    )
+}
+
+private enum class TimeSetting(val label: String, val read: (ReminderOptions) -> LocalTime, val write: (ReminderOptions, LocalTime) -> ReminderOptions) {
+    MORNING("Morning plan", { it.morningTime }, { o, t -> o.copy(morningTime = t) }),
+    HABIT_CHECK("Evening habit check", { it.habitCheckTime }, { o, t -> o.copy(habitCheckTime = t) }),
+    DAILY("End-of-day summary", { it.dailyTime }, { o, t -> o.copy(dailyTime = t) }),
+}
+
+@Composable
+private fun TimeChip(label: String, onClick: () -> Unit) {
+    Row(Modifier.padding(start = 68.dp, end = 16.dp, bottom = 10.dp)) {
+        NafsChoiceChip("Change time · $label", selected = false, onClick = onClick)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReminderTimeDialog(title: String, initial: LocalTime, onDismiss: () -> Unit, onConfirm: (LocalTime) -> Unit) {
+    val state = rememberTimePickerState(initialHour = initial.hour, initialMinute = initial.minute, is24Hour = false)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { TimePicker(state = state) },
+        confirmButton = { TextButton(onClick = { onConfirm(LocalTime.of(state.hour, state.minute)) }) { Text("Set time") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

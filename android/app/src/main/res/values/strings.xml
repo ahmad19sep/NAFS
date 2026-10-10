@@ -1,5 +1,15 @@
 <resources>
     <string name="app_name">NAFS</string>
-    <string name="task_reminder_channel_name">Task due reminders</string>
-    <string name="task_reminder_channel_description">Alerts before daily tasks are due</string>
+    <string name="task_reminder_channel_name">Task reminders</string>
+    <string name="task_reminder_channel_description">Before a task is due, with Mark done and Snooze</string>
+    <string name="channel_habits_name">Habit reminders</string>
+    <string name="channel_habits_description">At the time you set on a habit, and the evening habit check</string>
+    <string name="channel_prayer_name">Prayer times</string>
+    <string name="channel_prayer_description">When each prayer begins, with Prayed and In jamaat</string>
+    <string name="channel_summary_name">Plans and summaries</string>
+    <string name="channel_summary_description">Morning plan, end-of-day summary and weekly report</string>
+    <string name="channel_activity_name">Letters and updates</string>
+    <string name="channel_activity_description">Future-self letters that are ready, and saves that need your attention</string>
+    <string name="widget_today_name">NAFS Today</string>
+    <string name="widget_today_description">Today\'s tasks and habits at a glance</string>
 </resources>

@@ -5,6 +5,7 @@ import com.ahmad.nafs.domain.habits.HabitType
 import com.ahmad.nafs.domain.habits.ScheduleKind
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalTime
 
 data class Habit(
     val id: String,
@@ -26,6 +27,7 @@ data class Habit(
     val sortOrder: Int,
     val currentStreak: Int,
     val longestStreak: Int,
+    val reminderTime: LocalTime? = null,
 ) {
     fun schedule() = HabitSchedule(
         type = type,

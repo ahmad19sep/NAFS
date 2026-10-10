@@ -20,6 +20,7 @@ import com.ahmad.nafs.core.preferences.ThemeMode
 import com.ahmad.nafs.ui.NafsApp
 import com.ahmad.nafs.ui.RootViewModel
 import com.ahmad.nafs.ui.theme.NafsTheme
+import com.ahmad.nafs.widget.NafsWidgets
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -40,8 +41,9 @@ class MainActivity : ComponentActivity() {
             val resolving = rootViewModel.appState.value.let { it == RootAppState.RestoringSession || it == RootAppState.LoadingProfile }
             resolving && SystemClock.elapsedRealtime() - splashStarted < SPLASH_MAX_MS
         }
-        handleAuthIntent(intent)
-        requestedDestination.value = intent?.getStringExtra(EXTRA_DESTINATION)
+        // Only a fresh launch carries a new link or destination; after rotation or process restore the same
+        // intent is redelivered and must not re-run a used sign-in code or jump back to a notification's screen.
+        if (savedInstanceState == null) consumeIntent(intent)
         enableEdgeToEdge()
         setContent {
             val viewModel = rootViewModel
@@ -69,11 +71,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStop() {
+        super.onStop()
+        // Home-screen widgets pick up whatever changed while the app was open.
+        NafsWidgets.refresh(this)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        consumeIntent(intent)
+    }
+
+    private fun consumeIntent(intent: Intent?) {
+        intent ?: return
         handleAuthIntent(intent)
         requestedDestination.value = intent.getStringExtra(EXTRA_DESTINATION)
+        intent.removeExtra(EXTRA_DESTINATION)
+        intent.data = null
     }
 
     companion object {
