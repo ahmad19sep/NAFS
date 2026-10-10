@@ -12,7 +12,7 @@ data class PlannedTaskReminder(
 )
 
 object TaskReminderPlanner {
-    private val reminderOffsetsMinutes = listOf(60, 30)
+    private val reminderOffsetsMinutes = listOf(30)
 
     fun plan(
         periodDate: LocalDate,

@@ -452,7 +452,7 @@ private fun TaskEditorDialog(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "Due times use your account timezone. Android delivers best-effort alerts 1 hour and 30 minutes before.",
+                        "Due times use your account timezone. NAFS reminds you 30 minutes before.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

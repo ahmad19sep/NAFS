@@ -5,6 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.ahmad.nafs.core.network.NafsApiClient
 import com.ahmad.nafs.core.records.PrivateRecordStore
 import com.ahmad.nafs.core.records.RecordRules
+import com.ahmad.nafs.core.time.AccountDate
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
+import java.time.temporal.TemporalAdjusters
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -24,6 +29,13 @@ class ProgressViewModel @Inject constructor(private val api: NafsApiClient, priv
     private var account = ""; private var job: Job? = null
     fun initialize(userId: String) { if (account != userId) { account = userId; reload() } }
     fun period(value: String) { if (value !in setOf("weekly", "monthly")) return; _state.update { it.copy(period = value, offset = 0, response = null) }; reload() }
+    fun openWeek(start: String, zone: String) {
+        val monday = runCatching { LocalDate.parse(start) }.getOrNull() ?: return
+        val current = runCatching { AccountDate.today(zone) }.getOrNull()?.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)) ?: return
+        val offset = ChronoUnit.WEEKS.between(monday, current).toInt().coerceIn(0, 60)
+        if (_state.value.period == "weekly" && _state.value.offset == offset && _state.value.response != null) return
+        _state.update { it.copy(period = "weekly", offset = offset, response = null) }; reload()
+    }
     fun shift(amount: Int) { _state.update { it.copy(offset = (it.offset + amount).coerceIn(0, 60), response = null) }; reload() }
     fun reload() {
         job?.cancel(); val userId = account; val period = _state.value.period; val offset = _state.value.offset

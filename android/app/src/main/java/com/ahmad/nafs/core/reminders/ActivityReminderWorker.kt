@@ -25,6 +25,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -34,6 +35,7 @@ import kotlinx.serialization.json.JsonObject
 
 @EntryPoint @InstallIn(SingletonComponent::class)
 interface ActivityReminderDependencies {
+    fun scheduler(): ReminderAlarmScheduler
     fun habits(): HabitRepository
     fun provider(): SupabaseClientProvider
     fun sessions(): SupabaseApiSessionTokens
@@ -49,18 +51,24 @@ class ActivityReminderScheduler @Inject constructor(@ApplicationContext context:
     }
     fun cancel(user: String) { work.cancelUniqueWork("activity-reminders-$user") }
 }
+enum class ReminderChannel(val id: String, val title: String, val importance: Int) {
+    ACTIVITY("nafs_activity", "Habit and letter reminders", NotificationManager.IMPORTANCE_DEFAULT),
+    PRAYER("nafs_prayer_times", "Prayer times", NotificationManager.IMPORTANCE_HIGH),
+    SUMMARY("nafs_summaries", "Daily and weekly summaries", NotificationManager.IMPORTANCE_DEFAULT),
+}
 object LocalReminderNotifications {
     @SuppressLint("MissingPermission")
-    fun show(context: Context, key: String, title: String, text: String, destination: String): Boolean {
+    fun show(context: Context, key: String, title: String, text: String, destination: String,
+        channel: ReminderChannel = ReminderChannel.ACTIVITY): Boolean {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
         val manager = NotificationManagerCompat.from(context)
         if (!manager.areNotificationsEnabled()) return false
-        val channel = "nafs_activity"
-        if (Build.VERSION.SDK_INT >= 26) context.getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(channel, "Habit and letter reminders", NotificationManager.IMPORTANCE_DEFAULT))
+        if (Build.VERSION.SDK_INT >= 26) context.getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(channel.id, channel.title, channel.importance))
         val intent = Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_DESTINATION, destination).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val pending = PendingIntent.getActivity(context, key.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        manager.notify(key, 0, NotificationCompat.Builder(context, channel).setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title).setContentText(text).setContentIntent(pending).setAutoCancel(true)
+        manager.notify(key, 0, NotificationCompat.Builder(context, channel.id).setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title).setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(pending).setAutoCancel(true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build())
         return true
     }
@@ -70,7 +78,9 @@ class ActivityReminderWorker(context: Context, params: WorkerParameters) : Corou
         val user = inputData.getString("user") ?: return Result.failure()
         val zone = inputData.getString("zone") ?: return Result.failure()
         val dependencies = EntryPointAccessors.fromApplication(applicationContext, ActivityReminderDependencies::class.java)
+        dependencies.provider().client?.auth?.awaitInitialization()
         if (!dependencies.sessions().isCurrentUser(user)) return Result.success()
+        ReminderAccount.read(applicationContext)?.takeIf { it.user == user }?.let { dependencies.scheduler().rearmSummaries(it.user, it.zone) }
         val preferences = applicationContext.getSharedPreferences("activity_reminder_delivery", Context.MODE_PRIVATE)
         try {
             val today = AccountDate.today(zone)

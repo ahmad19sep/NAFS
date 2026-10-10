@@ -10,7 +10,7 @@ class TaskReminderPlannerTest {
     private val dueDate = LocalDate.parse("2026-10-09")
 
     @Test
-    fun plansOneHourAndThirtyMinuteAlertsInTheAccountTimezone() {
+    fun plansAThirtyMinuteAlertInTheAccountTimezone() {
         val reminders = TaskReminderPlanner.plan(
             periodDate = dueDate,
             dueTime = "18:00",
@@ -18,14 +18,8 @@ class TaskReminderPlannerTest {
             now = Instant.parse("2026-10-09T11:30:00Z"),
         )
 
-        assertEquals(listOf(60, 30), reminders.map(PlannedTaskReminder::minutesBefore))
-        assertEquals(
-            listOf(
-                Instant.parse("2026-10-09T12:00:00Z"),
-                Instant.parse("2026-10-09T12:30:00Z"),
-            ),
-            reminders.map(PlannedTaskReminder::triggerAt),
-        )
+        assertEquals(listOf(30), reminders.map(PlannedTaskReminder::minutesBefore))
+        assertEquals(listOf(Instant.parse("2026-10-09T12:30:00Z")), reminders.map(PlannedTaskReminder::triggerAt))
     }
 
     @Test

@@ -22,6 +22,10 @@ import com.ahmad.nafs.core.profile.ProfileActionResult
 import com.ahmad.nafs.core.profile.ProfileRepository
 import com.ahmad.nafs.core.profile.ProfileState
 import com.ahmad.nafs.core.reminders.ActivityReminderScheduler
+import com.ahmad.nafs.core.reminders.ReminderAlarmScheduler
+import com.ahmad.nafs.core.reminders.ReminderPreferences
+import com.ahmad.nafs.core.deen.PrayerAutoLocate
+import com.ahmad.nafs.core.deen.PrayerLocateResult
 import com.ahmad.nafs.core.reminders.TaskReminderScheduler
 import com.ahmad.nafs.core.tasks.TaskRepository
 import com.ahmad.nafs.core.tasks.TaskLoadResult
@@ -58,7 +62,11 @@ class RootViewModel @Inject constructor(
     private val recordSync: RecordSyncScheduler,
     private val reminderScheduler: TaskReminderScheduler,
     private val activityReminders: ActivityReminderScheduler,
+    private val reminderAlarms: ReminderAlarmScheduler,
+    private val reminderPreferences: ReminderPreferences,
+    private val prayerAutoLocate: PrayerAutoLocate,
 ) : ViewModel() {
+    private var locatedContext: Pair<String, String>? = null
     private val _profileMessage = MutableStateFlow<String?>(null)
     val profileMessage: StateFlow<String?> = _profileMessage.asStateFlow()
 
@@ -101,6 +109,7 @@ class RootViewModel @Inject constructor(
                         if (loadedUserId != session.userId) {
                             loadedUserId?.let {
                                 activityReminders.cancel(it)
+                                reminderAlarms.cancelAll(it)
                                 reminderScheduler.cancelAll(it)
                                 recordSync.cancel(it)
                                 taskRepository.clear(it)
@@ -124,8 +133,11 @@ class RootViewModel @Inject constructor(
                     SessionState.ConfigurationMissing,
                     -> {
                         _profileMessage.value = null
+                        // A cold start that is already signed out has no loaded user; clear whichever account was scheduled.
+                        if (loadedUserId == null) reminderAlarms.cancelStored()
                         loadedUserId?.let {
                             activityReminders.cancel(it)
+                            reminderAlarms.cancelAll(it)
                             reminderScheduler.cancelAll(it)
                             recordSync.cancel(it)
                             taskRepository.clear(it)
@@ -161,6 +173,8 @@ class RootViewModel @Inject constructor(
                         return@collectLatest
                     }
                     activityReminders.schedule(profile.userId, profile.timezone)
+                    reminderAlarms.reschedule(profile.userId, profile.timezone, profile.deenEnabled)
+                    refreshPrayerArea(profile.userId, profile.timezone, profile.deenEnabled)
                     recordSync.reconcile(profile.userId)
                     val context = profile.userId to profile.timezone
                     if (reconciledContext == context) return@collectLatest
@@ -172,6 +186,20 @@ class RootViewModel @Inject constructor(
                         reconciledContext = context
                     }
                 }
+        }
+    }
+
+    /**
+     * Once per account and timezone while the app is open: location-based prayer times follow the user
+     * when they have moved more than 5 km. A chosen city is never replaced, and nothing runs in the background.
+     */
+    private fun refreshPrayerArea(userId: String, timezone: String, deenEnabled: Boolean) {
+        val context = userId to timezone
+        if (!deenEnabled || locatedContext == context || !reminderPreferences.read(userId).prayers) return
+        locatedContext = context
+        viewModelScope.launch {
+            val result = runCatching { prayerAutoLocate.run(userId, timezone, onlyIfMoved = true) }.getOrNull()
+            if (result is PrayerLocateResult.Saved && result.refreshed) reminderAlarms.reschedule(userId, timezone, deenEnabled)
         }
     }
 

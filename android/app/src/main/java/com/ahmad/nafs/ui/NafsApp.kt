@@ -156,9 +156,12 @@ private fun AuthenticatedNafsApp(
 
     LaunchedEffect(requestedDestination) {
         val route = requestedDestination?.takeIf { requested ->
-            topDestinations.any { it.route == requested } || requested == "coach/letters"
+            topDestinations.any { it.route == requested } || requested in setOf("coach/letters", "deen", "progress") ||
+                Regex("^progress\\?weekStart=\\d{4}-\\d{2}-\\d{2}$").matches(requested)
         } ?: return@LaunchedEffect
-        navController.navigateTopDestination(route)
+        if (topDestinations.any { it.route == route }) navController.navigateTopDestination(route)
+        // A notification opens a fresh screen (for example this week's report), never an older saved one.
+        else navController.navigate(route) { popUpTo("dashboard") { saveState = true }; launchSingleTop = true }
         onDestinationHandled()
     }
 
@@ -240,7 +243,13 @@ private fun AuthenticatedNafsApp(
                 composable("records/${feature.name.lowercase()}") { RecordRoute(profile, feature, onBack = { navController.popBackStack() }) }
             }
             composable("history") { ProgressRoute(profile, true, onBack = { navController.popBackStack() }, onReview = { period, offset -> navController.navigate("advice?period=$period&offset=$offset") }) }
-            composable("progress") { ProgressRoute(profile, false, onBack = { navController.popBackStack() }, onReview = { period, offset -> navController.navigate("advice?period=$period&offset=$offset") }) }
+            composable("progress?weekStart={weekStart}", arguments = listOf(
+                navArgument("weekStart") { type = NavType.StringType; nullable = true; defaultValue = null },
+            )) { entry ->
+                ProgressRoute(profile, false, onBack = { navController.popBackStack() },
+                    onReview = { period, offset -> navController.navigate("advice?period=$period&offset=$offset") },
+                    weekStart = entry.arguments?.getString("weekStart"))
+            }
             composable("advice?period={period}&offset={offset}", arguments = listOf(
                 navArgument("period") { type = NavType.StringType; nullable = true; defaultValue = null },
                 navArgument("offset") { type = NavType.IntType; defaultValue = 0 },
@@ -277,6 +286,7 @@ private fun AuthenticatedNafsApp(
                     profileMessage = profileMessage,
                     onUseDeviceTimezone = onUseDeviceTimezone,
                     onDismissProfileMessage = onDismissProfileMessage,
+                    onOpenPrayerTimes = { navController.navigate("prayer-times") { launchSingleTop = true } },
                 )
             }
         }
@@ -310,6 +320,7 @@ private fun ProfileFoundationScreen(
     profileMessage: String?,
     onUseDeviceTimezone: () -> Unit,
     onDismissProfileMessage: () -> Unit,
+    onOpenPrayerTimes: () -> Unit,
 ) {
     Scaffold(topBar = { TopAppBar(title = { Text("You") }) }) { padding ->
         LazyColumn(
@@ -344,7 +355,7 @@ private fun ProfileFoundationScreen(
                 }
             }
             item { NotificationSettingsCard() }
-            item { ReminderOptionsCard(profile) }
+            item { ReminderOptionsCard(profile, onOpenPrayerTimes) }
             item { FaithModeSettingsCard(profile) }
             item {
                 TimezoneSettingsCard(

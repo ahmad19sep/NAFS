@@ -790,3 +790,38 @@ With the owner's approval, on the Android 16 phone against production (Gemini 3.
 - Future-self reply: not run. The account has no letters.
 
 Remaining: evening verdict and letter reply with real owner content, server-side replay of an identical request ID, report and growth reviews, and the starter/health advice routes.
+
+### 2026-10-10 - Prayer, task, end-of-day and weekly notifications
+
+Each reminder has its own switch in You → Reminders, and its own Android channel:
+
+- **Prayer times**: a high-priority notification when each of the five prayers begins, opening Deen.
+- **Tasks**: one reminder 30 minutes before a daily task's due time. The earlier 60-minute alert was removed.
+- **End-of-day summary**: at 21:30 in the account timezone. It uses the same task and habit counts as Home, plus prayers recorded.
+- **Weekly report**: Sundays at 21:45. It shows the canonical Monday–Sunday report and opens that same week, even if tapped after midnight.
+
+**Delivery.** All four use exact `AlarmManager` alarms. With the user's "Alarms & reminders" permission they fire on time; without it Android may deliver within about an hour.
+- Daily and weekly alarms set their next occurrence before loading any content, so an offline evening does not end the series.
+- Alarms are restored after a reboot, an app update, a clock or timezone change, and a change to the exact-alarm permission.
+- Prayer alarms are restored from encrypted saved times, so this works without a connection.
+- A 6-hourly background check re-sets the summary alarms if Android dropped them.
+- Signing out or switching accounts cancels all alarms and background work, and removes notifications already shown.
+- Summary text never turns unknown data into zero. Failed or offline loads, days with no prayer record, unscheduled habits and sources the server could not read are left out, and incomplete data is stated as such.
+
+**Location (a deliberate reversal).** The earlier milestones requested no location permission. Prayer times now find the user's area automatically, as the product owner requested:
+- Only `ACCESS_COARSE_LOCATION`, requested when prayer alerts are turned on or "Use my location" is tapped. No background location permission.
+- Coordinates are rounded to about 1 km, stored in the encrypted record store, and sent only to Aladhan with the account timezone.
+- Location-based times refresh when the app is opened and the user has moved more than 5 km. A chosen city is never replaced, and entering a city remains the alternative.
+- **Play Console Data safety must declare approximate location**, collected for app functionality and shared with Aladhan to calculate prayer times.
+
+**Phone makers that restrict background starts.** Xiaomi, Redmi and POCO block apps from starting in the background unless Autostart is allowed. This blocks the restore events above. When it applies, the Reminders card shows a "Reliable delivery" section that opens MIUI's Autostart list and Android's battery optimization settings.
+
+Validation on the Android 16 Xiaomi phone (2404ARN45A):
+- Notification permission and "Alarms & reminders" were granted through the app's own buttons, and every alarm became exact (window 0, reason "permission").
+- Fired on demand, the end-of-day, weekly and prayer notifications rendered with live account data on their separate channels.
+- Approximate location ("While using the app") found prayer times for the current area and scheduled seven exact prayer alarms.
+- With Autostart off, an app update cleared the alarms and MIUI blocked their restore until the app was opened. With Autostart allowed, the update started the receiver in the background and restored all nine alarms without opening the app.
+- Unit tests: 289 across 44 classes passed. Debug assembly and lint passed with 0 errors.
+- A 37-agent review confirmed 30 defects, all addressed in this change.
+
+Not yet observed on the device: natural delivery at a real prayer time, and the 21:30 summary firing on its own.

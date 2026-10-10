@@ -14,11 +14,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import androidx.work.workDataOf
 import com.ahmad.nafs.MainActivity
 import com.ahmad.nafs.R
 import com.ahmad.nafs.core.tasks.NafsTask
@@ -26,9 +23,7 @@ import com.ahmad.nafs.domain.tasks.TaskPeriodType
 import com.ahmad.nafs.domain.tasks.TaskReminderPlanner
 import com.ahmad.nafs.domain.tasks.TaskReminderDeliveryRule
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.time.Duration
 import java.time.Instant
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +39,7 @@ class TaskReminderScheduler @Inject constructor(
         cancelByTag(userTag(userId))
         TaskReminderRegistry.taskIdsForUser(context, userId).forEach { taskId ->
             TaskReminderNotifications.cancel(context, taskId)
+            cancelAlarms(taskId)
         }
         val eligible = tasks.asSequence()
             .filter { it.type == TaskPeriodType.DAILY && !it.isCompleted && it.dueTime != null }
@@ -58,12 +54,14 @@ class TaskReminderScheduler @Inject constructor(
     suspend fun cancelTask(taskId: String) {
         TaskReminderRegistry.removeTask(context, taskId)
         TaskReminderNotifications.cancel(context, taskId)
+        cancelAlarms(taskId)
         cancelByTag(taskTag(taskId))
     }
 
     suspend fun cancelAll(userId: String) {
         TaskReminderRegistry.taskIdsForUser(context, userId).forEach { taskId ->
             TaskReminderNotifications.cancel(context, taskId)
+            cancelAlarms(taskId)
         }
         TaskReminderRegistry.clearUser(context, userId)
         cancelByTag(userTag(userId))
@@ -81,29 +79,26 @@ class TaskReminderScheduler @Inject constructor(
             timezone = timezone,
             now = now,
         ).forEach { reminder ->
-            val delayMillis = Duration.between(now, reminder.triggerAt).toMillis()
-            val request = OneTimeWorkRequestBuilder<TaskReminderWorker>()
-                .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
-                .setInputData(
-                    workDataOf(
-                        TaskReminderWorker.KEY_TASK_ID to task.id,
-                        TaskReminderWorker.KEY_USER_ID to task.userId,
-                        TaskReminderWorker.KEY_TITLE to task.title.take(MAX_NOTIFICATION_TITLE_LENGTH),
-                        TaskReminderWorker.KEY_MINUTES_BEFORE to reminder.minutesBefore,
-                        TaskReminderWorker.KEY_DUE_AT_EPOCH_MILLIS to
-                            reminder.triggerAt.plusSeconds(reminder.minutesBefore * 60L).toEpochMilli(),
-                    ),
-                )
-                .addTag(userTag(task.userId))
-                .addTag(taskTag(task.id))
-                .build()
-            workManager.enqueueUniqueWork(
-                workName(task.id, reminder.minutesBefore),
-                ExistingWorkPolicy.REPLACE,
-                request,
+            // An exact alarm, like prayer alerts: a deferred background job could be dropped after the due time.
+            ExactAlarms.set(
+                context,
+                ExactAlarms.intent(context, ReminderAlarmScheduler.ACTION_TASK, alarmKey(task.id, reminder.minutesBefore))
+                    .putExtra(TaskReminderWorker.KEY_TASK_ID, task.id)
+                    .putExtra(TaskReminderWorker.KEY_USER_ID, task.userId)
+                    .putExtra(TaskReminderWorker.KEY_TITLE, task.title.take(MAX_NOTIFICATION_TITLE_LENGTH))
+                    .putExtra(TaskReminderWorker.KEY_DUE_AT_EPOCH_MILLIS,
+                        reminder.triggerAt.plusSeconds(reminder.minutesBefore * 60L).toEpochMilli()),
+                reminder.triggerAt,
             )
         }
     }
+
+    /** Includes the earlier 60-minute offset so alarms from previous versions are also removed. */
+    private fun cancelAlarms(taskId: String) = listOf(30, 60).forEach {
+        ExactAlarms.cancel(context, ExactAlarms.intent(context, ReminderAlarmScheduler.ACTION_TASK, alarmKey(taskId, it)))
+    }
+
+    private fun alarmKey(taskId: String, minutesBefore: Int) = "task/$taskId/$minutesBefore"
 
     private suspend fun cancelByTag(tag: String) {
         withContext(Dispatchers.IO) {
@@ -115,11 +110,28 @@ class TaskReminderScheduler @Inject constructor(
 
     private fun taskTag(taskId: String) = "nafs-task-reminders-task-$taskId"
 
-    private fun workName(taskId: String, minutesBefore: Int) =
-        "nafs-task-reminder-$taskId-$minutesBefore"
-
     private companion object {
         const val MAX_NOTIFICATION_TITLE_LENGTH = 200
+    }
+}
+
+/** Shared by the task alarm and by reminders queued as background work before alarms were used. */
+internal object TaskReminderDelivery {
+    fun deliver(context: Context, intent: Intent) = deliver(
+        context,
+        intent.getStringExtra(TaskReminderWorker.KEY_TASK_ID),
+        intent.getStringExtra(TaskReminderWorker.KEY_USER_ID),
+        intent.getStringExtra(TaskReminderWorker.KEY_TITLE),
+        intent.getLongExtra(TaskReminderWorker.KEY_DUE_AT_EPOCH_MILLIS, 0L),
+    )
+
+    fun deliver(context: Context, taskId: String?, userId: String?, title: String?, dueAtEpochMillis: Long) {
+        if (taskId == null || userId == null || title == null || dueAtEpochMillis <= 0L) return
+        if (!ReminderPreferences.read(context, userId).tasks) return
+        // Completed, deleted and signed-out tasks leave the registry, so their alarms stay silent.
+        if (!TaskReminderRegistry.isActive(context, userId, taskId)) return
+        val minutesRemaining = TaskReminderDeliveryRule.minutesRemaining(Instant.ofEpochMilli(dueAtEpochMillis), Instant.now()) ?: return
+        TaskReminderNotifications.show(context = context, taskId = taskId, title = title, minutesRemaining = minutesRemaining)
     }
 }
 
@@ -128,23 +140,10 @@ class TaskReminderWorker(
     workerParameters: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParameters) {
     override suspend fun doWork(): Result {
-        val taskId = inputData.getString(KEY_TASK_ID) ?: return Result.failure()
-        val userId = inputData.getString(KEY_USER_ID) ?: return Result.failure()
-        val title = inputData.getString(KEY_TITLE) ?: return Result.failure()
         val dueAtEpochMillis = inputData.getLong(KEY_DUE_AT_EPOCH_MILLIS, 0L)
-        if (dueAtEpochMillis <= 0L) return Result.failure()
-        if (!ReminderPreferences.read(applicationContext, userId).tasks) return Result.success()
-        if (!TaskReminderRegistry.isActive(applicationContext, userId, taskId)) return Result.success()
-        val dueAt = Instant.ofEpochMilli(dueAtEpochMillis)
-        val minutesRemaining = TaskReminderDeliveryRule.minutesRemaining(dueAt, Instant.now())
-            ?: return Result.success()
-
-        TaskReminderNotifications.show(
-            context = applicationContext,
-            taskId = taskId,
-            title = title,
-            minutesRemaining = minutesRemaining,
-        )
+        if (inputData.getString(KEY_TASK_ID) == null || dueAtEpochMillis <= 0L) return Result.failure()
+        TaskReminderDelivery.deliver(applicationContext, inputData.getString(KEY_TASK_ID), inputData.getString(KEY_USER_ID),
+            inputData.getString(KEY_TITLE), dueAtEpochMillis)
         return Result.success()
     }
 
@@ -202,7 +201,7 @@ private object TaskReminderNotifications {
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val timing = if (minutesRemaining >= 45) "about 1 hour" else "$minutesRemaining minutes"
+        val timing = if (minutesRemaining == 1) "1 minute" else "$minutesRemaining minutes"
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)

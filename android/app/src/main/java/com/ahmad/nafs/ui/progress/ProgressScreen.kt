@@ -30,7 +30,8 @@ import kotlinx.serialization.json.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProgressRoute(profile: UserProfile, history: Boolean, onBack: () -> Unit, onReview: (String, Int) -> Unit, viewModel: ProgressViewModel = hiltViewModel()) {
+fun ProgressRoute(profile: UserProfile, history: Boolean, onBack: () -> Unit, onReview: (String, Int) -> Unit,
+    weekStart: String? = null, viewModel: ProgressViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current; val scope = rememberCoroutineScope()
     var exportMessage by remember { mutableStateOf<String?>(null) }
@@ -40,7 +41,11 @@ fun ProgressRoute(profile: UserProfile, history: Boolean, onBack: () -> Unit, on
             exportMessage = runCatching { withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri)?.use { output -> NativeProgressPdf.write(exportLines, output) } ?: error("Cannot open document") }; "PDF exported." }.getOrElse { "PDF could not be exported." }
         }
     }
-    LaunchedEffect(profile.userId) { viewModel.initialize(profile.userId) }
+    LaunchedEffect(profile.userId, weekStart) {
+        viewModel.initialize(profile.userId)
+        // Opened from the weekly notification: show the week it reported, even after midnight.
+        weekStart?.let { viewModel.openWeek(it, profile.timezone) }
+    }
     AccountDayRefreshEffects(profile.timezone, viewModel::reload)
     var tab by rememberSaveable { mutableStateOf("overall") }
     val response = state.response
