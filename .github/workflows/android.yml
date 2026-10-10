@@ -1,0 +1,73 @@
+# Native Android app: compile, unit tests, lint, installable debug APK and
+# Compose screenshots on every push that touches android/.
+#
+# Download the APK from the run page → Artifacts → nafs-debug-apk. The debug
+# build installs as "NAFS (debug)" next to the release app (id suffix .debug).
+
+name: Android
+
+on:
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-37 build-tools;36.0.0 platform-tools'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests
+        run: ./gradlew --no-configuration-cache :app:testDebugUnitTest
+
+      - name: Debug APK
+        run: ./gradlew --no-configuration-cache :app:assembleDebug
+
+      - name: Lint
+        run: ./gradlew --no-configuration-cache :app:lintDebug
+
+      - name: Upload debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nafs-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+
+      - name: Upload reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            android/app/build/reports
+            android/app/build/test-results
+          if-no-files-found: ignore
